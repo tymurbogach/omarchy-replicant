@@ -48,21 +48,19 @@ Panel {
   function doResetAll() { runVisible(effectiveCli() + " reset-all --apply"); root.close() }
   function doRestoreAllFromGitHub() { runVisible(effectiveCli() + " restore --apply --all"); root.close() }
 
-  // group the editable list by "group"
-  readonly property var grouped: {
-    var m = {}
-    var arr = state.configs || []
-    for (var i=0;i<arr.length;i++) {
-      var e = arr[i]
-      var g = e.group || "other"
-      if (!m[g]) m[g] = []
-      m[g].push(e)
-    }
-    var order = ["shell","git/ssh","claude","dev","hypr","session","omarchy","terminal","plugins","scripts","branding","system","replicant","other"]
-    var out = []
-    for (var oi=0; oi<order.length; oi++) if (m[order[oi]]) out.push({group: order[oi], items: m[order[oi]]})
-    for (var k in m) if (order.indexOf(k)===-1) out.push({group:k, items:m[k]})
-    return out
+  // flat config list, sorted so same-group entries sit together (feeds ListView's
+  // section.property below — a plain Column+Repeater-of-Repeater nesting here caused
+  // a QQuickItem::polish() loop in practice; ListView avoids that whole class of bug)
+  readonly property var groupOrder: ["shell","git/ssh","claude","dev","hypr","session","omarchy","terminal","plugins","scripts","branding","system","replicant","other"]
+  readonly property var sortedConfigs: {
+    var arr = (state.configs || []).slice()
+    var order = root.groupOrder
+    arr.sort(function(a, b) {
+      var ra = order.indexOf(a.group || "other"); if (ra === -1) ra = order.length
+      var rb = order.indexOf(b.group || "other"); if (rb === -1) rb = order.length
+      return ra - rb
+    })
+    return arr
   }
 
   readonly property string summary: {
@@ -263,142 +261,128 @@ Panel {
             wrapMode: Text.WordWrap
           }
 
-          // Scroll for the ~37 rows — fixed 420 Flickable so it never collapses to 0
-          Flickable {
+          // Scroll for the ~37 rows. A ListView (not a hand-rolled Flickable +
+          // Column + nested Repeater) — that nesting caused a real
+          // QQuickItem::polish() loop in practice; section.property/section.delegate
+          // gives us the per-group headers without a second Repeater level.
+          ListView {
             width: parent.width
             height: 420
-            contentHeight: groupedCol.implicitHeight
             clip: true
             boundsBehavior: Flickable.StopAtBounds
-            Column {
-              id: groupedCol
-              width: parent.width
-              spacing: Style.space(8)
-              Repeater {
-                model: root.grouped
-                delegate: Column {
-                  required property var modelData
-                  anchors.left: parent.left
-                  anchors.right: parent.right
-                  spacing: Style.space(6)
+            spacing: Style.space(6)
+            model: root.sortedConfigs
+            section.property: "group"
+            section.criteria: ViewSection.FullString
+            section.delegate: PanelSectionHeader {
+              width: ListView.view.width
+              text: section
+              foreground: root.fg
+              fontFamily: root.ff
+            }
+            delegate: BorderSurface {
+              id: configRow
+              required property var modelData
+              // 3 states: "default" (○ Omarchy default) | "modified" (● changed/not pushed) | "saved" (◆ saved on GitHub)
+              readonly property string syncState: modelData.sync_state || (modelData.is_default ? "default" : (modelData.dirty ? "modified" : "saved"))
+              readonly property bool isDefault: syncState === "default"
+              readonly property bool isModified: syncState === "modified"
+              readonly property bool isSaved: syncState === "saved"
+              readonly property color savedColor: "#4caf50"
+              width: ListView.view.width
+              // minimum height so the badge and buttons fit
+              implicitHeight: Math.max(64, row.implicitHeight + Style.spacing.rowPaddingY * 2)
+              radius: Style.cornerRadius
+              color: isModified ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.08) : Style.controlFill(false, false, root.fg, Color.accent)
+              borderSpec: Border.controlSpec(isModified ? "focus" : "normal", root.fg, Color.accent)
 
-                  PanelSectionHeader {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    text: modelData.group
-                    foreground: root.fg
-                    fontFamily: root.ff
+              Row {
+                id: row
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: Style.spacing.rowPaddingX
+                anchors.rightMargin: Style.spacing.rowPaddingX
+                spacing: Style.spacing.rowPaddingX
+                // left: label + src
+                Column {
+                  width: parent.width - badgeCol.width - btnCol.width - parent.spacing*2
+                  spacing: Style.spacing.xs
+                  anchors.verticalCenter: parent.verticalCenter
+                  Text {
+                    width: parent.width
+                    text: configRow.modelData.label + (configRow.isModified ? " ●" : "")
+                    color: configRow.modelData.exists ? root.fg : Qt.darker(root.fg, 1.6)
+                    font.family: root.ff
+                    font.pixelSize: Style.font.subtitle
+                    font.bold: true
+                    elide: Text.ElideRight
                   }
-
-                  Repeater {
-                    model: modelData.items
-                    delegate: BorderSurface {
-                  required property var modelData
-                  // 3 states: "default" (○ Omarchy default) | "modified" (● changed/not pushed) | "saved" (◆ saved on GitHub)
-                  readonly property string syncState: modelData.sync_state || (modelData.is_default ? "default" : (modelData.dirty ? "modified" : "saved"))
-                  readonly property bool isDefault: syncState === "default"
-                  readonly property bool isModified: syncState === "modified"
-                  readonly property bool isSaved: syncState === "saved"
-                  readonly property color savedColor: "#4caf50"
-                  anchors.left: parent.left
-                  anchors.right: parent.right
-                  // minimum height so the badge and buttons fit
-                  implicitHeight: Math.max(64, row.implicitHeight + Style.spacing.rowPaddingY * 2)
-                  radius: Style.cornerRadius
-                  color: isModified ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.08) : Style.controlFill(false, false, root.fg, Color.accent)
-                  borderSpec: Border.controlSpec(isModified ? "focus" : "normal", root.fg, Color.accent)
-
-                  Row {
-                    id: row
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.leftMargin: Style.spacing.rowPaddingX
-                    anchors.rightMargin: Style.spacing.rowPaddingX
-                    spacing: Style.spacing.rowPaddingX
-                    // left: label + src
-                    Column {
-                      width: parent.width - badgeCol.width - btnCol.width - parent.spacing*2
-                      spacing: Style.spacing.xs
-                      anchors.verticalCenter: parent.verticalCenter
-                      Text {
-                        width: parent.width
-                        text: modelData.label + (isModified ? " ●" : "")
-                        color: modelData.exists ? root.fg : Qt.darker(root.fg, 1.6)
-                        font.family: root.ff
-                        font.pixelSize: Style.font.subtitle
-                        font.bold: true
-                        elide: Text.ElideRight
-                      }
-                      Text {
-                        width: parent.width
-                        text: modelData.src
-                        color: root.dim
-                        font.family: root.ff
-                        font.pixelSize: Style.font.caption
-                        elide: Text.ElideMiddle
-                      }
+                  Text {
+                    width: parent.width
+                    text: configRow.modelData.src
+                    color: root.dim
+                    font.family: root.ff
+                    font.pixelSize: Style.font.caption
+                    elide: Text.ElideMiddle
+                  }
+                }
+                // badge — 3 states at a glance: default / modified / saved on GitHub
+                Column {
+                  id: badgeCol
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: 2
+                  width: 92
+                  Text {
+                    text: !configRow.modelData.exists ? "missing" : configRow.isDefault ? "default" : configRow.isModified ? "modified" : "saved"
+                    color: !configRow.modelData.exists ? Qt.darker(root.fg, 1.6) : configRow.isDefault ? root.dim : configRow.isModified ? Color.accent : configRow.savedColor
+                    font.family: root.ff
+                    font.pixelSize: Style.font.caption
+                    font.bold: configRow.modelData.exists && !configRow.isDefault
+                    horizontalAlignment: Text.AlignHCenter
+                    width: parent.width
+                  }
+                  Text {
+                    text: configRow.isDefault ? "○" : configRow.isModified ? "●" : "◆"
+                    color: configRow.isDefault ? root.dim : configRow.isModified ? Color.accent : configRow.savedColor
+                    font.family: root.ff
+                    font.pixelSize: Style.font.body
+                    horizontalAlignment: Text.AlignHCenter
+                    width: parent.width
+                  }
+                }
+                // actions
+                Column {
+                  id: btnCol
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: 4
+                  Button {
+                    text: "Edit"; iconText: "󰏫"; bordered: false; foreground: root.fg; fontFamily: root.ff
+                    enabled: configRow.modelData.exists
+                    onClicked: root.doEdit(configRow.modelData.id)
+                  }
+                  Row { spacing: 4
+                    Button {
+                      text: "Diff"; iconText: "󰦓"; bordered: false; foreground: root.fg; fontFamily: root.ff
+                      // Diff only makes sense if there's a default to compare against
+                      enabled: !configRow.isDefault
+                      tooltipText: configRow.isDefault ? "identical to default — nothing to diff" : "diff vs /usr/share/omarchy"
+                      onClicked: root.doDiff(configRow.modelData.id)
                     }
-                    // badge — 3 states at a glance: default / modified / saved on GitHub
-                    Column {
-                      id: badgeCol
-                      anchors.verticalCenter: parent.verticalCenter
-                      spacing: 2
-                      width: 92
-                      Text {
-                        text: !modelData.exists ? "missing" : isDefault ? "default" : isModified ? "modified" : "saved"
-                        color: !modelData.exists ? Qt.darker(root.fg, 1.6) : isDefault ? root.dim : isModified ? Color.accent : savedColor
-                        font.family: root.ff
-                        font.pixelSize: Style.font.caption
-                        font.bold: modelData.exists && !isDefault
-                        horizontalAlignment: Text.AlignHCenter
-                        width: parent.width
-                      }
-                      Text {
-                        text: isDefault ? "○" : isModified ? "●" : "◆"
-                        color: isDefault ? root.dim : isModified ? Color.accent : savedColor
-                        font.family: root.ff
-                        font.pixelSize: Style.font.body
-                        horizontalAlignment: Text.AlignHCenter
-                        width: parent.width
-                      }
-                    }
-                    // actions
-                    Column {
-                      id: btnCol
-                      anchors.verticalCenter: parent.verticalCenter
-                      spacing: 4
-                      Button {
-                        text: "Edit"; iconText: "󰏫"; bordered: false; foreground: root.fg; fontFamily: root.ff
-                        enabled: modelData.exists
-                        onClicked: root.doEdit(modelData.id)
-                      }
-                      Row { spacing: 4
-                        Button {
-                          text: "Diff"; iconText: "󰦓"; bordered: false; foreground: root.fg; fontFamily: root.ff
-                          // Diff only makes sense if there's a default to compare against
-                          enabled: !isDefault
-                          tooltipText: isDefault ? "identical to default — nothing to diff" : "diff vs /usr/share/omarchy"
-                          onClicked: root.doDiff(modelData.id)
-                        }
-                        Button {
-                          text: "Reset"; iconText: "󰦛"; bordered: false; foreground: root.fg; fontFamily: root.ff
-                          enabled: !isDefault && modelData.exists
-                          tooltipText: "restores the default (omarchy refresh), with .bak"
-                          onClicked: root.doReset(modelData.id)
-                        }
-                      }
+                    Button {
+                      text: "Reset"; iconText: "󰦛"; bordered: false; foreground: root.fg; fontFamily: root.ff
+                      enabled: !configRow.isDefault && configRow.modelData.exists
+                      tooltipText: "restores the default (omarchy refresh), with .bak"
+                      onClicked: root.doReset(configRow.modelData.id)
                     }
                   }
-                  // clicking the row opens edit (shortcut)
-                  MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: if (modelData.exists) root.doEdit(modelData.id) }
                 }
               }
+              // clicking the row opens edit (shortcut)
+              MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: if (configRow.modelData.exists) root.doEdit(configRow.modelData.id) }
             }
           }
         }
-      }
-    }
 
         PanelSeparator { width: parent.width; visible: root.lastOutput !== "" }
         Text { width: parent.width; visible: root.lastOutput !== ""; text: root.lastOutput; color: root.dim; font.family: "monospace"; font.pixelSize: Style.font.caption; wrapMode: Text.Wrap }

@@ -1,14 +1,17 @@
 # Omarchy Replicant — plugin (code)
 
-An Omarchy 4 plugin (Hyprland + Quickshell/QML) that adds `omarchy-replicant`: saves the user's
-configuration into a **private** GitHub repo of their own (created automatically) and restores
-it on any machine. A port, as an installable plugin, of the [[omarchy_thinkpad]] pattern
-(`~/omarchy_thinkpad`) — not copied literally, adapted to be portable across machines instead of
-tied to one.
+This is the **`omarchy-replicant`** repo — public, the plugin's project, meant to be shared with
+other Omarchy users via `omarchy plugin add` / the omarchyplugins directory. It's an Omarchy 4
+plugin (Hyprland + Quickshell/QML) that saves a user's configuration into a **private** GitHub
+repo of their own (created automatically) and restores it on any machine. A port, as an
+installable plugin, of the [[omarchy_thinkpad]] pattern (`~/omarchy_thinkpad`) — not copied
+literally, adapted to be portable across machines instead of tied to one.
 
-This repo is **only the plugin's code** (public, distributable via `omarchy plugin add`). The
-user's actual data (dotfiles, secrets, inventory) lives in the sibling repo
-**`omarchy-replicant`** (private) — never mix the two. The plugin must not hardcode anything
+This repo is **only the plugin's code** — no user data. Each user who installs it gets their
+**own separate private repo** for their actual data (dotfiles, secrets, inventory), named
+`<their-hostname>-replicant` by default (see `DEFAULT_REPO_NAME` in `bin/omarchy-replicant`) —
+never `omarchy-replicant` itself, that name is taken by this plugin. On this machine that private
+repo is `cyberdyne-replicant`. Never mix the two repos. The plugin must not hardcode anything
 machine- or user-specific except through `MANIFEST`/`SECRETS_MANIFEST` in
 `bin/replicant-core.sh`.
 

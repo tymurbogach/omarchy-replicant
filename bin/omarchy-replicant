@@ -15,7 +15,10 @@ if [[ ! -f "$CORE" ]]; then
 fi
 REPLICANT_HOME="${OMARCHY_REPLICANT_HOME:-$HOME/.local/share/omarchy-replicant}"
 REPO_DIR="$REPLICANT_HOME/repo"
-DEFAULT_REPO_NAME="omarchy-replicant"
+# Default name for `create`: <this machine's hostname>-replicant, so each user/machine
+# gets its own distinctly-named private repo instead of everyone colliding on the same
+# literal name (which would also collide with the plugin's own repo name, omarchy-replicant).
+DEFAULT_REPO_NAME="$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo host)-replicant"
 
 fail() { echo "omarchy-replicant: $*" >&2; exit 1; }
 info() { echo -e "\e[36m$*\e[0m" >&2; }

@@ -80,11 +80,64 @@ Panel {
 
   Timer { id: refreshTimer; interval: 1500; onTriggered: if (hostWidget) hostWidget.refresh() }
 
-  Process { id: pushProc; stdout: StdioCollector { waitForEnd: true; onStreamFinished: { root.lastOutput = text.slice(-800); if (hostWidget) hostWidget.refresh() } } ; stderr: StdioCollector { waitForEnd: true; onStreamFinished: { if (text) root.lastOutput = text.slice(-800) } } ; onExited: function(code){ if(code!==0) root.lastOutput="push falló ("+code+")\n"+root.lastOutput; if(hostWidget) hostWidget.refresh() } }
-  Process { id: pullProc; stdout: StdioCollector { waitForEnd: true; onStreamFinished: { root.lastOutput = text.slice(-800); if (hostWidget) hostWidget.refresh() } } ; stderr: StdioCollector { waitForEnd: true; onStreamFinished: { if (text) root.lastOutput = text.slice(-800) } } ; onExited: function(code){ if(code!==0) root.lastOutput="pull falló ("+code+")\n"+root.lastOutput; if(hostWidget) hostWidget.refresh() } }
-  Process { id: statusProc; stdout: StdioCollector { waitForEnd: true; onStreamFinished: { root.lastOutput = text.slice(-1200); if (hostWidget) hostWidget.refresh() } } ; stderr: StdioCollector { waitForEnd: true; onStreamFinished: { if (text) root.lastOutput = text.slice(-800) } } }
-  Process { id: saveProc; stdout: StdioCollector { waitForEnd: true; onStreamFinished: { root.lastOutput = text.slice(-1200); if (hostWidget) hostWidget.refresh() } } ; stderr: StdioCollector { waitForEnd: true; onStreamFinished: { if (text) root.lastOutput = (root.lastOutput + "\n" + text).slice(-1200) } } ; onExited: function(code){ if(code!==0) root.lastOutput="savegame falló ("+code+")\n"+root.lastOutput; if(hostWidget) hostWidget.refresh() } }
-  Process { id: backupProc; stdout: StdioCollector { waitForEnd: true; onStreamFinished: { root.lastOutput = text.slice(-1200) } } ; stderr: StdioCollector { waitForEnd: true; onStreamFinished: { if (text) root.lastOutput = (root.lastOutput + "\n" + text).slice(-1200) } } }
+  Process {
+    id: pushProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: { root.lastOutput = text.slice(-800); if (hostWidget) hostWidget.refresh() }
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: { if (text) root.lastOutput = text.slice(-800) }
+    }
+    onExited: function(code){ if(code!==0) root.lastOutput="push falló ("+code+")\n"+root.lastOutput; if(hostWidget) hostWidget.refresh() }
+  }
+  Process {
+    id: pullProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: { root.lastOutput = text.slice(-800); if (hostWidget) hostWidget.refresh() }
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: { if (text) root.lastOutput = text.slice(-800) }
+    }
+    onExited: function(code){ if(code!==0) root.lastOutput="pull falló ("+code+")\n"+root.lastOutput; if(hostWidget) hostWidget.refresh() }
+  }
+  Process {
+    id: statusProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: { root.lastOutput = text.slice(-1200); if (hostWidget) hostWidget.refresh() }
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: { if (text) root.lastOutput = text.slice(-800) }
+    }
+  }
+  Process {
+    id: saveProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: { root.lastOutput = text.slice(-1200); if (hostWidget) hostWidget.refresh() }
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: { if (text) root.lastOutput = (root.lastOutput + "\n" + text).slice(-1200) }
+    }
+    onExited: function(code){ if(code!==0) root.lastOutput="savegame falló ("+code+")\n"+root.lastOutput; if(hostWidget) hostWidget.refresh() }
+  }
+  Process {
+    id: backupProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: { root.lastOutput = text.slice(-1200) }
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: { if (text) root.lastOutput = (root.lastOutput + "\n" + text).slice(-1200) }
+    }
+  }
 
   property var bar
   property var anchorItem
@@ -128,19 +181,19 @@ Panel {
 
         Row {
           width: parent.width; spacing: Style.space(8)
-          Button { text: "Savegame"; iconText: "󰆓"; bordered: true; foreground: root.fg; accent: Color.accent; fontFamily: root.ff; enabled: state.initialized; tooltipText: "backup + commit state auto + push"; onClicked: root.doSavegame() }
+          Button { text: "Savegame"; iconText: "󰆓"; bordered: true; foreground: root.fg; accent: Color.accent; fontFamily: root.ff; enabled: !!(state && state.initialized === true); tooltipText: "backup + commit state auto + push"; onClicked: root.doSavegame() }
           Button { text: "Backup"; iconText: "󰃨"; bordered: false; foreground: root.fg; fontFamily: root.ff; onClicked: root.doBackup() }
           Button { text: "Status"; iconText: "󰦒"; bordered: false; foreground: root.fg; fontFamily: root.ff; onClicked: root.doStatus() }
         }
         Row {
           width: parent.width; spacing: Style.space(8)
-          Button { text: "Push"; iconText: "󰸝"; bordered: false; foreground: root.fg; fontFamily: root.ff; enabled: state.initialized; onClicked: root.doPush() }
-          Button { text: "Pull"; iconText: "󰸜"; bordered: false; foreground: root.fg; fontFamily: root.ff; enabled: state.initialized; onClicked: root.doPull() }
+          Button { text: "Push"; iconText: "󰸝"; bordered: false; foreground: root.fg; fontFamily: root.ff; enabled: !!(state && state.initialized === true); onClicked: root.doPush() }
+          Button { text: "Pull"; iconText: "󰸜"; bordered: false; foreground: root.fg; fontFamily: root.ff; enabled: !!(state && state.initialized === true); onClicked: root.doPull() }
           Button { text: "Restore dry"; iconText: "󰦛"; bordered: false; foreground: root.fg; fontFamily: root.ff; onClicked: root.doRestoreDry() }
         }
 
         Column {
-          width: parent.width; spacing: Style.space(6); visible: !state.initialized
+          width: parent.width; spacing: Style.space(6); visible: !(state && state.initialized)
           Text { width: parent.width; text: "No hay repo local. Crea uno privado o clona el existente (todo: config+secrets+state)."; color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap }
           Row { spacing: Style.space(8)
             Button { text: "Create privado"; iconText: "󰘐"; bordered: true; foreground: root.fg; accent: Color.accent; fontFamily: root.ff; onClicked: root.doCreateInTerminal() }
@@ -152,7 +205,7 @@ Panel {
         Column {
           width: parent.width
           spacing: Style.space(8)
-          visible: state.initialized && (state.configs && state.configs.length > 0)
+          visible: !!(state && state.initialized && state.configs && state.configs.length > 0)
 
           PanelSeparator { width: parent.width }
 

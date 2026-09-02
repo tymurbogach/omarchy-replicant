@@ -3,9 +3,9 @@ import Quickshell
 import Quickshell.Io
 
 // keepLoaded service — polls `omarchy-replicant status --json` every 30s
-// so bar widget can read it without spawning its own process.
-Singleton {
+Item {
   id: root
+  visible: false
 
   property var replicantState: ({ initialized: false })
   property bool asked: false

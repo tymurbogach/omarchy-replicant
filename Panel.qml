@@ -227,26 +227,36 @@ Panel {
             wrapMode: Text.WordWrap
           }
 
-          // grupos — evita polish loop usando anchors en vez de width:parent.width
-          Repeater {
-            model: root.grouped
-            delegate: Column {
-              required property var modelData
-              anchors.left: parent.left
-              anchors.right: parent.right
-              spacing: Style.space(6)
-
-              PanelSectionHeader {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                text: modelData.group
-                foreground: root.fg
-                fontFamily: root.ff
-              }
-
+          // Scroll para las 37 filas — evita overflow y polish loop
+          Flickable {
+            width: parent.width
+            height: Math.min(420, groupedCol.implicitHeight)
+            contentHeight: groupedCol.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            Column {
+              id: groupedCol
+              width: parent.width
+              spacing: Style.space(8)
               Repeater {
-                model: modelData.items
-                delegate: BorderSurface {
+                model: root.grouped
+                delegate: Column {
+                  required property var modelData
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  spacing: Style.space(6)
+
+                  PanelSectionHeader {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    text: modelData.group
+                    foreground: root.fg
+                    fontFamily: root.ff
+                  }
+
+                  Repeater {
+                    model: modelData.items
+                    delegate: BorderSurface {
                   required property var modelData
                   readonly property bool isDefault: !!modelData.is_default
                   readonly property bool isDirty: !!modelData.dirty
@@ -347,6 +357,8 @@ Panel {
             }
           }
         }
+      }
+    }
 
         PanelSeparator { width: parent.width; visible: root.lastOutput !== "" }
         Text { width: parent.width; visible: root.lastOutput !== ""; text: root.lastOutput; color: root.dim; font.family: "monospace"; font.pixelSize: Style.font.caption; wrapMode: Text.Wrap }

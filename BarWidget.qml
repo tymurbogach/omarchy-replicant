@@ -20,13 +20,13 @@ BarWidget {
 
   // symbol by state
   readonly property string glyph: {
-    if (!asked) return "󰸘" // hourglass
-    if (!state.initialized) return "󰘐" // plus/box
-    if ((state.ahead || 0) > 0 && (state.behind || 0) > 0) return "󰧜" // diverged
-    if ((state.ahead || 0) > 0) return "󰸝" // up
-    if ((state.behind || 0) > 0) return "󰸜" // down
-    if ((state.dirty || 0) > 0) return "󰦒" // dot
-    return "󰸞" // check
+    if (!asked) return "⟳"
+    if (!state.initialized) return "＋"
+    if ((state.ahead || 0) > 0 && (state.behind || 0) > 0) return "⇅"
+    if ((state.ahead || 0) > 0) return "↑"
+    if ((state.behind || 0) > 0) return "↓"
+    if ((state.dirty || 0) > 0) return "●"
+    return "R"
   }
   readonly property string tooltip: {
     if (!asked) return "Replicant — cargando…"

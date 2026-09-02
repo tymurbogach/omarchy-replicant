@@ -58,13 +58,13 @@ Panel {
       if (!m[g]) m[g] = []
       m[g].push(e)
     }
-    // orden fijo para que laptop vs desktop sea predecible
     var order = ["shell","git/ssh","claude","dev","hypr","sesión","omarchy","terminal","scripts","branding","sistema","replicant","otros"]
     var out = []
     for (var oi=0; oi<order.length; oi++) if (m[order[oi]]) out.push({group: order[oi], items: m[order[oi]]})
     for (var k in m) if (order.indexOf(k)===-1) out.push({group:k, items:m[k]})
     return out
   }
+  onGroupedChanged: console.log("replicant grouped", grouped.length, "configs", state.configs ? state.configs.length : 0)
 
   readonly property string summary: {
     if (!state.initialized) return "No inicializado"
@@ -227,17 +227,19 @@ Panel {
             wrapMode: Text.WordWrap
           }
 
-          // Scroll para las 37 filas — evita overflow y polish loop
+          // Scroll para las 37 filas — Flickable fijo 420 para que no colapse a 0
           Flickable {
             width: parent.width
-            height: Math.min(420, groupedCol.implicitHeight)
+            height: 420
             contentHeight: groupedCol.implicitHeight
             clip: true
             boundsBehavior: Flickable.StopAtBounds
+            onHeightChanged: console.log("replicant Flickable height", height, "content", contentHeight, "grouped", root.grouped ? root.grouped.length : 0)
             Column {
               id: groupedCol
               width: parent.width
               spacing: Style.space(8)
+              onImplicitHeightChanged: console.log("replicant groupedCol height", implicitHeight)
               Repeater {
                 model: root.grouped
                 delegate: Column {

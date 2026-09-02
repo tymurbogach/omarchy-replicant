@@ -143,6 +143,97 @@ cmd_savegame() {
 
 cmd_diff() { ensure_core; git_repo status --short 2>/dev/null | head -n 100; echo "--- diff --cached ---" >&2; git_repo diff --cached --stat 2>/dev/null | head -n 100; }
 
+# edit/diff/reset por id de config — usados por el panel
+resolve_src() {
+  local id="$1"
+  # id es rel como "hypr/input.lua" o "home/bashrc"
+  for entry in $(bash "$CORE" bash -c 'source "'$CORE'"; printf "%s\n" "${MANIFEST[@]}"' 2>/dev/null | tr ' ' '\n'); do :; done
+  # fallback: busca en MANIFEST del core
+  local found=""
+  # shellcheck disable=SC1090
+  source "$CORE" 2>/dev/null || true
+  for entry in "${MANIFEST[@]}"; do
+    local rel="${entry##*:}"
+    if [[ "$rel" == "$id" ]]; then
+      echo "${entry%%:*}"
+      return 0
+    fi
+  done
+  # también secrets
+  for entry in "${SECRETS_MANIFEST[@]}"; do
+    local rel="${entry##*:}"
+    if [[ "$rel" == "$id" ]]; then echo "${entry%%:*}"; return 0; fi
+  done
+  return 1
+}
+
+cmd_edit() {
+  local id="${1:-}"
+  [[ -n "$id" ]] || fail "uso: edit <id>  (ej: hypr/input.lua)"
+  local src
+  src=$(resolve_src "$id") || fail "id desconocido: $id"
+  if [[ ! -f "$src" ]]; then
+    warn "$src no existe — se creará al editar"
+    mkdir -p "$(dirname "$src")"
+    touch "$src"
+  fi
+  # usa el editor por defecto de Omarchy (uwsm/default o xdg-terminal)
+  if command -v omarchy-launch-config-editor >/dev/null 2>&1; then
+    omarchy-launch-config-editor "$src" 2>/dev/null || xdg-open "$src" 2>/dev/null || "${EDITOR:-nvim}" "$src"
+  elif command -v omarchy >/dev/null 2>&1 && omarchy launch --help 2>&1 | grep -q "editor"; then
+    omarchy launch editor "$src" 2>/dev/null || xdg-open "$src" 2>/dev/null || "${EDITOR:-nvim}" "$src"
+  else
+    xdg-open "$src" 2>/dev/null || "${EDITOR:-nvim}" "$src"
+  fi
+}
+
+cmd_open_diff() {
+  local id="${1:-}"
+  [[ -n "$id" ]] || fail "uso: diff <id>"
+  local src
+  src=$(resolve_src "$id") || fail "id desconocido: $id"
+  local omarchy_path="${OMARCHY_PATH:-/usr/share/omarchy}"
+  local rel="$id"
+  # busca default para diff
+  local def=""
+  for base in "$omarchy_path/config" "/usr/share/omarchy/config" "$omarchy_path/default" "/usr/share/omarchy/default"; do
+    if [[ -f "$base/$rel" ]]; then def="$base/$rel"; break; fi
+  done
+  # home/bashrc special
+  if [[ "$rel" == "home/bashrc" && -f "$omarchy_path/default/bash/bashrc" ]]; then def="$omarchy_path/default/bash/bashrc"; fi
+  if [[ -n "$def" && -f "$def" ]]; then
+    if command -v omarchy-launch-floating-terminal-with-presentation >/dev/null 2>&1; then
+      omarchy-launch-floating-terminal-with-presentation "diff -u --color=always '$def' '$src' | less -R; echo '---'; read -p 'Enter para cerrar'"
+    else
+      diff -u "$def" "$src" | head -n 100
+    fi
+  else
+    echo "sin default para $rel — es configuración personal" >&2
+    ls -l "$src" 2>&1 | head
+  fi
+}
+
+cmd_reset() {
+  local id="${1:-}"
+  [[ -n "$id" ]] || fail "uso: reset <id>  (restaura defaults: omarchy refresh)"
+  local src
+  src=$(resolve_src "$id") || fail "id desconocido: $id"
+  local rel="$id"
+  # para hypr/omarchy/alacritty etc, usa omarchy refresh
+  if [[ "$rel" == hypr/* || "$rel" == alacritty* || "$rel" == foot* || "$rel" == omarchy/* ]]; then
+    local target="$HOME/.config/$rel"
+    # omarchy refresh espera ruta relativa a ~/.config
+    if command -v omarchy >/dev/null 2>&1; then
+      omarchy refresh config "$rel" 2>&1 || omarchy refresh 2>&1 | head
+      ok "reset $rel → .bak.<epoch> creado si existía"
+    else
+      fail "omarchy no encontrado"
+    fi
+  else
+    warn "reset solo para configs con default de Omarchy; $rel no tiene default directo"
+  fi
+}
+
 cmd_pull() {
   [[ -d "$REPO_DIR/.git" ]] || fail "sin repo — clone primero"
   git_repo fetch --all --prune 2>&1
@@ -223,7 +314,9 @@ Uso:
   omarchy-replicant backup                Solo copia (sin git)
   omarchy-replicant savegame [-m "porqué"] [--no-push]  backup + commit state auto + push (deja config/secrets para 1 commit por cambio)
   omarchy-replicant status [--json]
-  omarchy-replicant diff
+  omarchy-replicant diff [id]             diff vs default (o status si sin id)
+  omarchy-replicant edit <id>             abre id en editor (ej: hypr/input.lua)
+  omarchy-replicant reset <id>            restaura default vía omarchy refresh
   omarchy-replicant push [-m msg] [-y]    Push directo (no savegame)
   omarchy-replicant pull
   omarchy-replicant clone <url>           Clona repo privado
@@ -238,7 +331,7 @@ Flujo:
 USAGE
 }
 
-main() {
+  main() {
   local cmd="${1:-}"; [[ -z "$cmd" ]] && { usage; exit 0; }
   case "$cmd" in
     -h|--help|help) usage; exit 0;;
@@ -248,7 +341,11 @@ main() {
     backup) shift; cmd_backup "$@";;
     savegame) shift; cmd_savegame "$@";;
     status) shift; cmd_status "$@";;
-    diff) shift; cmd_diff "$@";;
+    diff) shift; 
+      if [[ $# -gt 0 ]]; then cmd_open_diff "$@"; else cmd_diff "$@"; fi
+      ;;
+    edit) shift; cmd_edit "$@";;
+    reset) shift; cmd_reset "$@";;
     push) shift;
       # push legacy wrapper for simple repo: still works but delegate to savegame-style push
       ensure_core; bash "$CORE" backup 2>&1 | tail -n 5

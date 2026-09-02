@@ -279,6 +279,83 @@ core_backup() {
   echo "Listo. Revisa con 'git -C $REPO_DIR diff' y commitea con porqué." >&2
 }
 
+is_default_file() {
+  # $1 = absolute source path (e.g. $HOME/.config/hypr/input.lua or /etc/...)
+  # returns 0 if idéntico al default de Omarchy → "por defecto"
+  local src="$1"
+  local omarchy_path="${OMARCHY_PATH:-/usr/share/omarchy}"
+  local rel=""
+  # mapea src → ruta relativa bajo /usr/share/omarchy/config o default
+  if [[ "$src" == "$HOME/.config/"* ]]; then
+    rel="${src#$HOME/.config/}"
+    for base in "$omarchy_path/config" "/usr/share/omarchy/config" "$omarchy_path/default" "/usr/share/omarchy/default"; do
+      if [[ -f "$base/$rel" ]]; then
+        cmp -s "$src" "$base/$rel" 2>/dev/null && return 0
+        return 1
+      fi
+      # para carpetas con fichero dentro, ej hypr/input.lua → hypr/input.lua existe, ya probado
+    done
+    # sin default conocido → no es por defecto (es personal tuyo)
+    return 1
+  elif [[ "$src" == "/etc/"* ]]; then
+    # /etc no tiene default en omarchy → siempre personalizado
+    return 1
+  elif [[ "$src" == "$HOME/.bashrc" ]]; then
+    # compara contra omarchy default bashrc si existe
+    for base in "$omarchy_path/default/bash" "$omarchy_path/config" "/usr/share/omarchy/default/bash"; do
+      [[ -f "$base/bashrc" ]] && { cmp -s "$src" "$base/bashrc" 2>/dev/null && return 0; return 1; }
+    done
+    return 1
+  else
+    return 1
+  fi
+}
+
+build_configs_json() {
+  local entries=()
+  local entry src dst rel label group exists is_default
+  for entry in "${MANIFEST[@]}"; do
+    src="${entry%%:*}"
+    rel="${entry##*:}"
+    label="$rel"
+    # grupo por prefijo
+    case "$rel" in
+      home/*) group="shell" ;;
+      ssh/*|git/*) group="git/ssh" ;;
+      claude/*) group="claude" ;;
+      hypr/*) group="hypr" ;;
+      uwsm/*|xdg-terminals*) group="sesión" ;;
+      omarchy/*|omarchy-audit*|branding/*) group="omarchy" ;;
+      alacritty*|foot*|kitty*|ghostty*) group="terminal" ;;
+      opencode*|mise*|vscode*|dev/*) group="dev" ;;
+      bin/*) group="scripts" ;;
+      etc/*) group="sistema" ;;
+      omarchy-plugin/*) group="replicant" ;;
+      *) group="otros" ;;
+    esac
+    if [[ -f "$src" ]]; then exists=true; else exists=false; fi
+    if [[ -f "$src" ]] && is_default_file "$src"; then is_default=true; else is_default=false; fi
+    # detecta si el repo tiene cambios sin commitear para ese rel
+    local dirty=false
+    if git -C "$REPO_DIR" status --porcelain -- "config/$rel" 2>/dev/null | grep -q .; then dirty=true; fi
+    entries+=("$(jq -nc --arg id "$rel" --arg label "$label" --arg src "$src" --arg group "$group" --argjson exists "$exists" --argjson is_default "$is_default" --argjson dirty "$dirty" '{id:$id,label:$label,src:$src,group:$group,exists:$exists,is_default:$is_default,dirty:$dirty}')")
+  done
+  printf '%s\n' "${entries[@]}" | jq -s '.'
+}
+
+build_secrets_json() {
+  local entries=()
+  local entry src rel exists
+  for entry in "${SECRETS_MANIFEST[@]}"; do
+    src="${entry%%:*}"; rel="${entry##*:}"
+    if [[ -f "$src" ]]; then exists=true; else exists=false; fi
+    local dirty=false
+    if git -C "$REPO_DIR" status --porcelain -- "secrets/$rel" 2>/dev/null | grep -q .; then dirty=true; fi
+    entries+=("$(jq -nc --arg id "$rel" --arg src "$src" --argjson exists "$exists" --argjson dirty "$dirty" '{id:$id,src:$src,exists:$exists,dirty:$dirty}')")
+  done
+  printf '%s\n' "${entries[@]}" | jq -s '.'
+}
+
 core_status() {
   local json=0
   [[ "${1:-}" == "--json" ]] && json=1
@@ -296,17 +373,16 @@ core_status() {
     ahead=$(git -C "$REPO_DIR" rev-list --count @{u}..HEAD 2>/dev/null || echo 0)
     behind=$(git -C "$REPO_DIR" rev-list --count HEAD..@{u} 2>/dev/null || echo 0)
   fi
-  # savegame pending groups
   local pending_groups=""
-  if git -C "$REPO_DIR" status --porcelain -- config/ 2>/dev/null | grep -q .; then pending_groups="$pending_groups config"
-  fi
-  if git -C "$REPO_DIR" status --porcelain -- secrets/ 2>/dev/null | grep -q .; then pending_groups="$pending_groups secrets"
-  fi
-  if git -C "$REPO_DIR" status --porcelain -- state/ 2>/dev/null | grep -q .; then pending_groups="$pending_groups state"
-  fi
+  if git -C "$REPO_DIR" status --porcelain -- config/ 2>/dev/null | grep -q .; then pending_groups="$pending_groups config"; fi
+  if git -C "$REPO_DIR" status --porcelain -- secrets/ 2>/dev/null | grep -q .; then pending_groups="$pending_groups secrets"; fi
+  if git -C "$REPO_DIR" status --porcelain -- state/ 2>/dev/null | grep -q .; then pending_groups="$pending_groups state"; fi
   if (( json )); then
-    jq -nc --arg branch "$branch" --arg remote "$remote" --argjson dirty "$dirty" --argjson untracked "$untracked" --argjson ahead "$ahead" --argjson behind "$behind" --arg pending "$pending_groups" \
-      '{initialized:true, branch:$branch, remote:$remote, dirty:$dirty, untracked:$untracked, ahead:$ahead, behind:$behind, pending:$pending}'
+    local configs_json secrets_json
+    configs_json=$(build_configs_json)
+    secrets_json=$(build_secrets_json)
+    jq -nc --arg branch "$branch" --arg remote "$remote" --argjson dirty "$dirty" --argjson untracked "$untracked" --argjson ahead "$ahead" --argjson behind "$behind" --arg pending "$pending_groups" --argjson configs "$configs_json" --argjson secrets "$secrets_json" \
+      '{initialized:true, branch:$branch, remote:$remote, dirty:$dirty, untracked:$untracked, ahead:$ahead, behind:$behind, pending:$pending, configs:$configs, secrets:$secrets}'
   else
     echo "branch: $branch"
     echo "remote: ${remote:-<none>}"

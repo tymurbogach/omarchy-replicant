@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.tymurbogach.omarchy-replicant",
   "name": "Omarchy Replicant",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "Omarchy Replicant",
   "license": "MIT",
-  "description": "Sincroniza tu workspace Omarchy vía GitHub — push/pull de todas tus configs entre máquinas",
+  "description": "Syncs your Omarchy workspace via GitHub — push/pull all your configs across machines",
   "kinds": ["bar-widget", "service"],
   "keepLoaded": true,
   "entryPoints": {
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "Replicant",
-    "description": "Estado de sincronización Omarchy",
+    "description": "Omarchy sync status",
     "category": "System",
     "defaultSection": "right"
   }

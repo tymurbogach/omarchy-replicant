@@ -1,22 +1,23 @@
-# Paquetes que aparecen en la deriva pero NO son una decisión tuya, así que
-# bin/install-paquetes.sh no debe intentar instalarlos. Un nombre por línea.
+# Packages that show up in the drift but are NOT a decision you made, so
+# bin/install-paquetes.sh shouldn't try to install them. One name per line.
 #
-# Criterio, a propósito conservador: solo se ignora lo que se puede justificar.
-# Un falso positivo en el delta es barato (un `--needed` redundante que no hace
-# nada); un falso negativo es un paquete que falta en la máquina nueva y que no
-# descubres hasta que algo no arranca. En la duda, se deja en el delta.
+# Deliberately conservative criterion: only ignore what can be justified.
+# A false positive in the delta is cheap (a redundant `--needed` that does
+# nothing); a false negative is a package missing on the new machine that
+# you won't discover until something fails to start. When in doubt, leave it
+# in the delta.
 
-omarchy            # el propio Omarchy, lo trae el ISO
-omarchy-keyring    # idem
-omarchy-settings   # idem
+omarchy            # Omarchy itself, comes with the ISO
+omarchy-keyring    # same
+omarchy-settings   # same
 
-sudo               # base de Arch, lo pone el instalador
-mkinitcpio         # idem — y aquí va por limine-mkinitcpio-install
-efibootmgr         # idem
-intel-ucode        # microcódigo, lo elige el instalador según la CPU
-fwupd              # firmware, idem
+sudo               # Arch base, set up by the installer
+mkinitcpio         # same — also pulled in by limine-mkinitcpio-install
+efibootmgr         # same
+intel-ucode        # microcode, chosen by the installer based on the CPU
+fwupd              # firmware, same
 
-fprintd            # los instala `omarchy setup security fingerprint`,
-libfprint          # que además configura pam para sudo, polkit y hyprlock.
-pam-u2f            # Un `pkg add` los pondría sin configurar nada.
+fprintd            # installed by `omarchy setup security fingerprint`,
+libfprint          # which also configures pam for sudo, polkit and hyprlock.
+pam-u2f            # A plain `pkg add` would install them unconfigured.
 libfido2           #

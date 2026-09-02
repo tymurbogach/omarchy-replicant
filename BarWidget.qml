@@ -29,17 +29,17 @@ BarWidget {
     return "R"
   }
   readonly property string tooltip: {
-    if (!asked) return "Replicant — cargando…"
-    if (!state.initialized) return "Replicant — no inicializado\nClick para configurar"
+    if (!asked) return "Replicant — loading…"
+    if (!state.initialized) return "Replicant — not initialized\nClick to set up"
     var t = "Replicant"
     if (state.remote) t += " → " + state.remote
-    else t += " (sin remote)"
+    else t += " (no remote)"
     t += "\nbranch: " + (state.branch || "?")
-    if ((state.ahead || 0) > 0) t += "\n↑ " + state.ahead + " por pushear"
-    if ((state.behind || 0) > 0) t += "\n↓ " + state.behind + " por bajar"
-    if ((state.dirty || 0) > 0) t += "\n● " + state.dirty + " archivos modificados"
-    else if ((state.ahead || 0) === 0 && (state.behind || 0) === 0) t += "\n✓ sincronizado"
-    t += "\nClick para abrir panel · Right-click refrescar"
+    if ((state.ahead || 0) > 0) t += "\n↑ " + state.ahead + " to push"
+    if ((state.behind || 0) > 0) t += "\n↓ " + state.behind + " to pull"
+    if ((state.dirty || 0) > 0) t += "\n● " + state.dirty + " modified files"
+    else if ((state.ahead || 0) === 0 && (state.behind || 0) === 0) t += "\n✓ in sync"
+    t += "\nClick to open panel · Right-click to refresh"
     return t
   }
   readonly property color bg: {
@@ -53,7 +53,7 @@ BarWidget {
     if (!probe.running) probe.running = true
   }
 
-  Component.onCompleted: { console.log("replicant BarWidget loaded, cli:", cli); refresh() }
+  Component.onCompleted: refresh()
 
   Timer {
     interval: 15000
@@ -63,10 +63,7 @@ BarWidget {
   }
 
   // when panel opens, refresh immediately
-  onOpenedChanged: {
-    console.log("replicant opened:", opened, "anchor", panelAnchor.x, panelAnchor.y, "map", panelAnchor.mapToItem(null,0,0), "bar", bar ? bar.position : "null")
-    if (opened) refresh()
-  }
+  onOpenedChanged: if (opened) refresh()
 
   Process {
     id: probe
@@ -106,7 +103,7 @@ BarWidget {
     }
   }
 
-  // Anchor para KeyboardPanel — justo debajo del icono
+  // Anchor for KeyboardPanel — right below the icon
   Item {
     id: panelAnchor
     x: button.x
@@ -115,15 +112,11 @@ BarWidget {
     height: 1
     opacity: 0
     visible: true
-    onXChanged: console.log("replicant anchor x", x, "y", y, "mapToGlobal", mapToItem(null, 0, 0), "bar", bar ? bar.position : "no bar")
-    onYChanged: console.log("replicant anchor y", y, "mapToGlobal", mapToItem(null, 0, 0))
   }
   onBarChanged: {
-    console.log("replicant bar changed", bar ? bar.position : "null", "barForeground", bar ? bar.barForeground : "no bar")
     if (panelLoader.item) {
       panelLoader.item.bar = bar
       panelLoader.item.anchorItem = panelAnchor
-      console.log("replicant injected bar into panel, anchor", panelAnchor.x, panelAnchor.y)
     }
   }
 

@@ -15,8 +15,6 @@ Panel {
   property var state: ({ initialized: false, configs: [], secrets: [] })
   property string lastOutput: ""
   property string busyId: ""
-  Component.onCompleted: console.log("replicant Panel loaded, state initialized:", state.initialized)
-  onStateChanged: console.log("replicant Panel state changed:", state.initialized, state.configs ? state.configs.length : 0, "pending:", state.pending)
 
   readonly property color fg: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(fg, 1.55)
@@ -35,10 +33,10 @@ Panel {
   function doBackup() { lastOutput = "backup…"; backupProc.command = [effectiveCli(), "backup"]; backupProc.running = true }
   function doRestoreDry() { runVisible(effectiveCli() + " restore --dry-run") }
   function doEdit(id) {
-    // lanza editor en terminal flotante para que no bloquee el panel
+    // launch editor in a floating terminal so it doesn't block the panel
     busyId = id
     runVisible(effectiveCli() + " edit '" + id.replace(/'/g, "'\\''") + "'")
-    // refresh tras un momento
+    // refresh after a moment
     Qt.callLater(function(){ refreshTimer.restart() })
   }
   function doDiff(id) {
@@ -47,32 +45,33 @@ Panel {
   function doReset(id) {
     runVisible(effectiveCli() + " reset '" + id.replace(/'/g, "'\\''") + "'")
   }
+  function doResetAll() { runVisible(effectiveCli() + " reset-all --apply"); root.close() }
+  function doRestoreAllFromGitHub() { runVisible(effectiveCli() + " restore --apply --all"); root.close() }
 
-  // agrupación por group para la lista editable
+  // group the editable list by "group"
   readonly property var grouped: {
     var m = {}
     var arr = state.configs || []
     for (var i=0;i<arr.length;i++) {
       var e = arr[i]
-      var g = e.group || "otros"
+      var g = e.group || "other"
       if (!m[g]) m[g] = []
       m[g].push(e)
     }
-    var order = ["shell","git/ssh","claude","dev","hypr","sesión","omarchy","terminal","scripts","branding","sistema","replicant","otros"]
+    var order = ["shell","git/ssh","claude","dev","hypr","session","omarchy","terminal","plugins","scripts","branding","system","replicant","other"]
     var out = []
     for (var oi=0; oi<order.length; oi++) if (m[order[oi]]) out.push({group: order[oi], items: m[order[oi]]})
     for (var k in m) if (order.indexOf(k)===-1) out.push({group:k, items:m[k]})
     return out
   }
-  onGroupedChanged: console.log("replicant grouped", grouped.length, "configs", state.configs ? state.configs.length : 0)
 
   readonly property string summary: {
-    if (!state.initialized) return "No inicializado"
-    if ((state.ahead || 0) > 0 && (state.behind || 0) > 0) return "Divergido ↑" + state.ahead + " ↓" + state.behind
-    if ((state.ahead || 0) > 0) return "↑ " + state.ahead + " por pushear"
-    if ((state.behind || 0) > 0) return "↓ " + state.behind + " por bajar"
-    if ((state.dirty || 0) > 0) return "● " + state.dirty + " modificados"
-    return "✓ sincronizado"
+    if (!state.initialized) return "Not initialized"
+    if ((state.ahead || 0) > 0 && (state.behind || 0) > 0) return "Diverged ↑" + state.ahead + " ↓" + state.behind
+    if ((state.ahead || 0) > 0) return "↑ " + state.ahead + " to push"
+    if ((state.behind || 0) > 0) return "↓ " + state.behind + " to pull"
+    if ((state.dirty || 0) > 0) return "● " + state.dirty + " modified"
+    return "✓ in sync"
   }
 
   implicitWidth: button.implicitWidth
@@ -91,7 +90,7 @@ Panel {
       waitForEnd: true
       onStreamFinished: { if (text) root.lastOutput = text.slice(-800) }
     }
-    onExited: function(code){ if(code!==0) root.lastOutput="push falló ("+code+")\n"+root.lastOutput; if(hostWidget) hostWidget.refresh() }
+    onExited: function(code){ if(code!==0) root.lastOutput="push failed ("+code+")\n"+root.lastOutput; if(hostWidget) hostWidget.refresh() }
   }
   Process {
     id: pullProc
@@ -103,7 +102,7 @@ Panel {
       waitForEnd: true
       onStreamFinished: { if (text) root.lastOutput = text.slice(-800) }
     }
-    onExited: function(code){ if(code!==0) root.lastOutput="pull falló ("+code+")\n"+root.lastOutput; if(hostWidget) hostWidget.refresh() }
+    onExited: function(code){ if(code!==0) root.lastOutput="pull failed ("+code+")\n"+root.lastOutput; if(hostWidget) hostWidget.refresh() }
   }
   Process {
     id: statusProc
@@ -126,7 +125,7 @@ Panel {
       waitForEnd: true
       onStreamFinished: { if (text) root.lastOutput = (root.lastOutput + "\n" + text).slice(-1200) }
     }
-    onExited: function(code){ if(code!==0) root.lastOutput="savegame falló ("+code+")\n"+root.lastOutput; if(hostWidget) hostWidget.refresh() }
+    onExited: function(code){ if(code!==0) root.lastOutput="savegame failed ("+code+")\n"+root.lastOutput; if(hostWidget) hostWidget.refresh() }
   }
   Process {
     id: backupProc
@@ -176,13 +175,13 @@ Panel {
           fontFamily: root.ff
           iconComponent: Component { Text { text: "󰸞"; color: root.fg; font.family: root.ff; font.pixelSize: Style.font.display } }
         }
-        Text { width: parent.width; text: state.remote ? state.remote : "sin remote"; color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; elide: Text.ElideMiddle }
+        Text { width: parent.width; text: state.remote ? state.remote : "no remote"; color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; elide: Text.ElideMiddle }
         Text { width: parent.width; text: "branch: " + (state.branch || "main") + "   dirty: " + (state.dirty || 0) + "   ahead/behind: " + (state.ahead||0) + "/" + (state.behind||0); color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption }
-        Text { width: parent.width; visible: !!(state.pending && String(state.pending).trim() !== ""); text: "pendientes:" + (state.pending || ""); color: Color.accent; font.family: root.ff; font.pixelSize: Style.font.caption }
+        Text { width: parent.width; visible: !!(state.pending && String(state.pending).trim() !== ""); text: "pending:" + (state.pending || ""); color: Color.accent; font.family: root.ff; font.pixelSize: Style.font.caption }
 
         Row {
           width: parent.width; spacing: Style.space(8)
-          Button { text: "Savegame"; iconText: "󰆓"; bordered: true; foreground: root.fg; accent: Color.accent; fontFamily: root.ff; enabled: !!(state && state.initialized === true); tooltipText: "backup + commit state auto + push"; onClicked: root.doSavegame() }
+          Button { text: "Savegame"; iconText: "󰆓"; bordered: true; foreground: root.fg; accent: Color.accent; fontFamily: root.ff; enabled: !!(state && state.initialized === true); tooltipText: "backup + auto-commit state + push"; onClicked: root.doSavegame() }
           Button { text: "Backup"; iconText: "󰃨"; bordered: false; foreground: root.fg; fontFamily: root.ff; onClicked: root.doBackup() }
           Button { text: "Status"; iconText: "󰦒"; bordered: false; foreground: root.fg; fontFamily: root.ff; onClicked: root.doStatus() }
         }
@@ -190,19 +189,56 @@ Panel {
           width: parent.width; spacing: Style.space(8)
           Button { text: "Push"; iconText: "󰸝"; bordered: false; foreground: root.fg; fontFamily: root.ff; enabled: !!(state && state.initialized === true); onClicked: root.doPush() }
           Button { text: "Pull"; iconText: "󰸜"; bordered: false; foreground: root.fg; fontFamily: root.ff; enabled: !!(state && state.initialized === true); onClicked: root.doPull() }
-          Button { text: "Restore dry"; iconText: "󰦛"; bordered: false; foreground: root.fg; fontFamily: root.ff; onClicked: root.doRestoreDry() }
+          Button { text: "Restore (dry)"; iconText: "󰦛"; bordered: false; foreground: root.fg; fontFamily: root.ff; onClicked: root.doRestoreDry() }
+        }
+
+        Column {
+          width: parent.width
+          spacing: Style.space(6)
+          visible: !!(state && state.initialized === true)
+
+          PanelSeparator { width: parent.width }
+          Text {
+            width: parent.width
+            text: "Danger zone — restore EVERYTHING"
+            color: root.fg
+            font.family: root.ff
+            font.pixelSize: Style.font.subtitle
+            font.bold: true
+          }
+          Text {
+            width: parent.width
+            text: "Each button opens a terminal showing what will change, and asks for confirmation. Both create .bak.<epoch> copies before overwriting anything."
+            color: root.dim
+            font.family: root.ff
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+          Row {
+            spacing: Style.space(8)
+            Button {
+              text: "Reset to Omarchy (all)"; iconText: "󰦒"; bordered: true; foreground: root.fg; fontFamily: root.ff
+              tooltipText: "Resets everything with a known Omarchy default back to factory"
+              onClicked: root.doResetAll()
+            }
+            Button {
+              text: "Restore from GitHub (all)"; iconText: "󰸜"; bordered: true; foreground: root.fg; accent: Color.accent; fontFamily: root.ff
+              tooltipText: "Brings EVERYTHING saved in the repo/GitHub down to this system"
+              onClicked: root.doRestoreAllFromGitHub()
+            }
+          }
         }
 
         Column {
           width: parent.width; spacing: Style.space(6); visible: !(state && state.initialized)
-          Text { width: parent.width; text: "No hay repo local. Crea uno privado o clona el existente (todo: config+secrets+state)."; color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap }
+          Text { width: parent.width; text: "No local repo yet. Create a private one or clone an existing one (everything: config+secrets+state)."; color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap }
           Row { spacing: Style.space(8)
-            Button { text: "Create privado"; iconText: "󰘐"; bordered: true; foreground: root.fg; accent: Color.accent; fontFamily: root.ff; onClicked: root.doCreateInTerminal() }
+            Button { text: "Create private"; iconText: "󰘐"; bordered: true; foreground: root.fg; accent: Color.accent; fontFamily: root.ff; onClicked: root.doCreateInTerminal() }
             Button { text: "Clone…"; iconText: "󰓹"; bordered: true; foreground: root.fg; fontFamily: root.ff; onClicked: root.doCloneInTerminal() }
           }
         }
 
-        // ——— Lista editable por configuración ———
+        // ——— Editable per-config list ———
         Column {
           width: parent.width
           spacing: Style.space(8)
@@ -212,7 +248,7 @@ Panel {
 
           Text {
             width: parent.width
-            text: "Configuraciones (" + (state.configs ? state.configs.length : 0) + ") — distintivo: por defecto vs personalizado"
+            text: "Configs (" + (state.configs ? state.configs.length : 0) + ") — ○ default · ● modified · ◆ saved on GitHub"
             color: root.fg
             font.family: root.ff
             font.pixelSize: Style.font.subtitle
@@ -220,26 +256,24 @@ Panel {
           }
           Text {
             width: parent.width
-            text: "Editar abre el fichero en tu editor. 'por defecto' = idéntico a /usr/share/omarchy (se recupera con omarchy refresh)."
+            text: "Edit opens the file in your editor. 'default' = identical to Omarchy's default. 'modified' = changed but not committed, or not pushed yet. 'saved' = matches what's in your GitHub repo."
             color: root.dim
             font.family: root.ff
             font.pixelSize: Style.font.caption
             wrapMode: Text.WordWrap
           }
 
-          // Scroll para las 37 filas — Flickable fijo 420 para que no colapse a 0
+          // Scroll for the ~37 rows — fixed 420 Flickable so it never collapses to 0
           Flickable {
             width: parent.width
             height: 420
             contentHeight: groupedCol.implicitHeight
             clip: true
             boundsBehavior: Flickable.StopAtBounds
-            onHeightChanged: console.log("replicant Flickable height", height, "content", contentHeight, "grouped", root.grouped ? root.grouped.length : 0)
             Column {
               id: groupedCol
               width: parent.width
               spacing: Style.space(8)
-              onImplicitHeightChanged: console.log("replicant groupedCol height", implicitHeight)
               Repeater {
                 model: root.grouped
                 delegate: Column {
@@ -260,15 +294,19 @@ Panel {
                     model: modelData.items
                     delegate: BorderSurface {
                   required property var modelData
-                  readonly property bool isDefault: !!modelData.is_default
-                  readonly property bool isDirty: !!modelData.dirty
+                  // 3 states: "default" (○ Omarchy default) | "modified" (● changed/not pushed) | "saved" (◆ saved on GitHub)
+                  readonly property string syncState: modelData.sync_state || (modelData.is_default ? "default" : (modelData.dirty ? "modified" : "saved"))
+                  readonly property bool isDefault: syncState === "default"
+                  readonly property bool isModified: syncState === "modified"
+                  readonly property bool isSaved: syncState === "saved"
+                  readonly property color savedColor: "#4caf50"
                   anchors.left: parent.left
                   anchors.right: parent.right
-                  // altura mínima para que el distintivo y los botones quepan
+                  // minimum height so the badge and buttons fit
                   implicitHeight: Math.max(64, row.implicitHeight + Style.spacing.rowPaddingY * 2)
                   radius: Style.cornerRadius
-                  color: isDirty ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.08) : Style.controlFill(false, false, root.fg, Color.accent)
-                  borderSpec: Border.controlSpec(isDirty ? "focus" : "normal", root.fg, Color.accent)
+                  color: isModified ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.08) : Style.controlFill(false, false, root.fg, Color.accent)
+                  borderSpec: Border.controlSpec(isModified ? "focus" : "normal", root.fg, Color.accent)
 
                   Row {
                     id: row
@@ -278,14 +316,14 @@ Panel {
                     anchors.leftMargin: Style.spacing.rowPaddingX
                     anchors.rightMargin: Style.spacing.rowPaddingX
                     spacing: Style.spacing.rowPaddingX
-                    // izquierda: label + src
+                    // left: label + src
                     Column {
                       width: parent.width - badgeCol.width - btnCol.width - parent.spacing*2
                       spacing: Style.spacing.xs
                       anchors.verticalCenter: parent.verticalCenter
                       Text {
                         width: parent.width
-                        text: modelData.label + (modelData.dirty ? " ●" : "")
+                        text: modelData.label + (isModified ? " ●" : "")
                         color: modelData.exists ? root.fg : Qt.darker(root.fg, 1.6)
                         font.family: root.ff
                         font.pixelSize: Style.font.subtitle
@@ -301,58 +339,58 @@ Panel {
                         elide: Text.ElideMiddle
                       }
                     }
-                    // distintivo
+                    // badge — 3 states at a glance: default / modified / saved on GitHub
                     Column {
                       id: badgeCol
                       anchors.verticalCenter: parent.verticalCenter
                       spacing: 2
                       width: 92
                       Text {
-                        text: modelData.exists ? (isDefault ? "por defecto" : "personalizado") : "ausente"
-                        color: !modelData.exists ? Qt.darker(root.fg, 1.6) : isDefault ? root.dim : Color.accent
+                        text: !modelData.exists ? "missing" : isDefault ? "default" : isModified ? "modified" : "saved"
+                        color: !modelData.exists ? Qt.darker(root.fg, 1.6) : isDefault ? root.dim : isModified ? Color.accent : savedColor
                         font.family: root.ff
                         font.pixelSize: Style.font.caption
-                        font.bold: !isDefault && modelData.exists
+                        font.bold: modelData.exists && !isDefault
                         horizontalAlignment: Text.AlignHCenter
                         width: parent.width
                       }
                       Text {
-                        text: isDefault ? "󰦒" : "󰸞"
-                        color: isDefault ? root.dim : Color.accent
+                        text: isDefault ? "○" : isModified ? "●" : "◆"
+                        color: isDefault ? root.dim : isModified ? Color.accent : savedColor
                         font.family: root.ff
                         font.pixelSize: Style.font.body
                         horizontalAlignment: Text.AlignHCenter
                         width: parent.width
                       }
                     }
-                    // acciones
+                    // actions
                     Column {
                       id: btnCol
                       anchors.verticalCenter: parent.verticalCenter
                       spacing: 4
                       Button {
-                        text: "Editar"; iconText: "󰏫"; bordered: false; foreground: root.fg; fontFamily: root.ff
+                        text: "Edit"; iconText: "󰏫"; bordered: false; foreground: root.fg; fontFamily: root.ff
                         enabled: modelData.exists
                         onClicked: root.doEdit(modelData.id)
                       }
                       Row { spacing: 4
                         Button {
                           text: "Diff"; iconText: "󰦓"; bordered: false; foreground: root.fg; fontFamily: root.ff
-                          // Diff solo tiene sentido si hay default contra el que comparar
+                          // Diff only makes sense if there's a default to compare against
                           enabled: !isDefault
-                          tooltipText: isDefault ? "idéntico al default — sin diff" : "diff vs /usr/share/omarchy"
+                          tooltipText: isDefault ? "identical to default — nothing to diff" : "diff vs /usr/share/omarchy"
                           onClicked: root.doDiff(modelData.id)
                         }
                         Button {
                           text: "Reset"; iconText: "󰦛"; bordered: false; foreground: root.fg; fontFamily: root.ff
                           enabled: !isDefault && modelData.exists
-                          tooltipText: "restaura default (omarchy refresh) con .bak"
+                          tooltipText: "restores the default (omarchy refresh), with .bak"
                           onClicked: root.doReset(modelData.id)
                         }
                       }
                     }
                   }
-                  // click en la fila abre edición (atajo)
+                  // clicking the row opens edit (shortcut)
                   MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: if (modelData.exists) root.doEdit(modelData.id) }
                 }
               }
@@ -364,7 +402,7 @@ Panel {
 
         PanelSeparator { width: parent.width; visible: root.lastOutput !== "" }
         Text { width: parent.width; visible: root.lastOutput !== ""; text: root.lastOutput; color: root.dim; font.family: "monospace"; font.pixelSize: Style.font.caption; wrapMode: Text.Wrap }
-        Text { width: parent.width; text: "CLI: savegame | backup | edit <id> | diff <id> | reset <id> | restore --apply\nRepo privado: ~/.local/share/omarchy-replicant/repo (config/secrets/state)"; color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap }
+        Text { width: parent.width; text: "CLI: savegame | backup | edit <id> | diff <id> | reset <id> | reset-all | restore --apply --all\nPrivate repo: ~/.local/share/omarchy-replicant/repo (config/secrets/state)"; color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap }
       }
     }
   }

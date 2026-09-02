@@ -1,21 +1,29 @@
 # Omarchy Replicant — Plugin
 
-Plugin Omarchy 4 que añade `omarchy-replicant` para sincronizar todo tu workspace vía GitHub.
+Omarchy 4 plugin that adds `omarchy-replicant` to sync your whole workspace via GitHub, into a
+**private** repo created automatically for you.
 
-Instala con:
+Install with:
 
 ```bash
 omarchy plugin add https://github.com/tymurbogach/omarchy-replicant-plugin --enable
 ```
 
-Luego:
+Then:
 
 ```bash
 omarchy-replicant init
-omarchy-replicant create omarchy-replicant --public --push
-# en otra máquina:
+omarchy-replicant create omarchy-replicant --push   # always private (it holds secrets/)
+# on another machine:
 omarchy-replicant clone https://github.com/<user>/omarchy-replicant
-omarchy-replicant restore --yes
+omarchy-replicant restore --apply --all
 ```
 
-El repo de tus dotfiles es `omarchy-replicant` (https://github.com/tymurbogach/omarchy-replicant) — separado de este plugin.
+Restore everything:
+
+```bash
+omarchy-replicant reset-all --apply          # everything -> Omarchy defaults (factory)
+omarchy-replicant restore --apply --all      # everything -> what's saved on GitHub
+```
+
+Your dotfiles repo is `omarchy-replicant` (private, one per user) — separate from this plugin.

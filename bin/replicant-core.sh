@@ -1,24 +1,24 @@
 #!/bin/bash
-# replicant-core.sh — port literal de omarchy_thinkpad savegame para el plugin
-# Ubicado en: ~/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/bin/
-# No reinventa: copia MANIFEST/SECRETS_MANIFEST + lib.sh + scan-secrets + backup/savegame/restore
+# replicant-core.sh — core logic for the omarchy-replicant plugin (savegame pattern
+# ported from ~/omarchy_thinkpad). Doesn't reinvent: MANIFEST/SECRETS_MANIFEST +
+# install-with-backup + scan-secrets + backup/savegame/restore.
+# Located at: ~/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/bin/
 set -euo pipefail
 
 REAL_CORE="$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 PLUGIN_DIR="$(cd -- "$(dirname -- "$REAL_CORE")/.." && pwd)"
-# Repo destino del usuario (separate from dotfiles generic): private, layout savegame
+# User's target repo (separate from the plugin's own code): private, savegame layout
 REPLICANT_HOME="${OMARCHY_REPLICANT_HOME:-$HOME/.local/share/omarchy-replicant}"
 REPO_DIR="$REPLICANT_HOME/repo"
-# Compat: old simple repo used flat files; core uses savegame layout config/secrets/state
 CONFIG_DIR="$REPO_DIR/config"
 SECRETS_DIR="$REPO_DIR/secrets"
 STATE_DIR="$REPO_DIR/state"
 TEMPLATES_DIR="$REPO_DIR/templates"
 GITHOOKS_DIR="$REPO_DIR/.githooks"
 
-# ─── MANIFEST — copia literal de ~/omarchy_thinkpad/bin/backup.sh ────────────
-# Dirección única: sistema -> repo. Solo lo tuyo o lo que difiere del default.
-# Lo idéntico al default no se trackea: se recupera con omarchy-refresh-config.
+# ─── MANIFEST — ported from ~/omarchy_thinkpad/bin/backup.sh ────────────────
+# One-way direction: system -> repo. Only your own stuff, or what differs from default.
+# Anything identical to the default isn't tracked: recover it with omarchy-refresh-config.
 MANIFEST=(
   "$HOME/.bashrc:home/bashrc"
   "$HOME/.XCompose:home/XCompose"
@@ -53,7 +53,7 @@ MANIFEST=(
   "/etc/systemd/system/fprintd-resume.service:etc/fprintd-resume.service"
   "/etc/systemd/logind.conf.d/99-lid.conf:etc/99-lid.conf"
   "/etc/systemd/sleep.conf.d/99-hibernate-delay.conf:etc/99-hibernate-delay.conf"
-  # Extra v2: replicant plugin itself (so plugin survives reinstall)
+  # v2 extra: the replicant plugin itself (so the plugin survives a reinstall)
   "$HOME/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/manifest.json:omarchy-plugin/manifest.json"
   "$HOME/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/BarWidget.qml:omarchy-plugin/BarWidget.qml"
   "$HOME/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/Panel.qml:omarchy-plugin/Panel.qml"
@@ -68,29 +68,29 @@ SECRETS_MANIFEST=(
   "$HOME/dev/lazytripz/backend/.env:env/lazytrip-backend.env"
 )
 
-# lib.sh — poner con .bak.<epoch>
+# install helpers — install_file() writes with a .bak.<epoch> of whatever it overwrites
 DRY=${DRY:-0}
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$1" >&2; }
 skip() { printf '  \033[33m·\033[0m %s\n' "$1" >&2; }
 run()  { if (( DRY )); then printf '  \033[36m»\033[0m %s\n' "$*" >&2; else "$@"; fi; }
-poner() {
-  local src=$1 dst=$2 modo=$3
-  local corto=${dst/#$HOME/\~}
+install_file() {
+  local src=$1 dst=$2 mode=$3
+  local short_path=${dst/#$HOME/\~}
   if [[ ! -f $src ]]; then
-    skip "$corto — origen ausente en el repo ($src)"
+    skip "$short_path — source missing in the repo ($src)"
     return
   fi
   if [[ -f $dst ]] && cmp -s "$src" "$dst"; then
-    run chmod "$modo" "$dst"
-    ok "$corto (ya igual, modo $modo)"
+    run chmod "$mode" "$dst"
+    ok "$short_path (already matches, mode $mode)"
     return
   fi
   if [[ -e $dst ]]; then
     run cp -a "$dst" "$dst.bak.$(date +%s)"
-    skip "$corto — el anterior guardado como .bak.<epoch>"
+    skip "$short_path — previous version saved as .bak.<epoch>"
   fi
-  run install -D -m "$modo" "$src" "$dst"
-  ok "$corto ($modo)"
+  run install -D -m "$mode" "$src" "$dst"
+  ok "$short_path ($mode)"
 }
 
 ensure_repo_layout() {
@@ -120,7 +120,7 @@ while IFS= read -r file; do
 done <<<"$files"
 if (( fail )); then
   cat <<'MSG'
-COMMIT BLOQUEADO: posible credencial en config/state/templates.
+COMMIT BLOCKED: possible credential in config/state/templates.
 MSG
   exit 1
 fi
@@ -142,7 +142,7 @@ HOOK
     mkdir -p "$REPO_DIR/bin"
     cp -a "$HOME/omarchy_thinkpad/bin/pacman-delta-ignore" "$REPO_DIR/bin/pacman-delta-ignore"
   fi
-  # .gitignore — savegame style (state/ generated, .bak.* ignored, secrets/ tracked)
+  # .gitignore — savegame style (state/ is generated, .bak.* ignored, secrets/ tracked)
   if [[ ! -f "$REPO_DIR/.gitignore" ]]; then
     cat >"$REPO_DIR/.gitignore" <<'GI'
 # — replicant savegame —
@@ -168,7 +168,7 @@ GI
 
 core_backup() {
   ensure_repo_layout
-  echo "→ Copiando configuración (MANIFEST fijo, savegame)" >&2
+  echo "→ Copying configuration (fixed MANIFEST, savegame)" >&2
   copied=0; missing=0
   for entry in "${MANIFEST[@]}"; do
     src=${entry%%:*}
@@ -178,13 +178,24 @@ core_backup() {
       cp -f "$src" "$dst"
       ((copied++)) || true
     else
-      echo "  · ausente: ${src/#$HOME/\~}" >&2
+      echo "  · missing: ${src/#$HOME/\~}" >&2
       ((missing++)) || true
     fi
   done
-  echo "  $copied copiados, $missing ausentes" >&2
+  echo "  $copied copied, $missing missing" >&2
 
-  echo "→ Copiando secretos (repo privado, 600)" >&2
+  echo "→ Copying auto-detected plugin configs" >&2
+  local pcopied=0 psrc prel _pname
+  while IFS=$'\t' read -r psrc prel _pname; do
+    [[ -n "$psrc" ]] || continue
+    dst="$CONFIG_DIR/$prel"
+    mkdir -p "$(dirname "$dst")"
+    cp -f "$psrc" "$dst"
+    pcopied=$((pcopied+1))
+  done < <(discover_plugin_entries)
+  echo "  $pcopied plugin config(s) detected" >&2
+
+  echo "→ Copying secrets (private repo, 600)" >&2
   install -d -m 700 "$SECRETS_DIR" 2>/dev/null || true
   scopied=0
   for entry in "${SECRETS_MANIFEST[@]}"; do
@@ -195,7 +206,7 @@ core_backup() {
       install -m 600 "$src" "$dst"
       ((scopied++)) || true
     else
-      echo "  · ausente: ${src/#$HOME/\~}" >&2
+      echo "  · missing: ${src/#$HOME/\~}" >&2
     fi
   done
   # CIFS credentials (root:600, best-effort)
@@ -204,88 +215,88 @@ core_backup() {
     dst="$SECRETS_DIR/samba/$(basename "$src")"
     if [[ -r $src ]]; then install -m 600 "$src" "$dst" 2>/dev/null || true
     elif [[ -e $src && ! -f $dst ]]; then
-      echo "  · $src requiere sudo: sudo install -m600 -o $USER -g $USER $src $dst" >&2
+      echo "  · $src needs sudo: sudo install -m600 -o $USER -g $USER $src $dst" >&2
     fi
   done
-  echo "  $scopied secretos copiados" >&2
+  echo "  $scopied secret(s) copied" >&2
 
-  echo "→ Regenerando inventario state/" >&2
+  echo "→ Regenerating state/ inventory" >&2
   mkdir -p "$STATE_DIR"
   {
-    echo "# Generado por replicant-core.sh — no editar a mano"
-    echo "fecha:        $(date -Is)"
+    echo "# Generated by replicant-core.sh — do not edit by hand"
+    echo "date:         $(date -Is)"
     echo "hostname:     $(hostnamectl --static 2>/dev/null || hostname)"
     echo "kernel:       $(uname -r)"
     echo "omarchy:      $(cat /usr/share/omarchy/version 2>/dev/null || cat "$HOME/.local/share/omarchy/version" 2>/dev/null || echo '?')"
-    echo "claude-code:  $(claude --version 2>/dev/null || echo 'no instalado')"
-  } > "$STATE_DIR/sistema.txt"
-  pacman -Qqen > "$STATE_DIR/pacman-oficial.txt" 2>/dev/null || true
+    echo "claude-code:  $(claude --version 2>/dev/null || echo 'not installed')"
+  } > "$STATE_DIR/system.txt"
+  pacman -Qqen > "$STATE_DIR/pacman-official.txt" 2>/dev/null || true
   pacman -Qqem > "$STATE_DIR/pacman-aur.txt" 2>/dev/null || true
   OMARCHY_PATH=${OMARCHY_PATH:-/usr/share/omarchy}
   base_omarchy="$OMARCHY_PATH/install/omarchy-base.packages"
-  otros_omarchy="$OMARCHY_PATH/install/omarchy-other.packages"
+  other_omarchy="$OMARCHY_PATH/install/omarchy-other.packages"
   if [[ -r $base_omarchy ]]; then
-    conocidos=$(mktemp)
-    cat "$base_omarchy" "$otros_omarchy" 2>/dev/null | sed 's/#.*//' | tr -s ' \t' '\n' | sed '/^$/d' >> "$conocidos"
+    known=$(mktemp)
+    cat "$base_omarchy" "$other_omarchy" 2>/dev/null | sed 's/#.*//' | tr -s ' \t' '\n' | sed '/^$/d' >> "$known"
     if [[ -r "$REPO_DIR/bin/pacman-delta-ignore" ]]; then
-      sed 's/#.*//' "$REPO_DIR/bin/pacman-delta-ignore" | tr -d ' \t' | sed '/^$/d' >> "$conocidos"
+      sed 's/#.*//' "$REPO_DIR/bin/pacman-delta-ignore" | tr -d ' \t' | sed '/^$/d' >> "$known"
     elif [[ -r "$PLUGIN_DIR/bin/pacman-delta-ignore" ]]; then
-      sed 's/#.*//' "$PLUGIN_DIR/bin/pacman-delta-ignore" | tr -d ' \t' | sed '/^$/d' >> "$conocidos"
+      sed 's/#.*//' "$PLUGIN_DIR/bin/pacman-delta-ignore" | tr -d ' \t' | sed '/^$/d' >> "$known"
     fi
-    sort -u "$conocidos" -o "$conocidos"
-    comm -23 <(sort -u "$STATE_DIR/pacman-oficial.txt") "$conocidos" > "$STATE_DIR/pacman-delta.txt"
-    comm -23 <(sort -u "$STATE_DIR/pacman-aur.txt")     "$conocidos" > "$STATE_DIR/pacman-delta-aur.txt"
-    rm -f "$conocidos"
+    sort -u "$known" -o "$known"
+    comm -23 <(sort -u "$STATE_DIR/pacman-official.txt") "$known" > "$STATE_DIR/pacman-delta.txt"
+    comm -23 <(sort -u "$STATE_DIR/pacman-aur.txt")       "$known" > "$STATE_DIR/pacman-delta-aur.txt"
+    rm -f "$known"
   else
     : > "$STATE_DIR/pacman-delta.txt"
     : > "$STATE_DIR/pacman-delta-aur.txt"
   fi
   mise ls 2>/dev/null > "$STATE_DIR/mise.txt" || true
   npm ls -g --depth=0 2>/dev/null > "$STATE_DIR/npm-global.txt" || true
-  systemctl list-unit-files --state=enabled --no-pager --no-legend 2>/dev/null | awk '{print $1}' > "$STATE_DIR/servicios-sistema.txt" || true
-  systemctl --user list-unit-files --state=enabled --no-pager --no-legend 2>/dev/null | awk '{print $1}' > "$STATE_DIR/servicios-usuario.txt" || true
-  docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Ports}}' 2>/dev/null > "$STATE_DIR/contenedores.txt" || true
-  grep -E '[[:space:]]cifs[[:space:]]' /etc/fstab > "$STATE_DIR/montajes-cifs.txt" 2>/dev/null || true
+  systemctl list-unit-files --state=enabled --no-pager --no-legend 2>/dev/null | awk '{print $1}' > "$STATE_DIR/system-services.txt" || true
+  systemctl --user list-unit-files --state=enabled --no-pager --no-legend 2>/dev/null | awk '{print $1}' > "$STATE_DIR/user-services.txt" || true
+  docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Ports}}' 2>/dev/null > "$STATE_DIR/containers.txt" || true
+  grep -E '[[:space:]]cifs[[:space:]]' /etc/fstab > "$STATE_DIR/cifs-mounts.txt" 2>/dev/null || true
   if [[ -r $HOME/.config/environment.d/60-secrets.conf ]]; then
-    { echo "# Nombres de las variables definidas. Los VALORES no se trackean."; grep -oE '^[A-Z_]+' "$HOME/.config/environment.d/60-secrets.conf" | sort; } > "$STATE_DIR/secretos-definidos.txt"
+    { echo "# Names of the defined variables. VALUES are not tracked."; grep -oE '^[A-Z_]+' "$HOME/.config/environment.d/60-secrets.conf" | sort; } > "$STATE_DIR/defined-secrets.txt"
   fi
-  RUIDO='^(chromium|fcitx5|systemd|omarchy|elephant|environment\.d|btop)$'
+  NOISE='^(chromium|fcitx5|systemd|omarchy|elephant|environment\.d|btop)$'
   {
-    echo "# Ficheros de ~/.config que difieren del default de Omarchy."
-    echo "# Solo diferencias de contenido: los 'Only in' son casi siempre datos de runtime."
-    echo "# Excluidos por ruido: chromium, fcitx5, systemd, omarchy, elephant, environment.d, btop"
+    echo "# Files under ~/.config that differ from Omarchy's default."
+    echo "# Content differences only: 'Only in' lines are almost always runtime data."
+    echo "# Excluded as noise: chromium, fcitx5, systemd, omarchy, elephant, environment.d, btop"
     echo
     for d in "$HOME/.local/share/omarchy/config"/* "$OMARCHY_PATH/config"/*; do
       [[ -e "$d" ]] || continue
       name=$(basename "$d")
-      [[ $name =~ $RUIDO ]] && continue
+      [[ $name =~ $NOISE ]] && continue
       [[ -e "$HOME/.config/$name" ]] || continue
       diff -rq "$d" "$HOME/.config/$name" 2>/dev/null | grep ' differ$' | sed 's|.*/\.config/|~/.config/|' || true
     done
-  } > "$STATE_DIR/deriva-vs-omarchy.txt"
+  } > "$STATE_DIR/drift-vs-omarchy.txt"
 
-  echo "→ Escaneando lo copiado (excluye secrets/)" >&2
+  echo "→ Scanning what was copied (excludes secrets/)" >&2
   SCAN="$REPO_DIR/bin/scan-secrets.sh"
   [[ -x "$SCAN" ]] || SCAN="$PLUGIN_DIR/bin/scan-secrets.sh"
   if [[ -x "$SCAN" ]]; then
     if ! "$SCAN" "$CONFIG_DIR" "$STATE_DIR" 2>&1; then
-      echo "  ✗ POSIBLE SECRETO — NO hagas commit" >&2
+      echo "  ✗ POSSIBLE SECRET — DO NOT commit" >&2
       return 1
     fi
-    echo "  ✓ limpio" >&2
+    echo "  ✓ clean" >&2
   else
-    echo "  · scan-secrets.sh no encontrado, omitiendo" >&2
+    echo "  · scan-secrets.sh not found, skipping" >&2
   fi
-  echo "Listo. Revisa con 'git -C $REPO_DIR diff' y commitea con porqué." >&2
+  echo "Done. Review with 'git -C $REPO_DIR diff' and commit with a why." >&2
 }
 
 is_default_file() {
   # $1 = absolute source path (e.g. $HOME/.config/hypr/input.lua or /etc/...)
-  # returns 0 if idéntico al default de Omarchy → "por defecto"
+  # returns 0 if identical to Omarchy's default -> "default"
   local src="$1"
   local omarchy_path="${OMARCHY_PATH:-/usr/share/omarchy}"
   local rel=""
-  # mapea src → ruta relativa bajo /usr/share/omarchy/config o default
+  # maps src -> relative path under /usr/share/omarchy/config or default
   if [[ "$src" == "$HOME/.config/"* ]]; then
     rel="${src#$HOME/.config/}"
     for base in "$omarchy_path/config" "/usr/share/omarchy/config" "$omarchy_path/default" "/usr/share/omarchy/default"; do
@@ -293,15 +304,14 @@ is_default_file() {
         cmp -s "$src" "$base/$rel" 2>/dev/null && return 0
         return 1
       fi
-      # para carpetas con fichero dentro, ej hypr/input.lua → hypr/input.lua existe, ya probado
     done
-    # sin default conocido → no es por defecto (es personal tuyo)
+    # no known default -> not a default (it's your own)
     return 1
   elif [[ "$src" == "/etc/"* ]]; then
-    # /etc no tiene default en omarchy → siempre personalizado
+    # /etc has no Omarchy default -> always personal
     return 1
   elif [[ "$src" == "$HOME/.bashrc" ]]; then
-    # compara contra omarchy default bashrc si existe
+    # compare against Omarchy's default bashrc if it exists
     for base in "$omarchy_path/default/bash" "$omarchy_path/config" "/usr/share/omarchy/default/bash"; do
       [[ -f "$base/bashrc" ]] && { cmp -s "$src" "$base/bashrc" 2>/dev/null && return 0; return 1; }
     done
@@ -311,6 +321,40 @@ is_default_file() {
   fi
 }
 
+# path_unpushed <rel-path-inside-the-repo> — 0 (true) if that file's local HEAD
+# differs from origin/<branch> (includes "never pushed at all": no upstream -> true)
+path_unpushed() {
+  local relpath="$1"
+  if ! git -C "$REPO_DIR" rev-parse --abbrev-ref --symbolic-full-name @{u} >/dev/null 2>&1; then
+    return 0
+  fi
+  ! git -C "$REPO_DIR" diff --quiet @{u} -- "$relpath" 2>/dev/null
+}
+
+# discover_plugin_entries — auto-detects configs of OTHER installed Omarchy plugins
+# (goal: any-monitor, sleepwalker, enter-the-matrix, future dev/omarchy-*, and
+# third-party plugins too). Convention observed on this system: each plugin <id>
+# keeps its user config at ~/.config/omarchy/<last-segment-of-id>.json (e.g.
+# any-monitor.json, enter-the-matrix.json). No need to touch MANIFEST when a new
+# plugin following that convention is installed.
+# Emits one "src<TAB>rel<TAB>label" line per detected plugin with a config present.
+discover_plugin_entries() {
+  local plugins_dir="$HOME/.config/omarchy/plugins"
+  [[ -d "$plugins_dir" ]] || return 0
+  local mf pid pname short src
+  for mf in "$plugins_dir"/*/manifest.json; do
+    [[ -f "$mf" ]] || continue
+    pid=$(jq -r '.id // empty' "$mf" 2>/dev/null) || continue
+    [[ -n "$pid" ]] || continue
+    [[ "$pid" == "io.github.tymurbogach.omarchy-replicant" ]] && continue
+    pname=$(jq -r '.name // .id' "$mf" 2>/dev/null)
+    short="${pid##*.}"
+    src="$HOME/.config/omarchy/$short.json"
+    [[ -f "$src" ]] || continue
+    printf '%s\t%s\t%s\n' "$src" "plugins/$short.json" "$pname"
+  done
+}
+
 build_configs_json() {
   local entries=()
   local entry src dst rel label group exists is_default
@@ -318,28 +362,48 @@ build_configs_json() {
     src="${entry%%:*}"
     rel="${entry##*:}"
     label="$rel"
-    # grupo por prefijo
+    # group by prefix
     case "$rel" in
       home/*) group="shell" ;;
       ssh/*|git/*) group="git/ssh" ;;
       claude/*) group="claude" ;;
       hypr/*) group="hypr" ;;
-      uwsm/*|xdg-terminals*) group="sesión" ;;
+      uwsm/*|xdg-terminals*) group="session" ;;
       omarchy/*|omarchy-audit*|branding/*) group="omarchy" ;;
       alacritty*|foot*|kitty*|ghostty*) group="terminal" ;;
       opencode*|mise*|vscode*|dev/*) group="dev" ;;
       bin/*) group="scripts" ;;
-      etc/*) group="sistema" ;;
+      etc/*) group="system" ;;
       omarchy-plugin/*) group="replicant" ;;
-      *) group="otros" ;;
+      *) group="other" ;;
     esac
     if [[ -f "$src" ]]; then exists=true; else exists=false; fi
     if [[ -f "$src" ]] && is_default_file "$src"; then is_default=true; else is_default=false; fi
-    # detecta si el repo tiene cambios sin commitear para ese rel
+    # does the repo have uncommitted changes for this rel (vs. the last local commit)?
     local dirty=false
     if git -C "$REPO_DIR" status --porcelain -- "config/$rel" 2>/dev/null | grep -q .; then dirty=true; fi
-    entries+=("$(jq -nc --arg id "$rel" --arg label "$label" --arg src "$src" --arg group "$group" --argjson exists "$exists" --argjson is_default "$is_default" --argjson dirty "$dirty" '{id:$id,label:$label,src:$src,group:$group,exists:$exists,is_default:$is_default,dirty:$dirty}')")
+    # is that rel's last local commit not on origin yet (vs. GitHub)?
+    local unpushed=false
+    if path_unpushed "config/$rel"; then unpushed=true; fi
+    # third state: default (○ default) > modified (● changed or not pushed) > saved (◆ on GitHub)
+    local sync_state
+    if [[ "$is_default" == true ]]; then sync_state="default"
+    elif [[ "$dirty" == true || "$unpushed" == true ]]; then sync_state="modified"
+    else sync_state="saved"
+    fi
+    entries+=("$(jq -nc --arg id "$rel" --arg label "$label" --arg src "$src" --arg group "$group" --argjson exists "$exists" --argjson is_default "$is_default" --argjson dirty "$dirty" --argjson unpushed "$unpushed" --arg sync_state "$sync_state" --arg source "manifest" '{id:$id,label:$label,src:$src,group:$group,exists:$exists,is_default:$is_default,dirty:$dirty,unpushed:$unpushed,sync_state:$sync_state,source:$source}')")
   done
+  # auto-detected entries from other plugins (no known Omarchy default -> never "default")
+  local psrc prel pname pdirty punpushed psync
+  while IFS=$'\t' read -r psrc prel pname; do
+    [[ -n "$psrc" ]] || continue
+    pdirty=false
+    if git -C "$REPO_DIR" status --porcelain -- "config/$prel" 2>/dev/null | grep -q .; then pdirty=true; fi
+    punpushed=false
+    if path_unpushed "config/$prel"; then punpushed=true; fi
+    if [[ "$pdirty" == true || "$punpushed" == true ]]; then psync="modified"; else psync="saved"; fi
+    entries+=("$(jq -nc --arg id "$prel" --arg label "$pname" --arg src "$psrc" --arg group "plugins" --argjson exists true --argjson is_default false --argjson dirty "$pdirty" --argjson unpushed "$punpushed" --arg sync_state "$psync" --arg source "auto" '{id:$id,label:$label,src:$src,group:$group,exists:$exists,is_default:$is_default,dirty:$dirty,unpushed:$unpushed,sync_state:$sync_state,source:$source}')")
+  done < <(discover_plugin_entries)
   printf '%s\n' "${entries[@]}" | jq -s '.'
 }
 
@@ -360,9 +424,12 @@ core_status() {
   local json=0
   [[ "${1:-}" == "--json" ]] && json=1
   if [[ ! -d "$REPO_DIR/.git" ]]; then
-    if (( json )); then echo '{"initialized":false}'; else echo "no inicializado — ejecuta omarchy-replicant init --savegame"; fi
+    if (( json )); then echo '{"initialized":false}'; else echo "not initialized — run omarchy-replicant init --savegame"; fi
     return 0
   fi
+  # best-effort refresh of origin/HEAD (so unpushed/ahead/behind are accurate);
+  # never blocks if there's no network
+  timeout 3 git -C "$REPO_DIR" fetch --quiet 2>/dev/null || true
   local branch remote dirty untracked ahead behind
   branch=$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
   remote=$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null || echo "")
@@ -391,7 +458,7 @@ core_status() {
   fi
 }
 
-# Used by omarchy-replicant Savegame wrapper
+# Used by the omarchy-replicant CLI wrapper
 if [[ "${1:-}" == "backup" ]]; then core_backup
 elif [[ "${1:-}" == "status" ]]; then core_status "${2:-}"
 fi

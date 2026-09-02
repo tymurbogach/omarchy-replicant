@@ -63,7 +63,10 @@ BarWidget {
   }
 
   // when panel opens, refresh immediately
-  onOpenedChanged: { console.log("replicant opened:", opened); if (opened) refresh() }
+  onOpenedChanged: {
+    console.log("replicant opened:", opened, "anchor", panelAnchor.x, panelAnchor.y, "map", panelAnchor.mapToItem(null,0,0), "bar", bar ? bar.position : "null")
+    if (opened) refresh()
+  }
 
   Process {
     id: probe
@@ -103,16 +106,25 @@ BarWidget {
     }
   }
 
-  // Anchor para KeyboardPanel — justo debajo del icono, alineado a la izquierda.
-  // No usar visible:false porque QsWindow necesita anchor visible para mapear.
+  // Anchor para KeyboardPanel — justo debajo del icono
   Item {
     id: panelAnchor
-    anchors.left: button.left
-    anchors.top: button.bottom
-    anchors.topMargin: Style.space(6)
+    x: button.x
+    y: button.y + button.height + Style.space(6)
     width: 520
     height: 1
     opacity: 0
+    visible: true
+    onXChanged: console.log("replicant anchor x", x, "y", y, "mapToGlobal", mapToItem(null, 0, 0), "bar", bar ? bar.position : "no bar")
+    onYChanged: console.log("replicant anchor y", y, "mapToGlobal", mapToItem(null, 0, 0))
+  }
+  onBarChanged: {
+    console.log("replicant bar changed", bar ? bar.position : "null", "barForeground", bar ? bar.barForeground : "no bar")
+    if (panelLoader.item) {
+      panelLoader.item.bar = bar
+      panelLoader.item.anchorItem = panelAnchor
+      console.log("replicant injected bar into panel, anchor", panelAnchor.x, panelAnchor.y)
+    }
   }
 
   Loader {

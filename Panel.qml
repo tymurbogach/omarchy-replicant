@@ -14,8 +14,9 @@ Panel {
   property string cliFallback: Quickshell.env("HOME") + "/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/bin/omarchy-replicant"
   property var state: ({ initialized: false, configs: [], secrets: [] })
   property string lastOutput: ""
-  // edición: qué id está ocupado
   property string busyId: ""
+  Component.onCompleted: console.log("replicant Panel loaded, state initialized:", state.initialized)
+  onStateChanged: console.log("replicant Panel state changed:", state.initialized, state.configs ? state.configs.length : 0, "pending:", state.pending)
 
   readonly property color fg: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(fg, 1.55)
@@ -226,16 +227,18 @@ Panel {
             wrapMode: Text.WordWrap
           }
 
-          // grupos
+          // grupos — evita polish loop usando anchors en vez de width:parent.width
           Repeater {
             model: root.grouped
             delegate: Column {
               required property var modelData
-              width: parent.width
+              anchors.left: parent.left
+              anchors.right: parent.right
               spacing: Style.space(6)
 
               PanelSectionHeader {
-                width: parent.width
+                anchors.left: parent.left
+                anchors.right: parent.right
                 text: modelData.group
                 foreground: root.fg
                 fontFamily: root.ff
@@ -247,7 +250,8 @@ Panel {
                   required property var modelData
                   readonly property bool isDefault: !!modelData.is_default
                   readonly property bool isDirty: !!modelData.dirty
-                  width: parent.width
+                  anchors.left: parent.left
+                  anchors.right: parent.right
                   // altura mínima para que el distintivo y los botones quepan
                   implicitHeight: Math.max(64, row.implicitHeight + Style.spacing.rowPaddingY * 2)
                   radius: Style.cornerRadius

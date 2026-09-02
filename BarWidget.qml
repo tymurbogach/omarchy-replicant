@@ -53,7 +53,7 @@ BarWidget {
     if (!probe.running) probe.running = true
   }
 
-  Component.onCompleted: refresh()
+  Component.onCompleted: { console.log("replicant BarWidget loaded, cli:", cli); refresh() }
 
   Timer {
     interval: 15000
@@ -63,7 +63,7 @@ BarWidget {
   }
 
   // when panel opens, refresh immediately
-  onOpenedChanged: if (opened) refresh()
+  onOpenedChanged: { console.log("replicant opened:", opened); if (opened) refresh() }
 
   Process {
     id: probe
@@ -103,16 +103,16 @@ BarWidget {
     }
   }
 
-  // Anchor dedicated: cardWidth == anchorWidth collapses KeyboardPanel x formula to x = anchorX (left edge of icon)
-  // This pins the panel just below the icon instead of centered over it.
+  // Anchor para KeyboardPanel — justo debajo del icono, alineado a la izquierda.
+  // No usar visible:false porque QsWindow necesita anchor visible para mapear.
   Item {
     id: panelAnchor
     anchors.left: button.left
     anchors.top: button.bottom
     anchors.topMargin: Style.space(6)
-    width: panelLoader.item ? panelLoader.item.cardWidth : button.width
+    width: 520
     height: 1
-    visible: false
+    opacity: 0
   }
 
   Loader {

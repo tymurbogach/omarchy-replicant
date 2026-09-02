@@ -61,6 +61,25 @@ machine- or user-specific except through `MANIFEST`/`SECRETS_MANIFEST` in
   "one commit per decision, with the why" convention of the **data** repo, which is a different
   thing and lives in the other repo.
 
+## Quickshell caches compiled QML — clear it or you are testing old code
+
+**After changing any `.qml` file, `rm -rf ~/.cache/quickshell/qmlcache` before
+`omarchy restart shell`.** Quickshell keeps compiled QML (`.qmlc`) there, and it does
+*not* reliably invalidate on a plugin reinstall (`omarchy plugin remove` + `add`
+recreates the same paths). The shell will log `Local plugin changed, reloading` and
+still run the **old** compiled version — silently, with no error.
+
+This cost hours once: a whole feature plus several fixes appeared to "not work",
+the panel rendered a contradictory mix of old and new state, and every layer checked
+out fine in isolation (CLI JSON correct, `qmllint` clean, brace structure correct, no
+runtime warnings) because the running code simply wasn't the code on disk.
+
+**How to prove which code is actually running:** add a temporary
+`Component.onCompleted: console.log("...")` and check `journalctl --user | grep`.
+Other plugins' `console.log` shows up as `DEBUG qml:` — if yours doesn't appear at
+all, the component isn't being instantiated from your file, and the cache is stale.
+That check takes seconds and beats hours of reasoning about correct-looking code.
+
 ## Verify before calling it done
 
 - `omarchy-plugin-validate` on this directory after any structural change.

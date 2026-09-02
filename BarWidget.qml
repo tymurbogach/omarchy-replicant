@@ -75,7 +75,7 @@ BarWidget {
           var parsed = JSON.parse(text || "{}")
           root.state = parsed
           // inject into panel if loaded
-          if (panelLoader.item) panelLoader.item.state = parsed
+          if (panelLoader.item) { panelLoader.item.state = parsed; panelLoader.item.asked = true }
           root.asked = true
         } catch(e) {
           // try fallback cli once
@@ -85,6 +85,7 @@ BarWidget {
             return
           }
           root.state = ({ initialized: false })
+          if (panelLoader.item) panelLoader.item.asked = true
           root.asked = true
         }
         probe.command = [root.cli, "status", "--json"]
@@ -98,6 +99,7 @@ BarWidget {
           return
         }
         root.asked = true
+        if (panelLoader.item) panelLoader.item.asked = true
       }
       probe.command = [root.cli, "status", "--json"]
     }
@@ -129,6 +131,7 @@ BarWidget {
       item.anchorItem = panelAnchor
       item.hostWidget = root
       item.state = root.state
+      item.asked = root.asked
       item.cli = root.cli
       item.cliFallback = root.cliFallback
     }

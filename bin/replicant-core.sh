@@ -355,6 +355,82 @@ discover_plugin_entries() {
   done
 }
 
+# ─── SETTINGS — curated, individually-editable fields (not whole files) ─────
+# Unlike MANIFEST (whole files, tracked for backup/sync), each entry here is one
+# JSON field inside an already-tracked file, safe to read/write with jq alone.
+# Format: "id|absolute_file|jq_path|type|label|unit|min|max" (min/max only for
+# type=number, empty otherwise). Adding a new one is one line — no UI code needed,
+# Panel.qml renders a control per entry generically.
+SETTINGS=(
+  "idle.lock|$HOME/.config/omarchy/shell.json|.idle.lock|number|Lock screen|s|10|3600"
+  "idle.screensaver|$HOME/.config/omarchy/shell.json|.idle.screensaver|number|Screensaver|s|10|3600"
+  "idle.lazyDpms|$HOME/.config/omarchy/shell.json|.idle.lazyDpms|number|Display off (idle)|s|10|3600"
+  "idle.lazySuspendAc|$HOME/.config/omarchy/shell.json|.idle.lazySuspendAc|number|Suspend on AC power|s|0|7200"
+  "idle.lazySuspendBatt|$HOME/.config/omarchy/shell.json|.idle.lazySuspendBatt|number|Suspend on battery|s|0|7200"
+)
+
+setting_field() { echo "$1" | cut -d'|' -f"$2"; }
+
+find_setting() {
+  local id="$1" entry
+  for entry in "${SETTINGS[@]}"; do
+    [[ "$(setting_field "$entry" 1)" == "$id" ]] && { echo "$entry"; return 0; }
+  done
+  return 1
+}
+
+get_setting_value() {
+  local entry; entry=$(find_setting "$1") || return 1
+  local file jqpath; file=$(setting_field "$entry" 2); jqpath=$(setting_field "$entry" 3)
+  [[ -f "$file" ]] || return 1
+  jq -r "$jqpath // empty" "$file" 2>/dev/null
+}
+
+set_setting_value() {
+  local entry; entry=$(find_setting "$1") || { echo "unknown setting: $1" >&2; return 1; }
+  local file jqpath type label unit min max value="$2"
+  file=$(setting_field "$entry" 2); jqpath=$(setting_field "$entry" 3); type=$(setting_field "$entry" 4)
+  label=$(setting_field "$entry" 5); unit=$(setting_field "$entry" 6)
+  min=$(setting_field "$entry" 7); max=$(setting_field "$entry" 8)
+  [[ -f "$file" ]] || { echo "file not found: $file" >&2; return 1; }
+  case "$type" in
+    number)
+      [[ "$value" =~ ^-?[0-9]+$ ]] || { echo "$1: '$value' is not an integer" >&2; return 1; }
+      if [[ -n "$min" ]] && (( value < min )); then echo "$1: $value is below the minimum ($min$unit)" >&2; return 1; fi
+      if [[ -n "$max" ]] && (( value > max )); then echo "$1: $value is above the maximum ($max$unit)" >&2; return 1; fi
+      ;;
+    bool)
+      [[ "$value" == "true" || "$value" == "false" ]] || { echo "$1: '$value' must be true or false" >&2; return 1; }
+      ;;
+  esac
+  cp -a "$file" "$file.bak.$(date +%s)"
+  local tmp; tmp=$(mktemp)
+  case "$type" in
+    number|bool) jq --argjson v "$value" "$jqpath = \$v" "$file" > "$tmp" ;;
+    *)           jq --arg v "$value" "$jqpath = \$v" "$file" > "$tmp" ;;
+  esac
+  if [[ ! -s "$tmp" ]]; then echo "$1: jq write failed, left $file untouched" >&2; rm -f "$tmp"; return 1; fi
+  mv "$tmp" "$file"
+  echo "$label -> $value$unit" >&2
+}
+
+build_settings_json() {
+  local entries=()
+  local entry id file jqpath type label unit min max value
+  for entry in "${SETTINGS[@]}"; do
+    id=$(setting_field "$entry" 1); file=$(setting_field "$entry" 2); jqpath=$(setting_field "$entry" 3)
+    type=$(setting_field "$entry" 4); label=$(setting_field "$entry" 5); unit=$(setting_field "$entry" 6)
+    min=$(setting_field "$entry" 7); max=$(setting_field "$entry" 8)
+    value=$(get_setting_value "$id")
+    if [[ "$type" == "number" ]]; then
+      entries+=("$(jq -nc --arg id "$id" --arg label "$label" --arg type "$type" --arg unit "$unit" --argjson min "${min:-null}" --argjson max "${max:-null}" --argjson value "${value:-null}" '{id:$id,label:$label,type:$type,unit:$unit,min:$min,max:$max,value:$value}')")
+    else
+      entries+=("$(jq -nc --arg id "$id" --arg label "$label" --arg type "$type" --arg unit "$unit" --argjson min "${min:-null}" --argjson max "${max:-null}" --arg value "${value:-}" '{id:$id,label:$label,type:$type,unit:$unit,min:$min,max:$max,value:$value}')")
+    fi
+  done
+  printf '%s\n' "${entries[@]}" | jq -s '.'
+}
+
 build_configs_json() {
   local entries=()
   local entry src dst rel label group exists is_default
@@ -445,11 +521,12 @@ core_status() {
   if git -C "$REPO_DIR" status --porcelain -- secrets/ 2>/dev/null | grep -q .; then pending_groups="$pending_groups secrets"; fi
   if git -C "$REPO_DIR" status --porcelain -- state/ 2>/dev/null | grep -q .; then pending_groups="$pending_groups state"; fi
   if (( json )); then
-    local configs_json secrets_json
+    local configs_json secrets_json settings_json
     configs_json=$(build_configs_json)
     secrets_json=$(build_secrets_json)
-    jq -nc --arg branch "$branch" --arg remote "$remote" --argjson dirty "$dirty" --argjson untracked "$untracked" --argjson ahead "$ahead" --argjson behind "$behind" --arg pending "$pending_groups" --argjson configs "$configs_json" --argjson secrets "$secrets_json" \
-      '{initialized:true, branch:$branch, remote:$remote, dirty:$dirty, untracked:$untracked, ahead:$ahead, behind:$behind, pending:$pending, configs:$configs, secrets:$secrets}'
+    settings_json=$(build_settings_json)
+    jq -nc --arg branch "$branch" --arg remote "$remote" --argjson dirty "$dirty" --argjson untracked "$untracked" --argjson ahead "$ahead" --argjson behind "$behind" --arg pending "$pending_groups" --argjson configs "$configs_json" --argjson secrets "$secrets_json" --argjson settings "$settings_json" \
+      '{initialized:true, branch:$branch, remote:$remote, dirty:$dirty, untracked:$untracked, ahead:$ahead, behind:$behind, pending:$pending, configs:$configs, secrets:$secrets, settings:$settings}'
   else
     echo "branch: $branch"
     echo "remote: ${remote:-<none>}"

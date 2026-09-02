@@ -13,6 +13,12 @@ Panel {
   property string cli: Quickshell.env("HOME") + "/.local/bin/omarchy-replicant"
   property string cliFallback: Quickshell.env("HOME") + "/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/bin/omarchy-replicant"
   property var state: ({ initialized: false, configs: [], secrets: [] })
+  // true once a real status response has come back at least once. Gates the
+  // "not initialized, create/clone" section — showing it before we actually
+  // know the state let a stray click re-point an already-configured remote
+  // (a real incident: a click during this window ran `create` and pointed the
+  // repo's origin at the plugin's own public repo).
+  property bool asked: false
   property string lastOutput: ""
   property string busyId: ""
 
@@ -47,6 +53,11 @@ Panel {
   }
   function doResetAll() { runVisible(effectiveCli() + " reset-all --apply"); root.close() }
   function doRestoreAllFromGitHub() { runVisible(effectiveCli() + " restore --apply --all"); root.close() }
+  function doSetSetting(id, value) {
+    lastOutput = id + " -> " + value + "…"
+    setProc.command = [effectiveCli(), "set", id, String(value)]
+    setProc.running = true
+  }
 
   // flat config list, sorted so same-group entries sit together (feeds ListView's
   // section.property below — a plain Column+Repeater-of-Repeater nesting here caused
@@ -136,6 +147,18 @@ Panel {
       onStreamFinished: { if (text) root.lastOutput = (root.lastOutput + "\n" + text).slice(-1200) }
     }
   }
+  Process {
+    id: setProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: { root.lastOutput = text.slice(-1200); if (hostWidget) hostWidget.refresh() }
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: { if (text) root.lastOutput = (root.lastOutput + "\n" + text).slice(-1200) }
+    }
+    onExited: function(code){ if(code!==0) root.lastOutput="set failed ("+code+")\n"+root.lastOutput; if(hostWidget) hostWidget.refresh() }
+  }
 
   property var bar
   property var anchorItem
@@ -192,6 +215,61 @@ Panel {
 
         Column {
           width: parent.width
+          spacing: Style.space(8)
+          visible: !!(state && state.initialized === true && state.settings && state.settings.length > 0)
+
+          PanelSeparator { width: parent.width }
+          Text {
+            width: parent.width
+            text: "Quick settings — edited here, saved to your repo right away"
+            color: root.fg
+            font.family: root.ff
+            font.pixelSize: Style.font.subtitle
+            font.bold: true
+          }
+          Repeater {
+            model: state.settings
+            delegate: BorderSurface {
+              id: settingRow
+              required property var modelData
+              width: parent.width
+              implicitHeight: 52
+              radius: Style.cornerRadius
+              color: Style.controlFill(false, false, root.fg, Color.accent)
+              borderSpec: Border.controlSpec("normal", root.fg, Color.accent)
+              Row {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: Style.spacing.rowPaddingX
+                anchors.rightMargin: Style.spacing.rowPaddingX
+                spacing: Style.spacing.rowPaddingX
+                Text {
+                  width: parent.width - spinner.width - parent.spacing
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: settingRow.modelData.label + (settingRow.modelData.unit ? " (" + settingRow.modelData.unit + ")" : "")
+                  color: root.fg
+                  font.family: root.ff
+                  font.pixelSize: Style.font.subtitle
+                  elide: Text.ElideRight
+                }
+                SpinBox {
+                  id: spinner
+                  anchors.verticalCenter: parent.verticalCenter
+                  visible: settingRow.modelData.type === "number"
+                  editable: true
+                  from: settingRow.modelData.min !== null && settingRow.modelData.min !== undefined ? settingRow.modelData.min : 0
+                  to: settingRow.modelData.max !== null && settingRow.modelData.max !== undefined ? settingRow.modelData.max : 999999
+                  value: settingRow.modelData.value !== null && settingRow.modelData.value !== undefined ? settingRow.modelData.value : from
+                  onValueModified: root.doSetSetting(settingRow.modelData.id, value)
+                }
+              }
+            }
+          }
+        }
+
+        Column {
+          width: parent.width
           spacing: Style.space(6)
           visible: !!(state && state.initialized === true)
 
@@ -227,8 +305,15 @@ Panel {
           }
         }
 
+        Text {
+          width: parent.width; visible: !root.asked
+          text: "Checking status…"
+          color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
+        }
         Column {
-          width: parent.width; spacing: Style.space(6); visible: !(state && state.initialized)
+          // only once we've truly heard back "not initialized" — not just because
+          // that's the property's default value before the first response arrives
+          width: parent.width; spacing: Style.space(6); visible: root.asked && !(state && state.initialized)
           Text { width: parent.width; text: "No local repo yet. Create a private one or clone an existing one (everything: config+secrets+state)."; color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap }
           Row { spacing: Style.space(8)
             Button { text: "Create private"; iconText: "󰘐"; bordered: true; foreground: root.fg; accent: Color.accent; fontFamily: root.ff; onClicked: root.doCreateInTerminal() }

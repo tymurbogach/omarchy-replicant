@@ -17,8 +17,16 @@ REPLICANT_HOME="${OMARCHY_REPLICANT_HOME:-$HOME/.local/share/omarchy-replicant}"
 REPO_DIR="$REPLICANT_HOME/repo"
 # Default name for `create`: <this machine's hostname>-replicant, so each user/machine
 # gets its own distinctly-named private repo instead of everyone colliding on the same
-# literal name (which would also collide with the plugin's own repo name, omarchy-replicant).
-DEFAULT_REPO_NAME="$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo host)-replicant"
+# literal name — which would also collide with the plugin's own repo name,
+# "omarchy-replicant", on any machine whose hostname happens to be "omarchy" (the
+# distro's own default hostname — not a hypothetical, this actually happened). If that
+# exact collision would occur, fall back to $USER instead.
+_replicant_hostname="$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo host)"
+if [[ "$_replicant_hostname-replicant" == "omarchy-replicant" ]]; then
+  DEFAULT_REPO_NAME="${USER:-user}-replicant"
+else
+  DEFAULT_REPO_NAME="$_replicant_hostname-replicant"
+fi
 
 fail() { echo "omarchy-replicant: $*" >&2; exit 1; }
 info() { echo -e "\e[36m$*\e[0m" >&2; }
@@ -79,7 +87,15 @@ cmd_create() {
     gh repo create "$name" --private --description "Omarchy replicant — private savegame (config+secrets+state)" 2>&1 || fail "gh create failed"
   fi
   local url="https://github.com/$gh_user/$name.git"
-  if git_repo remote get-url origin >/dev/null 2>&1; then git_repo remote set-url origin "$url"; else git_repo remote add origin "$url"; fi
+  local current_url; current_url=$(git_repo remote get-url origin 2>/dev/null || echo "")
+  if [[ -n "$current_url" && "$current_url" != "$url" ]]; then
+    warn "$REPO_DIR is already pointed at $current_url"
+    read -rp "Re-point it to $url instead? This does NOT touch what's already pushed there, but future savegame/push go to the new remote [y/N] " resp </dev/tty 2>&1 || resp=""
+    [[ $resp == [yY] ]] || fail "create cancelled — remote left pointing at $current_url"
+    git_repo remote set-url origin "$url"
+  elif [[ -z "$current_url" ]]; then
+    git_repo remote add origin "$url"
+  fi
   git_repo branch -M main 2>/dev/null || true
   git_repo add -A
   if ! git_repo diff --cached --quiet; then git_repo commit -m "replicant: create $name $(date -Is)" || true; fi
@@ -346,6 +362,29 @@ cmd_reset_all() {
   if (( failures > 0 )); then warn "reset-all: $failures failure(s) — see above"; else ok "reset-all complete — check .bak.<epoch>"; fi
 }
 
+# get/set — curated per-field settings (SETTINGS registry in replicant-core.sh),
+# distinct from edit/diff/reset which operate on whole tracked files
+cmd_get() {
+  local id="${1:-}"
+  [[ -n "$id" ]] || fail "usage: get <setting-id>"
+  ensure_core
+  # shellcheck disable=SC1090
+  source "$CORE" 2>/dev/null || true
+  get_setting_value "$id" || fail "unknown or unreadable setting: $id"
+}
+
+cmd_set() {
+  local id="${1:-}" value="${2:-}"
+  [[ -n "$id" && -n "$value" ]] || fail "usage: set <setting-id> <value>"
+  ensure_core
+  # shellcheck disable=SC1090
+  source "$CORE" 2>/dev/null || true
+  set_setting_value "$id" "$value" || fail "could not set $id"
+  # this is a real decision (a value you chose), so it gets its own commit —
+  # same "one commit per decision, with the why" rule as a manual edit
+  cmd_savegame -m "config: $id = $value"
+}
+
 usage() {
   cat <<USAGE
 omarchy-replicant — private savegame (config+secrets+state) for Omarchy
@@ -357,6 +396,8 @@ Usage:
   omarchy-replicant backup                Copy only (no git)
   omarchy-replicant savegame [-m "why"] [--no-push]  backup + auto-commit state + push (leaves config/secrets for 1 commit per change)
   omarchy-replicant status [--json]
+  omarchy-replicant get <setting-id>      read one curated setting (e.g. idle.screensaver)
+  omarchy-replicant set <setting-id> <v>  write one curated setting + auto savegame commit
   omarchy-replicant diff [id]             diff vs default (or status if no id)
   omarchy-replicant edit <id>             open id in your editor (e.g. hypr/input.lua)
   omarchy-replicant reset <id>            restore the default via omarchy refresh (1 file)
@@ -389,6 +430,8 @@ main() {
     backup) shift; cmd_backup "$@";;
     savegame) shift; cmd_savegame "$@";;
     status) shift; cmd_status "$@";;
+    get) shift; cmd_get "$@";;
+    set) shift; cmd_set "$@";;
     diff) shift;
       if [[ $# -gt 0 ]]; then cmd_open_diff "$@"; else cmd_diff "$@"; fi
       ;;

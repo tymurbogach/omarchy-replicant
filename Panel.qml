@@ -44,8 +44,21 @@ Panel {
     root.close()
   }
   function doCreateInTerminal() {
-    runVisible(effectiveCli() + " create omarchy-replicant --public --push")
+    runVisible(effectiveCli() + " create --push")
     root.close()
+  }
+  function doSavegame() {
+    lastOutput = "savegame…"
+    saveProc.command = [effectiveCli(), "savegame"]
+    saveProc.running = true
+  }
+  function doBackup() {
+    lastOutput = "backup…"
+    backupProc.command = [effectiveCli(), "backup"]
+    backupProc.running = true
+  }
+  function doRestoreDry() {
+    runVisible(effectiveCli() + " restore --dry-run")
   }
 
   readonly property string summary: {
@@ -77,8 +90,19 @@ Panel {
   }
   Process {
     id: statusProc
-    stdout: StdioCollector { waitForEnd: true; onStreamFinished: { root.lastOutput = text.slice(-800) } }
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: { root.lastOutput = text.slice(-1200); if (hostWidget) hostWidget.refresh() } }
     stderr: StdioCollector { waitForEnd: true; onStreamFinished: { if (text) root.lastOutput = text.slice(-800) } }
+  }
+  Process {
+    id: saveProc
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: { root.lastOutput = text.slice(-1200); if (hostWidget) hostWidget.refresh() } }
+    stderr: StdioCollector { waitForEnd: true; onStreamFinished: { if (text) root.lastOutput = (root.lastOutput + "\n" + text).slice(-1200) } }
+    onExited: function(code){ if (code!==0) root.lastOutput = "savegame falló ("+code+")\n"+root.lastOutput; if (hostWidget) hostWidget.refresh() }
+  }
+  Process {
+    id: backupProc
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: { root.lastOutput = text.slice(-1200) } }
+    stderr: StdioCollector { waitForEnd: true; onStreamFinished: { if (text) root.lastOutput = (root.lastOutput + "\n" + text).slice(-1200) } }
   }
 
   // We are rendered as Panel by BarWidget's Loader — hook its opened/anchor
@@ -97,8 +121,9 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(420))
-    contentHeight: panel.fittedContentHeight(col.implicitHeight, Style.space(560))
+    // anchor justo debajo del icono (panelAnchor en BarWidget)
+    contentWidth: panel.fittedContentWidth(Style.space(460))
+    contentHeight: panel.fittedContentHeight(col.implicitHeight, Style.space(620))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -134,29 +159,38 @@ Panel {
           font.family: root.ff
           font.pixelSize: Style.font.caption
         }
+        Text {
+          width: parent.width
+          visible: !!(state.pending && String(state.pending).trim() !== "")
+          text: "pendientes:" + (state.pending || "")
+          color: Color.accent
+          font.family: root.ff
+          font.pixelSize: Style.font.caption
+        }
 
+        // Savegame actions — replica savegame.sh pero en el panel
         Row {
           width: parent.width
           spacing: Style.space(8)
           Button {
-            text: "Push"
-            iconText: "󰸝"
+            text: "Savegame"
+            iconText: "󰆓"
             bordered: true
             foreground: root.fg
             accent: Color.accent
             fontFamily: root.ff
             enabled: state.initialized
-            onClicked: root.doPush()
+            tooltipText: "backup + commit state auto + push (privado, todo)"
+            onClicked: root.doSavegame()
           }
           Button {
-            text: "Pull"
-            iconText: "󰸜"
-            bordered: true
+            text: "Backup"
+            iconText: "󰃨"
+            bordered: false
             foreground: root.fg
-            accent: Color.accent
             fontFamily: root.ff
-            enabled: state.initialized
-            onClicked: root.doPull()
+            enabled: true
+            onClicked: root.doBackup()
           }
           Button {
             text: "Status"
@@ -167,15 +201,45 @@ Panel {
             onClicked: root.doStatus()
           }
         }
+        Row {
+          width: parent.width
+          spacing: Style.space(8)
+          Button {
+            text: "Push"
+            iconText: "󰸝"
+            bordered: false
+            foreground: root.fg
+            fontFamily: root.ff
+            enabled: state.initialized
+            onClicked: root.doPush()
+          }
+          Button {
+            text: "Pull"
+            iconText: "󰸜"
+            bordered: false
+            foreground: root.fg
+            fontFamily: root.ff
+            enabled: state.initialized
+            onClicked: root.doPull()
+          }
+          Button {
+            text: "Restore dry"
+            iconText: "󰦛"
+            bordered: false
+            foreground: root.fg
+            fontFamily: root.ff
+            onClicked: root.doRestoreDry()
+          }
+        }
 
-        // uninitialized helper
+        // uninitialized helper — siempre privado
         Column {
           width: parent.width
           spacing: Style.space(6)
           visible: !state.initialized
           Text {
             width: parent.width
-            text: "No hay repo local. Crea uno o clona el existente."
+            text: "No hay repo local. Crea uno privado o clona el existente (todo: config+secrets+state)."
             color: root.dim
             font.family: root.ff
             font.pixelSize: Style.font.caption
@@ -184,7 +248,7 @@ Panel {
           Row {
             spacing: Style.space(8)
             Button {
-              text: "Create (public)"
+              text: "Create privado"
               iconText: "󰘐"
               bordered: true
               foreground: root.fg
@@ -217,7 +281,7 @@ Panel {
 
         Text {
           width: parent.width
-          text: "CLI: omarchy-replicant status | push -m \"msg\" | clone <url> | restore --yes\nConfig: ~/.local/share/omarchy-replicant/config.toml"
+          text: "CLI: savegame | backup | restore --apply | status --json\nRepo privado: ~/.local/share/omarchy-replicant/repo (config/secrets/state) · MANIFEST fijo savegame"
           color: root.dim
           font.family: root.ff
           font.pixelSize: Style.font.caption

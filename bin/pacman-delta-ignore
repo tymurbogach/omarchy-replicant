@@ -1,0 +1,22 @@
+# Paquetes que aparecen en la deriva pero NO son una decisión tuya, así que
+# bin/install-paquetes.sh no debe intentar instalarlos. Un nombre por línea.
+#
+# Criterio, a propósito conservador: solo se ignora lo que se puede justificar.
+# Un falso positivo en el delta es barato (un `--needed` redundante que no hace
+# nada); un falso negativo es un paquete que falta en la máquina nueva y que no
+# descubres hasta que algo no arranca. En la duda, se deja en el delta.
+
+omarchy            # el propio Omarchy, lo trae el ISO
+omarchy-keyring    # idem
+omarchy-settings   # idem
+
+sudo               # base de Arch, lo pone el instalador
+mkinitcpio         # idem — y aquí va por limine-mkinitcpio-install
+efibootmgr         # idem
+intel-ucode        # microcódigo, lo elige el instalador según la CPU
+fwupd              # firmware, idem
+
+fprintd            # los instala `omarchy setup security fingerprint`,
+libfprint          # que además configura pam para sudo, polkit y hyprlock.
+pam-u2f            # Un `pkg add` los pondría sin configurar nada.
+libfido2           #

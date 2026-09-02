@@ -1,547 +1,267 @@
 #!/bin/bash
-# omarchy:summary=Sincroniza tu workspace Omarchy con GitHub (omarchy-replicant)
-# omarchy:group=replicant
-# omarchy:args=<status|push|pull|clone|login|create|init|diff> [args]
+# omarchy-replicant — savegame para Omarchy 4 (port de omarchy_thinkpad)
+# Siempre privado, todo (config+secrets+state), MANIFEST fijo
+# Panel anclado debajo del icono usa este CLI vía status --json
 set -euo pipefail
 
-PLUGIN_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+REAL_BIN="$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+PLUGIN_DIR="$(cd -- "$(dirname -- "$REAL_BIN")/.." && pwd)"
+CORE="$PLUGIN_DIR/bin/replicant-core.sh"
+# fallback if running via copy without plugin dir
+if [[ ! -f "$CORE" ]]; then
+  for p in "$HOME/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/bin/replicant-core.sh" "/usr/share/omarchy/bin/replicant-core.sh"; do
+    [[ -f "$p" ]] && CORE="$p" && PLUGIN_DIR="$(cd -- "$(dirname -- "$p")/.." && pwd)" && break
+  done
+fi
 REPLICANT_HOME="${OMARCHY_REPLICANT_HOME:-$HOME/.local/share/omarchy-replicant}"
 REPO_DIR="$REPLICANT_HOME/repo"
-CONFIG_FILE="$REPLICANT_HOME/config.toml"
 DEFAULT_REPO_NAME="omarchy-replicant"
-
-# Hard denylist — never push even if user adds to includes (public repo safety)
-# Note: .ssh/config is ALLOWED — only secrets are denied
-HARD_DENY=(
-  ".config/gh/hosts.yml"
-  ".config/gh/hosts.yml.bak"
-  ".config/1Password"
-  ".config/opencode/auth.json"
-  ".ssh/id_*"
-  ".ssh/*.pem"
-  ".ssh/known_hosts"
-  ".gnupg"
-  ".pki"
-  ".cache"
-  ".local/share/Trash"
-  ".local/share/zoxide"
-  ".config/Code/CachedData"
-  ".config/Code/Cache"
-  ".config/Code/CachedExtensions"
-  ".config/chromium/*/Cache"
-  ".config/google-chrome*/Cache"
-  ".config/BraveSoftware/*/Cache"
-  ".config/mozilla/firefox/*/Cache"
-)
 
 fail() { echo "omarchy-replicant: $*" >&2; exit 1; }
 info() { echo -e "\e[36m$*\e[0m" >&2; }
 warn() { echo -e "\e[33m$*\e[0m" >&2; }
 ok()   { echo -e "\e[32m$*\e[0m" >&2; }
 
-ensure_repo() {
-  [[ -d "$REPO_DIR/.git" ]] || fail "repo no inicializado. Ejecuta: omarchy-replicant init  |  omarchy-replicant clone <url>"
-}
-
 git_repo() { git -C "$REPO_DIR" "$@"; }
 
-# --- default includes: "todos" but sane excludes already above
-default_includes() {
-  cat <<'INCLUDES'
-# Omarchy core
-.config/omarchy
-.config/hypr
-# Shell / terminal
-.config/alacritty
-.config/foot
-.config/ghostty
-.config/kitty
-.config/starship.toml
-.config/tmux
-.config/nvim
-.config/mise
-.config/lazygit
-.config/btop
-.config/fastfetch
-.config/wireplumber
-.config/mpv
-.config/imv
-# Extras
-.config/obsidian
-.config/Code/User/settings.json
-.config/Code/User/keybindings.json
-.ssh/config
-.gitconfig
-.mise.toml
-INCLUDES
-}
+ensure_core() { [[ -x "$CORE" ]] || fail "replicant-core.sh no encontrado en $CORE"; }
 
-write_default_config() {
-  mkdir -p "$(dirname "$CONFIG_FILE")"
-  if [[ -f "$CONFIG_FILE" ]]; then return 0; fi
-  cat >"$CONFIG_FILE" <<EOF
-# Omarchy Replicant — lista blanca de paths relativos a \$HOME
-# Cada línea es un path. Líneas vacías y # son comentarios.
-# Si este archivo no existe, se usa el default (todos los configs relevantes).
-EOF
-  default_includes >>"$CONFIG_FILE"
-  echo "# --- generado $(date -Iseconds) ---" >>"$CONFIG_FILE"
-  # also save package inventory path
-  echo "" >>"$CONFIG_FILE"
-}
-
-load_includes() {
-  if [[ -f "$CONFIG_FILE" ]]; then
-    grep -v '^\s*#' "$CONFIG_FILE" | sed '/^\s*$/d' | sed 's/^\s*//;s/\s*$//'
-  else
-    default_includes | grep -v '^\s*#' | sed '/^\s*$/d'
-  fi
-}
-
-is_hard_denied() {
-  local path="$1"
-  for pat in "${HARD_DENY[@]}"; do
-    # bash glob match (supports * and ?)
-    # shellcheck disable=SC2053
-    if [[ $path == $pat ]] || [[ $path == $pat/* ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
-# Collect files to sync into REPO_DIR work-tree
-sync_to_repo() {
-  mkdir -p "$REPO_DIR"
-  # init git if missing
-  if [[ ! -d "$REPO_DIR/.git" ]]; then
-    git -C "$REPO_DIR" init -q -b main
-    # fallback if git <2.28
-    git_repo config init.defaultBranch main 2>/dev/null || true
-    git_repo config user.name  "${GIT_AUTHOR_NAME:-$(git config --global user.name || echo "$USER")}"
-    git_repo config user.email "${GIT_AUTHOR_EMAIL:-$(git config --global user.email || echo "$USER@omarchy-replicant")}"
-  fi
-
-  # ensure .gitignore with hard denylist
-  if [[ ! -f "$REPO_DIR/.gitignore" ]]; then
-    cat >"$REPO_DIR/.gitignore" <<'GI'
-# — Omarchy Replicant auto-generated .gitignore (no tocar secretos) —
-**/.cache/
-**/Cache/
-**/CachedData/
-**/Code/Cache/
-.ssh/id_*
-.ssh/*.pem
-.gnupg/
-.pki/
-.config/gh/hosts.yml
-.config/1Password/
-.config/opencode/auth.json
-**/*.log
-GI
-  fi
-
-  # Build file list from includes
-  local tmp_list
-  tmp_list=$(mktemp)
-  load_includes >"$tmp_list"
-
-  # Copy/sync logic: use rsync if available, else cp -a
-  local has_rsync=0
-  command -v rsync >/dev/null 2>&1 && has_rsync=1
-
-  while IFS= read -r rel; do
-    [[ -z "$rel" ]] && continue
-    # expand globs? Keep simple: treat as literal relative path, but support * via bash glob
-    # For now, handle * by expanding via compgen
-    if [[ "$rel" == *"*"* ]]; then
-      # glob expand relative to HOME
-      for match in $HOME/$rel; do
-        [[ -e "$match" ]] || continue
-        rel_expanded="${match#$HOME/}"
-        is_hard_denied "$rel_expanded" && continue
-        src="$HOME/$rel_expanded"
-        dst="$REPO_DIR/$rel_expanded"
-        mkdir -p "$(dirname "$dst")"
-        if (( has_rsync )); then rsync -a --delete "$src" "$dst" 2>/dev/null || cp -a "$src" "$dst"
-        else cp -a "$src" "$dst" 2>/dev/null || true
-        fi
-      done
-    else
-      is_hard_denied "$rel" && { warn "omitido (denylist): $rel"; continue; }
-      src="$HOME/$rel"
-      [[ -e "$src" ]] || { warn "no existe, omitido: $rel"; continue; }
-      # also check denylist for subfiles inside?
-      dst="$REPO_DIR/$rel"
-      # if src is a file, ensure parent; if dir, sync recursively
-      mkdir -p "$(dirname "$dst")"
-      if [[ -d "$src" ]]; then
-        if (( has_rsync )); then
-          rsync -a --delete --exclude='.git' "$src/" "$dst/" 2>/dev/null || cp -a "$src/." "$dst/"
-        else
-          rm -rf "$dst" 2>/dev/null || true
-          cp -a "$src" "$dst" 2>/dev/null || true
-        fi
-        # scrub denylisted subpaths after copy (e.g. Cache inside Code)
-        for pat in "${HARD_DENY[@]}"; do
-          rm -rf "$REPO_DIR/$pat" 2>/dev/null || true
-        done
-      else
-        cp -a "$src" "$dst" 2>/dev/null || true
-      fi
-    fi
-  done <"$tmp_list"
-  rm -f "$tmp_list"
-
-  # Generate metadata
-  cat >"$REPO_DIR/.omarchy-replicant.json" <<JSON
-{
-  "generated_at": "$(date -Iseconds)",
-  "hostname": "$(hostname)",
-  "user": "$USER",
-  "omarchy_version": "$(cat /usr/share/omarchy/version 2>/dev/null || echo unknown)",
-  "includes_source": "$CONFIG_FILE"
-}
-JSON
-  # Also snapshot packages / mise
-  {
-    echo "# pacman -Qe $(date -Iseconds)"
-    pacman -Qe 2>/dev/null || echo "# pacman not available"
-  } >"$REPO_DIR/packages.txt"
-  {
-    echo "# mise list $(date -Iseconds)"
-    mise list 2>/dev/null || echo "# mise not available"
-  } >"$REPO_DIR/mise.txt"
-  # pure JSON for Panel jq — no comment header
-  omarchy plugin list --json 2>/dev/null | jq . 2>/dev/null || echo "[]" >"$REPO_DIR/omarchy-plugins.json"
-  {
-    echo "# themes"
-    omarchy theme list 2>/dev/null || true
-  } >"$REPO_DIR/omarchy-themes.txt"
-
-  # README for public repo
-  if [[ ! -f "$REPO_DIR/README.md" ]]; then
-    cat >"$REPO_DIR/README.md" <<'README'
-# omarchy-replicant
-
-Backup de mi workspace Omarchy 4 — sincronizado con [omarchy-replicant](https://github.com/tymurbogach/omarchy-replicant).
-
-- **Restore en nueva máquina:**
-  ```bash
-  omarchy plugin add https://github.com/<user>/omarchy-replicant --enable  # o clona el plugin
-  omarchy-replicant clone https://github.com/<user>/omarchy-replicant
-  # o:
-  git clone https://github.com/<user>/omarchy-replicant ~/.local/share/omarchy-replicant/repo
-  omarchy-replicant restore --yes
-  ```
-
-- **Uso diario:**
-  ```bash
-  omarchy-replicant status
-  omarchy-replicant push -m "update"
-  omarchy-replicant pull
-  ```
-
-> ⚠️  Este repo es público: secretos (.ssh/id_*, gh/hosts.yml, 1Password) se excluyen automáticamente.
-README
-  fi
-}
-
-cmd_status() {
-  local json=0
-  while (( $# )); do case "$1" in --json) json=1; shift;; *) shift;; esac; done
-  if [[ ! -d "$REPO_DIR/.git" ]]; then
-    if (( json )); then echo '{"initialized":false}'; else echo "no inicializado — ejecuta omarchy-replicant init"; fi
-    return 0
-  fi
-  local branch remote ahead behind dirty untracked
-  branch=$(git_repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
-  remote=$(git_repo remote get-url origin 2>/dev/null || echo "")
-  dirty=$(git_repo status --porcelain 2>/dev/null | wc -l | tr -d ' ')
-  untracked=$(git_repo status --porcelain 2>/dev/null | grep -c '^??' || true)
-  # ahead/behind if remote exists
-  ahead=0; behind=0
-  if git_repo rev-parse --abbrev-ref --symbolic-full-name @{u} >/dev/null 2>&1; then
-    ahead=$(git_repo rev-list --count @{u}..HEAD 2>/dev/null || echo 0)
-    behind=$(git_repo rev-list --count HEAD..@{u} 2>/dev/null || echo 0)
-  fi
-  if (( json )); then
-    jq -nc --arg branch "$branch" --arg remote "$remote" --argjson dirty "$dirty" --argjson untracked "$untracked" --argjson ahead "$ahead" --argjson behind "$behind" \
-      '{initialized:true, branch:$branch, remote:$remote, dirty:$dirty, untracked:$untracked, ahead:$ahead, behind:$behind}'
-  else
-    echo "branch: $branch"
-    echo "remote: ${remote:-<none>}"
-    echo "dirty files: $dirty (untracked: $untracked)"
-    echo "ahead/behind: $ahead / $behind"
-    if (( dirty > 0 )); then
-      echo "--- git status ---"
-      git_repo status --short 2>/dev/null | head -n 50
-    fi
-  fi
-}
+cmd_status() { ensure_core; bash "$CORE" status "${1:-}"; }
+cmd_backup() { ensure_core; bash "$CORE" backup; }
 
 cmd_init() {
-  write_default_config
-  sync_to_repo
-  git_repo add -A 2>/dev/null || true
-  if git_repo diff --cached --quiet 2>/dev/null; then
-    ok "init: nada nuevo que commitear"
-  else
-    git_repo commit -m "replicant: init $(date -Iseconds) $(hostname)" 2>/dev/null || warn "commit falló (¿sin cambios?)"
-  fi
-  ok "init listo en $REPO_DIR"
-  ok "configs incluidos: $(load_includes | wc -l) entradas (ver $CONFIG_FILE)"
+  local savegame=0
+  while (( $# )); do case "$1" in --savegame) savegame=1; shift;; *) shift;; esac; done
+  ensure_core
+  # always savegame layout
+  bash "$CORE" backup
+  git_repo add -A
+  if git_repo diff --cached --quiet; then ok "init: nada nuevo"; else git_repo commit -q -m "replicant: init $(date +%F) $(hostname)"; ok "init commit"; fi
+  git_repo config core.hooksPath .githooks 2>/dev/null || true
+  ok "init listo en $REPO_DIR (savegame layout: config/secrets/state)"
 }
 
 cmd_login() {
   if command -v gh >/dev/null 2>&1; then
-    if gh auth status >/dev/null 2>&1; then
-      ok "ya logueado: $(gh auth status 2>&1 | head -n1)"
-      return 0
-    fi
-    info "ejecutando gh auth login..."
-    gh auth login --web --git-protocol https || gh auth login
-  else
-    fail "gh no instalado. Instala con: omarchy pkg add github-cli  /  mise use gh"
-  fi
+    if gh auth status >/dev/null 2>&1; then ok "ya logueado: $(gh auth status 2>&1 | head -n1)"; return 0; fi
+    info "gh auth login..."; gh auth login --web --git-protocol https || gh auth login
+  else fail "gh no instalado: omarchy pkg add github-cli"; fi
 }
 
 cmd_create() {
-  local name="${1:-$DEFAULT_REPO_NAME}"
-  local visibility="--public"
-  local do_push=0
+  local name="$DEFAULT_REPO_NAME" do_push=0
   while (( $# )); do case "$1" in
-    --private) visibility="--private"; shift;;
-    --public) visibility="--public"; shift;;
+    --private) shift;; # always private, ignore
+    --public) warn "replicante es siempre privado (contiene secrets/) — ignorando --public"; shift;;
     --push) do_push=1; shift;;
-    --help|-h) echo "Usage: omarchy-replicant create [repo-name] [--private|--public] [--push]"; return 0;;
+    --help|-h) echo "Usage: omarchy-replicant create [name] [--push] (siempre --private)"; return 0;;
+    -*) fail "opción desconocida: $1";;
     *) name="$1"; shift;;
   esac; done
-  # sanitize
-  if ! [[ $name =~ ^[A-Za-z0-9._-]+$ ]]; then fail "nombre repo inválido: $name"; fi
+  [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || fail "nombre inválido: $name"
   cmd_login
-  write_default_config
-  # ensure repo exists locally
-  if [[ ! -d "$REPO_DIR/.git" ]]; then cmd_init; else sync_to_repo; fi
-  # check gh
+  ensure_core
+  if [[ ! -d "$REPO_DIR/.git" ]]; then cmd_init; else bash "$CORE" backup; fi
   local gh_user
   gh_user=$(gh api user --jq .login 2>/dev/null || gh auth status 2>&1 | grep -oP 'account \K\w+' | head -n1)
-  [[ -n "$gh_user" ]] || fail "no se pudo obtener usuario gh"
-  info "creando github.com/$gh_user/$name $visibility ..."
+  [[ -n "$gh_user" ]] || fail "no gh user"
+  info "creando github.com/$gh_user/$name --private ..."
   if gh repo view "$gh_user/$name" >/dev/null 2>&1; then
-    warn "repo ya existe: $gh_user/$name — solo enlazando remote"
+    local vis
+    vis=$(gh repo view "$gh_user/$name" --json visibility --jq .visibility 2>/dev/null || echo "")
+    if [[ "$vis" == "PUBLIC" ]]; then
+      warn "repo ya existe como PÚBLICO — pásalo a privado: gh repo edit $gh_user/$name --visibility private"
+    else warn "repo ya existe — enlazando remote"; fi
   else
-    gh repo create "$name" "$visibility" --description "Omarchy replicant — workspace sync" 2>&1 || fail "gh repo create falló"
+    gh repo create "$name" --private --description "Omarchy replicant — savegame privado (config+secrets+state)" 2>&1 || fail "gh create falló"
   fi
   local url="https://github.com/$gh_user/$name.git"
-  if git_repo remote get-url origin >/dev/null 2>&1; then
-    git_repo remote set-url origin "$url"
-  else
-    git_repo remote add origin "$url"
-  fi
+  if git_repo remote get-url origin >/dev/null 2>&1; then git_repo remote set-url origin "$url"; else git_repo remote add origin "$url"; fi
   git_repo branch -M main 2>/dev/null || true
   git_repo add -A
-  if ! git_repo diff --cached --quiet; then
-    git_repo commit -m "replicant: create $name $(date -Iseconds)" || true
-  fi
-  if (( do_push )) || gum confirm "¿Push ahora a $url?" 2>/dev/null; then
-    git_repo push -u origin main || git_repo push -u origin HEAD
-    ok "push listo a $url"
-  else
-    info "remote configurado: $url — ejecuta omarchy-replicant push para subir"
-  fi
+  if ! git_repo diff --cached --quiet; then git_repo commit -m "replicant: create $name $(date -Is)" || true; fi
+  if (( do_push )) || { command -v gum >/dev/null 2>&1 && gum confirm "¿Push ahora a $url?"; }; then
+    git_repo push -u origin main 2>&1 || git_repo push -u origin HEAD 2>&1
+    ok "push listo a $url (privado)"
+  else info "remote $url — ejecuta omarchy-replicant savegame para subir"; fi
 }
 
-cmd_push() {
-  ensure_repo
-  local msg="" assume_yes=0
+# savegame — sistema -> repo -> GitHub (port de savegame.sh)
+cmd_savegame() {
+  local MSG="" PUSH=1
   while (( $# )); do case "$1" in
-    -m|--message) msg="$2"; shift 2;;
-    -y|--yes) assume_yes=1; shift;;
-    *) msg="$*"; break;;
+    -m|--message) MSG=${2:-}; [[ -n "$MSG" ]] || fail "-m necesita mensaje"; shift 2;;
+    --no-push) PUSH=0; shift;;
+    -h|--help) echo "savegame: backup + commit state auto + push. Sin -m deja config/secrets sin commitear para 1 commit por cambio."; return 0;;
+    *) fail "opción desconocida: $1";;
   esac; done
-  [[ -z "$msg" ]] && msg="replicant: sync $(date -Iseconds) $(hostname)"
-  sync_to_repo
-  git_repo add -A
-  if git_repo diff --cached --quiet; then
-    ok "nada que pushear — working tree limpio"
-    return 0
+  ensure_core
+  if [[ $(git -C "$REPO_DIR" config core.hooksPath 2>/dev/null) != ".githooks" ]]; then
+    echo "→ Activando .githooks" >&2
+    git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
   fi
-  git_repo commit -m "$msg"
-  local branch
-  branch=$(git_repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)
-  if ! git_repo remote get-url origin >/dev/null 2>&1; then
-    warn "sin remote origin — crea repo con: omarchy-replicant create omarchy-replicant --push"
-    return 0
+  echo "→ savegame: copiando al repo" >&2
+  bash "$CORE" backup
+
+  if [[ -z $(git_repo status --porcelain 2>/dev/null) ]]; then
+    echo "Sin cambios. Nada que guardar." >&2; return 0; fi
+
+  if [[ -n $(git_repo status --porcelain -- state/ 2>/dev/null) ]]; then
+    git_repo add -A state/
+    git_repo commit -q -m "state: inventario $(date +%F)"
+    echo "→ Commit inventario:" >&2; git_repo show --stat --oneline HEAD 2>/dev/null | sed 's/^/    /' >&2; echo >&2
   fi
-  if (( ! assume_yes )) && ! git_repo diff --quiet HEAD 2>/dev/null; then
-    :
+
+  local pendientes
+  pendientes=$(git_repo status --porcelain -- . ':(exclude)state/' 2>/dev/null || true)
+  if [[ -n $pendientes && -n $MSG ]]; then
+    git_repo add -A
+    git_repo commit -q -m "$MSG"
+    echo "→ Commit único (-m):" >&2; git_repo show --stat --oneline HEAD 2>/dev/null | sed 's/^/    /' >&2; echo >&2
+    pendientes=""
   fi
-  git_repo push -u origin "$branch" 2>&1 || git_repo push 2>&1
-  ok "push OK → $(git_repo remote get-url origin)"
+
+  if (( PUSH )) && [[ -n $(git_repo log --oneline @{u}..HEAD 2>/dev/null) ]]; then
+    echo "→ Push a $(git_repo config --get remote.origin.url 2>/dev/null)" >&2
+    git_repo push -q origin HEAD 2>&1 && echo "    hecho" >&2; echo >&2
+  fi
+
+  if [[ -n $pendientes ]]; then
+    echo "── Cambios SIN commitear ──" >&2
+    echo "Un commit por cambio, explicando PORQUÉ (omarchy_thinkpad Reglas 2 y 3)." >&2; echo >&2
+    while read -r estado ruta; do printf '  %s  %s\n' "$estado" "$ruta" >&2; done <<<"$pendientes"; echo >&2
+    for ruta in $(git_repo diff --name-only -- . ':(exclude)state/' ':(exclude)secrets/' 2>/dev/null); do
+      echo "── $ruta ──" >&2; git_repo diff --unified=1 -- "$ruta" 2>/dev/null | sed -n '5,120p' | sed 's/^/    /' >&2; echo >&2
+    done
+    if git_repo status --porcelain -- secrets/ 2>/dev/null | grep -q .; then
+      echo "── secrets/ ──" >&2; echo "    cambiaron (contenido no mostrado):" >&2
+      git_repo status --porcelain -- secrets/ 2>/dev/null | sed 's/^/    /' >&2; echo >&2
+    fi
+    echo "Cuando estén commiteados: git -C $REPO_DIR push origin HEAD" >&2
+  else echo "Todo guardado y subido." >&2; fi
 }
+
+cmd_diff() { ensure_core; git_repo status --short 2>/dev/null | head -n 100; echo "--- diff --cached ---" >&2; git_repo diff --cached --stat 2>/dev/null | head -n 100; }
 
 cmd_pull() {
-  ensure_repo
-  local assume_yes=0
-  while (( $# )); do case "$1" in -y|--yes) assume_yes=1; shift;; *) shift;; esac; done
-  if ! git_repo remote get-url origin >/dev/null 2>&1; then fail "sin remote — clona primero"; fi
-  git_repo fetch --all --prune
-  # stash local dirty?
-  local dirty
-  dirty=$(git_repo status --porcelain | wc -l)
-  if (( dirty > 0 )); then
-    warn "$dirty archivos dirty — haciendo stash temporal"
-    git_repo stash push -m "replicant auto-stash $(date -Iseconds)" || true
-  fi
-  local branch
-  branch=$(git_repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)
-  git_repo pull --rebase origin "$branch" 2>&1 || git_repo pull --rebase 2>&1 || warn "pull con conflictos — revisa $REPO_DIR"
+  [[ -d "$REPO_DIR/.git" ]] || fail "sin repo — clone primero"
+  git_repo fetch --all --prune 2>&1
+  local dirty; dirty=$(git_repo status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+  if (( dirty > 0 )); then warn "$dirty dirty — stash"; git_repo stash push -m "replicant auto-stash $(date -Is)" 2>/dev/null || true; fi
+  local br; br=$(git_repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)
+  git_repo pull --rebase origin "$br" 2>&1 || git_repo pull --rebase 2>&1 || warn "conflictos — revisa $REPO_DIR"
   ok "pull OK"
-  if (( dirty > 0 )); then
-    info "stash sigue guardado — revisa con: git -C $REPO_DIR stash list"
-  fi
 }
 
 cmd_clone() {
-  local url="${1:-}"
-  local dest="$REPO_DIR"
-  if [[ -z "$url" ]]; then
-    if [[ -t 0 ]]; then url=$(gum input --prompt "Git URL del replicant repo: " 2>/dev/null || true); fi
-    [[ -n "$url" ]] || fail "uso: omarchy-replicant clone <git-url>"
-  fi
-  # omarchy-git-url-check if exists
-  if command -v omarchy-git-url-check >/dev/null 2>&1; then
-    omarchy-git-url-check "$url" || exit 1
-  fi
-  if [[ -d "$REPO_DIR/.git" ]]; then
-    warn "$REPO_DIR ya existe — usa pull o borra antes"
-    return 1
-  fi
-  mkdir -p "$(dirname "$dest")"
-  git clone -- "$url" "$dest" || fail "clone falló"
-  ok "clonado en $dest"
-  info "ejecuta: omarchy-replicant restore --yes  para aplicar configs"
+  local url="${1:-}"; [[ -n "$url" ]] || { if [[ -t 0 ]]; then url=$(gum input --prompt "Git URL (privado): " 2>/dev/null || true); fi; [[ -n "$url" ]] || fail "uso: clone <git-url>"; }
+  command -v omarchy-git-url-check >/dev/null 2>&1 && omarchy-git-url-check "$url" || true
+  [[ -d "$REPO_DIR/.git" ]] && fail "$REPO_DIR ya existe — pull o borra"
+  mkdir -p "$(dirname "$REPO_DIR")"
+  git clone -- "$url" "$REPO_DIR" 2>&1 || fail "clone falló (¿privado sin gh auth?)"
+  git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
+  ok "clonado en $REPO_DIR — ejecuta omarchy-replicant restore --dry-run"
 }
 
+# restore — port bootstrap+restore-desktop por grupos, con .bak.<epoch> (lib.sh:poner)
 cmd_restore() {
-  ensure_repo
-  local assume_yes=0 dry_run=0
-  while (( $# )); do case "$1" in
-    --yes|-y) assume_yes=1; shift;;
-    --dry-run) dry_run=1; shift;;
-    *) shift;;
-  esac; done
-  local files
-  files=$(git_repo ls-files 2>/dev/null | head -n 2000)
-  if (( dry_run )); then
-    echo "dry-run — archivos en repo:"
-    echo "$files" | head -n 100
-    return 0
-  fi
-  if (( ! assume_yes )); then
-    if command -v gum >/dev/null 2>&1; then
-      echo "$files" | head -n 30 | gum choose --no-limit --header="Se restaurarán estos paths a \$HOME (preview 30):" >/dev/null 2>&1 || true
-      gum confirm "¿Restaurar $(echo "$files" | wc -l) archivos a \$HOME? Se hará backup .bak.<ts>" || { echo "abortado"; return 1; }
-    else
-      read -rp "¿Restaurar $(echo "$files" | wc -l) archivos a \$HOME? [y/N] " ans
-      [[ $ans == y* ]] || { echo "abortado"; return 1; }
-    fi
-  fi
-  local ts
-  ts=$(date +%Y%m%d-%H%M%S)
-  # rsync from repo to HOME, exclude git internals
-  if command -v rsync >/dev/null 2>&1; then
-    rsync -a --exclude='.git' --exclude='.gitignore' --exclude='README.md' --exclude='.omarchy-replicant.json' --backup --suffix=".bak.$ts" "$REPO_DIR"/ "$HOME"/
-  else
-    # fallback cp
-    while IFS= read -r f; do
-      [[ "$f" == ".git"* ]] && continue
-      [[ "$f" == "README.md" ]] && continue
-      [[ "$f" == ".gitignore" ]] && continue
-      src="$REPO_DIR/$f"
-      dst="$HOME/$f"
-      if [[ -e "$dst" ]]; then cp -a "$dst" "$dst.bak.$ts" 2>/dev/null || true; fi
-      mkdir -p "$(dirname "$dst")"
-      cp -a "$src" "$dst"
-    done <<< "$files"
-  fi
-  ok "restore completo — backups con sufijo .bak.$ts"
-  # re-apply omarchy bits
-  if command -v omarchy >/dev/null 2>&1; then
-    info "refrescando Omarchy..."
-    # try theme refresh if shell.json changed
-    if [[ -f "$HOME/.config/omarchy/shell.json" ]]; then
-      omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
-    fi
-  fi
-  info "revisa: omarchy-replicant status --json"
-  info "paquetes: cat $REPO_DIR/packages.txt"
-}
-
-cmd_diff() {
-  ensure_repo
-  sync_to_repo
-  git_repo status --short | head -n 100
-  echo "--- diff --cached ---"
-  git_repo diff --cached --stat | head -n 100
-}
-
-cmd_config() {
-  write_default_config
-  echo "config: $CONFIG_FILE"
-  cat "$CONFIG_FILE"
-  echo "---"
-  echo "repo: $REPO_DIR"
-  if command -v omarchy >/dev/null 2>&1; then echo "omarchy: $(cat /usr/share/omarchy/version 2>/dev/null)"; fi
+  local DRY=1 TODOS=0
+  while (( $# )); do case "$1" in --apply) DRY=0; shift;; --all) TODOS=1; shift;; --dry-run) DRY=1; shift;; *) shift;; esac; done
+  [[ -d "$REPO_DIR/.git" ]] || fail "sin repo"
+  # shellcheck source=/dev/null
+  source "$PLUGIN_DIR/bin/replicant-core.sh" 2>/dev/null || true
+  # define grupos como restore-desktop.sh
+  local GRUPOS=(
+    "ssh:SSH (config + claves) — ~/.ssh"
+    "git:Git config y PAT keyring"
+    "env:Secrets env — ~/.config/environment.d"
+    "shell:bashrc/XCompose"
+    "claude:Claude Code hooks y mcp"
+    "hypr:Hyprland Lua — input/monitors/autostart"
+    "shell_omarchy:Omarchy shell.json + hooks/audit"
+    "uwsm:uwsm env.d + xdg-terminals"
+    "terminal:alacritty/foot"
+    "branding:Omarchy branding screensaver"
+  )
+  # mapping replicant repo layout -> destino
+  ficheros_de() {
+    case $1 in
+      ssh) echo "secrets/ssh/id_ed25519|$HOME/.ssh/id_ed25519|600"; echo "secrets/ssh/id_ed25519.pub|$HOME/.ssh/id_ed25519.pub|644"; echo "config/ssh/config|$HOME/.ssh/config|600" ;;
+      git) echo "config/git/config|$HOME/.config/git/config|644" ;;
+      env) echo "secrets/env/60-secrets.conf|$HOME/.config/environment.d/60-secrets.conf|600" ;;
+      shell) echo "config/home/bashrc|$HOME/.bashrc|644"; echo "config/home/XCompose|$HOME/.XCompose|644" ;;
+      claude) echo "config/claude/settings.json|$HOME/.claude/settings.json|644"; echo "config/claude/settings.local.json|$HOME/.claude/settings.local.json|644"; echo "config/claude/mcp.json|$HOME/.claude/.mcp.json|644"; for h in cbm-code-discovery-gate cbm-session-reminder cbm-subagent-reminder; do echo "config/claude/hooks/$h|$HOME/.claude/hooks/$h|755"; done ;;
+      hypr) for f in "$REPO_DIR/config/hypr/"*.lua; do [[ -f $f ]] || continue; echo "$f|$HOME/.config/hypr/$(basename "$f")|644"; done ;;
+      shell_omarchy) echo "config/omarchy/shell.json|$HOME/.config/omarchy/shell.json|644"; echo "config/omarchy/hooks/post-update.d/audit-config.hook|$HOME/.config/omarchy/hooks/post-update.d/audit-config.hook|644"; echo "config/omarchy-audit-ignore|$HOME/.config/omarchy-audit-ignore|644"; echo "config/bin/omarchy-audit|$HOME/.local/bin/omarchy-audit|755" ;;
+      uwsm) for f in "$REPO_DIR"/config/uwsm/env.d/*; do [[ -f $f ]] || continue; echo "$f|$HOME/.config/uwsm/env.d/$(basename "$f")|644"; done; echo "config/xdg-terminals.list|$HOME/.config/xdg-terminals.list|644" ;;
+      terminal) echo "config/alacritty/alacritty.toml|$HOME/.config/alacritty/alacritty.toml|644"; echo "config/foot/foot.ini|$HOME/.config/foot/foot.ini|644" ;;
+      branding) echo "config/branding/screensaver.txt|$HOME/.config/omarchy/branding/screensaver.txt|644" ;;
+    esac
+  }
+  export DRY
+  for grupo in "${GRUPOS[@]}"; do
+    nombre=${grupo%%:*}; echo; echo "== $nombre · ${grupo#*:}" >&2
+    pendientes=()
+    while IFS='|' read -r src dst modo; do [[ -f $src ]] || continue; if [[ -f $dst ]] && cmp -s "$src" "$dst" 2>/dev/null; then ok "${dst/#$HOME/\~} (ya igual)" >&2; else pendientes+=("$src|$dst|$modo"); fi; done < <(ficheros_de "$nombre")
+    if (( ${#pendientes[@]} == 0 )); then skip "nada que cambiar" >&2; continue; fi
+    for e in "${pendientes[@]}"; do IFS='|' read -r src dst modo <<<"$e"; echo "  ── ${dst/#$HOME/\~}" >&2; if [[ -f $dst ]]; then diff -u --label sistema --label repo "$dst" "$src" 2>/dev/null | sed -n '3,40p' | sed 's/^/      /' >&2 || true; else echo "      (no existe: se crearía)" >&2; fi; done
+    if (( DRY )); then skip "dry-run: ${#pendientes[@]} fichero(s) sin tocar. Repite con --apply" >&2; continue; fi
+    if (( ! TODOS )); then read -rp "  ¿aplicar $nombre? [y/N] " resp </dev/tty 2>&1 || resp=""; [[ $resp == [yY] ]] || { skip "$nombre omitido" >&2; continue; }; fi
+    for e in "${pendientes[@]}"; do IFS='|' read -r src dst modo <<<"$e"; poner "$src" "$dst" "$modo" 2>&1; done
+  done
+  echo; if (( DRY )); then echo "Dry-run — para escribir: omarchy-replicant restore --apply" >&2; else ok "restore grupos completado — revisa .bak.<epoch>" >&2; fi
 }
 
 usage() {
   cat <<USAGE
-omarchy-replicant — sincroniza tu workspace Omarchy con GitHub
+omarchy-replicant — savegame privado (config+secrets+state) para Omarchy
 
 Uso:
-  omarchy-replicant init                    Prepara repo local (sin remote)
-  omarchy-replicant login                   Login GitHub vía gh
-  omarchy-replicant create [name] [--public|--private] [--push]   Crea repo GitHub y enlaza
-  omarchy-replicant status [--json]         Estado git
-  omarchy-replicant diff                    Qué cambiaría un push
-  omarchy-replicant push [-m msg] [-y]      Sincroniza configs → repo → git push
-  omarchy-replicant pull [-y]               git pull --rebase
-  omarchy-replicant clone <git-url>         Clona repo replicant en esta máquina
-  omarchy-replicant restore [--yes] [--dry-run]  Aplica repo → \$HOME (con backups .bak)
-  omarchy-replicant config                  Muestra config/includes
+  omarchy-replicant init [--savegame]     Prepara repo savegame (siempre privado)
+  omarchy-replicant login                 gh auth
+  omarchy-replicant create [name] [--push]  Crea repo PRIVADO y push
+  omarchy-replicant backup                Solo copia (sin git)
+  omarchy-replicant savegame [-m "porqué"] [--no-push]  backup + commit state auto + push (deja config/secrets para 1 commit por cambio)
+  omarchy-replicant status [--json]
+  omarchy-replicant diff
+  omarchy-replicant push [-m msg] [-y]    Push directo (no savegame)
+  omarchy-replicant pull
+  omarchy-replicant clone <url>           Clona repo privado
+  omarchy-replicant restore [--dry-run|--apply] [--all]  Por grupos con .bak.<epoch>
 
-Flujo nuevo usuario:
-  omarchy-replicant init && omarchy-replicant create omarchy-replicant --public --push
-
-Flujo nueva máquina:
+Flujo:
+  omarchy-replicant init && omarchy-replicant create --push   # primera máquina (privado)
+  omarchy-replicant savegame                   # día a día
+  # nueva máquina:
   omarchy-replicant clone https://github.com/<user>/omarchy-replicant
-  omarchy-replicant restore --yes
-  # opcional: hyprctl reload, omarchy theme set <tema>
-
-Config:
-  $CONFIG_FILE  (editar para añadir/quitar paths)
-  Hard denylist siempre activo para repo público (gh/hosts.yml, .ssh/id_*, etc.)
+  omarchy-replicant restore --apply
 USAGE
 }
 
 main() {
-  local cmd="${1:-}"
-  [[ -z "$cmd" ]] && { usage; exit 0; }
+  local cmd="${1:-}"; [[ -z "$cmd" ]] && { usage; exit 0; }
   case "$cmd" in
     -h|--help|help) usage; exit 0;;
     init) shift; cmd_init "$@";;
     login) shift; cmd_login "$@";;
     create) shift; cmd_create "$@";;
+    backup) shift; cmd_backup "$@";;
+    savegame) shift; cmd_savegame "$@";;
     status) shift; cmd_status "$@";;
     diff) shift; cmd_diff "$@";;
-    push) shift; cmd_push "$@";;
+    push) shift;
+      # push legacy wrapper for simple repo: still works but delegate to savegame-style push
+      ensure_core; bash "$CORE" backup 2>&1 | tail -n 5
+      git_repo add -A 2>/dev/null || true
+      if git_repo diff --cached --quiet 2>/dev/null; then ok "nada que pushear"; exit 0; fi
+      local msg="replicant: sync $(date -Is)"; [[ $# -gt 0 ]] && msg="$*"
+      git_repo commit -m "$msg" 2>&1 | tail -n 5
+      git_repo push -u origin "$(git_repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)" 2>&1 | tail -n 10
+      ;;
     pull) shift; cmd_pull "$@";;
     clone) shift; cmd_clone "$@";;
     restore) shift; cmd_restore "$@";;
-    config) shift; cmd_config "$@";;
-    *) fail "comando desconocido: $cmd — prueba --help";;
+    *) fail "comando $cmd desconocido — --help";;
   esac
 }
 main "$@"

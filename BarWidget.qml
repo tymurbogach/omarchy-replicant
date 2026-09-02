@@ -103,13 +103,25 @@ BarWidget {
     }
   }
 
+  // Anchor dedicated: cardWidth == anchorWidth collapses KeyboardPanel x formula to x = anchorX (left edge of icon)
+  // This pins the panel just below the icon instead of centered over it.
+  Item {
+    id: panelAnchor
+    anchors.left: button.left
+    anchors.top: button.bottom
+    anchors.topMargin: Style.space(6)
+    width: panelLoader.item ? panelLoader.item.cardWidth : button.width
+    height: 1
+    visible: false
+  }
+
   Loader {
     id: panelLoader
     active: true
     source: Qt.resolvedUrl("Panel.qml")
     onLoaded: {
       item.bar = root.bar
-      item.anchorItem = button
+      item.anchorItem = panelAnchor
       item.hostWidget = root
       item.state = root.state
       item.cli = root.cli

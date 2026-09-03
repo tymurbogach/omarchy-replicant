@@ -28,13 +28,16 @@ BarWidget {
   // the note in Panel.qml: these all live above U+FFFF, where a re-encoding of
   // the file silently truncates the character into a different symbol.
   //
-  // At rest the widget shows the plugin's own mark — account-multiple, two of
-  // the same thing side by side, which is what "replicant" means here. It used
-  // to show the GitHub logo; GitHub is only where the copy happens to be kept,
-  // and the icon should say what the thing does, not who stores it.
+  // At rest the widget shows the plugin's own mark — hexagon-multiple: identical
+  // cells, more than one of them. It used to show the GitHub logo; GitHub is
+  // only where the copy happens to be kept, and the icon should say what the
+  // thing does, not who stores it.
   //
-  // Chosen by rendering every candidate at the real bar size first: dna, mirror
-  // and set-split all read as a smudge at 13px, however good they look large.
+  // The FILLED variant is here and the outline one is in Panel.qml, and that is
+  // not arbitrary. Every candidate was rendered at the real bar size before
+  // choosing: at 13px the outline hexagons lose their interior and read as three
+  // rings, while the filled ones keep their shape. Outline detail needs the
+  // panel header's 30px to survive.
   function mdi(cp) { return String.fromCodePoint(cp) }
   readonly property string glyph: {
     if (!asked) return root.mdi(0xF0450)                                         // refresh
@@ -43,7 +46,7 @@ BarWidget {
     if ((repoState.ahead || 0) > 0) return root.mdi(0xF0167)                     // cloud-upload
     if ((repoState.behind || 0) > 0) return root.mdi(0xF0162)                    // cloud-download
     if ((repoState.dirty || 0) > 0) return root.mdi(0xF0193)                     // content-save
-    return root.mdi(0xF000E)                                                     // account-multiple
+    return root.mdi(0xF06E1)                                                     // hexagon-multiple
   }
   readonly property string tooltip: {
     if (!asked) return "Replicant — loading…"

@@ -152,6 +152,19 @@ check "…and is recorded in the repo" "1" \
   "$(grep -c ' = deskbox$' "$REPO/.replicant-profiles" 2>/dev/null || true)"
 check_false "a nonsense profile name is refused" "$CLI" profile "../etc"
 
+# A scope change is one decision and must commit exactly that. Staging the whole
+# of config/ would sweep any unrelated dotfile that happened to be pending into a
+# commit whose message says "scope:" — the data repo's one-commit-per-decision
+# convention exists precisely to stop that.
+printf 'an unrelated edit\n' >> "$REPO/config/omarchy/shell.json"
+run scope hypr/hyprlock.conf profile >/dev/null 2>&1
+check "a scope commit touches only that file and the scope list" "0" \
+  "$(git -C "$REPO" show --stat --format="" HEAD 2>/dev/null | grep -c 'shell.json' || true)"
+check "…and the unrelated edit is still pending, not swallowed" "1" \
+  "$(git -C "$REPO" status --porcelain -- config/omarchy/shell.json | grep -c . || true)"
+git -C "$REPO" checkout -- config/omarchy/shell.json 2>/dev/null || true
+run scope hypr/hyprlock.conf shared >/dev/null 2>&1
+
 section "reverting one setting"
 check_false "revert needs an id"       "$CLI" revert
 check_false "…a known one"             "$CLI" revert not.a.setting

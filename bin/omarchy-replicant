@@ -574,8 +574,16 @@ cmd_scope() {
   # shellcheck disable=SC1090
   source "$CORE" 2>/dev/null || true
   core_scope "$id" "$want" || exit 1
-  # The copy may have moved between config/ and profiles/, so both are staged.
-  commit_repo_shape "scope: $id is now $want" .replicant-sync config profiles
+  # Stage the two paths THIS file can occupy, never the whole of config/ and
+  # profiles/. Staging the directories would sweep every unrelated dotfile that
+  # happened to be pending into a commit whose message says "scope:", which is
+  # exactly the thing the data repo's one-commit-per-decision convention exists
+  # to prevent. A file is only ever at one of these two paths, and git records
+  # the move between them as a rename.
+  commit_repo_shape "scope: $id is now $want" \
+    .replicant-sync \
+    "config/$id" \
+    "profiles/$(current_profile)/config/$id"
 }
 
 # cmd_profile [name] — which profile this machine belongs to. With no argument

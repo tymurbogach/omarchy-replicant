@@ -1,0 +1,7 @@
+# Local backups made before overwriting a file
+*.bak.*
+*.bak
+
+# Editor / OS noise
+.DS_Store
+*.swp

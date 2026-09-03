@@ -35,6 +35,18 @@ ok()   { echo -e "\e[32m$*\e[0m" >&2; }
 
 git_repo() { git -C "$REPO_DIR" "$@"; }
 
+# Serialize everything that writes to the repo. Without this, two commands
+# racing (the panel firing `set` twice while a savegame is still committing)
+# collide on .git/index.lock and one of them dies half-done. Commands queue
+# instead of failing; 90s is far longer than any real operation here.
+acquire_repo_lock() {
+  mkdir -p "$REPLICANT_HOME"
+  exec 9>"$REPLICANT_HOME/.replicant.lock" || return 0
+  if ! flock -w 90 9; then
+    fail "another omarchy-replicant operation is still running — try again in a moment"
+  fi
+}
+
 ensure_core() { [[ -x "$CORE" ]] || fail "replicant-core.sh not found at $CORE"; }
 
 cmd_status() { ensure_core; bash "$CORE" status "${1:-}"; }
@@ -422,6 +434,11 @@ USAGE
 
 main() {
   local cmd="${1:-}"; [[ -z "$cmd" ]] && { usage; exit 0; }
+  # Anything that writes to the repo takes the lock first; read-only commands
+  # (status/get/diff/edit) stay lock-free so the panel's polling never blocks.
+  case "$cmd" in
+    init|create|backup|savegame|set|reset|reset-all|push|pull|clone|restore) acquire_repo_lock ;;
+  esac
   case "$cmd" in
     -h|--help|help) usage; exit 0;;
     init) shift; cmd_init "$@";;

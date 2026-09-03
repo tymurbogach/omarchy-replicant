@@ -357,16 +357,26 @@ discover_plugin_entries() {
 
 # ─── SETTINGS — curated, individually-editable fields (not whole files) ─────
 # Unlike MANIFEST (whole files, tracked for backup/sync), each entry here is one
-# JSON field inside an already-tracked file, safe to read/write with jq alone.
-# Format: "id|absolute_file|jq_path|type|label|unit|min|max" (min/max only for
-# type=number, empty otherwise). Adding a new one is one line — no UI code needed,
-# Panel.qml renders a control per entry generically.
+# single field inside an already-tracked file, safe to read/write mechanically.
+#
+# Format: "id|file|path|type|label|unit|min|max|options|hint"
+#   type    number | bool | enum   (JSON, via jq)
+#           toml-number                  (TOML "key = 123" inside a [section])
+#   path    jq path (".idle.lock") for JSON; "section.key" for TOML
+#   min/max only for numeric types, options only for enum (comma-separated)
+#   hint    one short line shown under the control in the panel
+#
+# Adding a setting is ONE line here — Panel.qml renders the right control for
+# the type generically, so no QML changes are needed.
 SETTINGS=(
-  "idle.lock|$HOME/.config/omarchy/shell.json|.idle.lock|number|Lock screen|s|10|3600"
-  "idle.screensaver|$HOME/.config/omarchy/shell.json|.idle.screensaver|number|Screensaver|s|10|3600"
-  "idle.lazyDpms|$HOME/.config/omarchy/shell.json|.idle.lazyDpms|number|Display off (idle)|s|10|3600"
-  "idle.lazySuspendAc|$HOME/.config/omarchy/shell.json|.idle.lazySuspendAc|number|Suspend on AC power|s|0|7200"
-  "idle.lazySuspendBatt|$HOME/.config/omarchy/shell.json|.idle.lazySuspendBatt|number|Suspend on battery|s|0|7200"
+  "idle.screensaver|$HOME/.config/omarchy/shell.json|.idle.screensaver|number|Screensaver|s|10|3600||Idle time before the screensaver starts"
+  "idle.lock|$HOME/.config/omarchy/shell.json|.idle.lock|number|Lock screen|s|10|7200||Idle time before the screen locks"
+  "idle.lazyDpms|$HOME/.config/omarchy/shell.json|.idle.lazyDpms|number|Turn off display|s|10|7200||Idle time before the display powers down"
+  "idle.lazySuspendAc|$HOME/.config/omarchy/shell.json|.idle.lazySuspendAc|number|Suspend on AC|s|0|14400||Idle time before suspending on AC power (0 = never)"
+  "idle.lazySuspendBatt|$HOME/.config/omarchy/shell.json|.idle.lazySuspendBatt|number|Suspend on battery|s|0|14400||Idle time before suspending on battery (0 = never)"
+  "bar.position|$HOME/.config/omarchy/shell.json|.bar.position|enum|Bar position||||top,bottom|Which screen edge the status bar sits on"
+  "bar.transparent|$HOME/.config/omarchy/shell.json|.bar.transparent|bool|Transparent bar|||||Let the wallpaper show through the bar"
+  "font.baseSize|$HOME/.config/omarchy/shell.toml|font.base-size|toml-number|Interface font size|pt|8|32||Base font size for the bar, menus and panels"
 )
 
 setting_field() { echo "$1" | cut -d'|' -f"$2"; }
@@ -379,54 +389,130 @@ find_setting() {
   return 1
 }
 
+# TOML helpers — deliberately minimal: these target flat "key = value" lines
+# inside a "[section]" of a small, hand-written config (shell.toml). They are
+# not a TOML parser and are not meant to grow into one; anything more complex
+# stays a whole-file entry in MANIFEST and is edited in a real editor.
+toml_get() {
+  local file="$1" section="${2%%.*}" key="${2#*.}"
+  awk -v sect="[$section]" -v key="$key" '
+    $0 ~ /^[[:space:]]*\[/ { in_sect = ($0 ~ "^[[:space:]]*\\" sect) ; next }
+    in_sect && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      sub(/^[^=]*=[[:space:]]*/, ""); gsub(/[[:space:]]*$/, ""); print; exit
+    }
+  ' "$file"
+}
+
+toml_set() {
+  local file="$1" section="${2%%.*}" key="${2#*.}" value="$3" tmp
+  tmp=$(mktemp)
+  awk -v sect="[$section]" -v key="$key" -v val="$value" '
+    $0 ~ /^[[:space:]]*\[/ { in_sect = ($0 ~ "^[[:space:]]*\\" sect) ; print; next }
+    in_sect && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" { sub(/=[[:space:]]*.*/, "= " val); done_it = 1 }
+    { print }
+    END { if (!done_it) exit 3 }
+  ' "$file" > "$tmp" || { rm -f "$tmp"; return 1; }
+  [[ -s "$tmp" ]] || { rm -f "$tmp"; return 1; }
+  mv "$tmp" "$file"
+}
+
 get_setting_value() {
   local entry; entry=$(find_setting "$1") || return 1
-  local file jqpath; file=$(setting_field "$entry" 2); jqpath=$(setting_field "$entry" 3)
+  local file path type
+  file=$(setting_field "$entry" 2); path=$(setting_field "$entry" 3); type=$(setting_field "$entry" 4)
   [[ -f "$file" ]] || return 1
-  jq -r "$jqpath // empty" "$file" 2>/dev/null
+  case "$type" in
+    toml-number) toml_get "$file" "$path" ;;
+    *)
+      # Not `// empty`: jq's alternative operator fires on `false` as well as
+      # `null`, so a boolean setting that is genuinely off would read as missing.
+      local raw; raw=$(jq -r "$path" "$file" 2>/dev/null) || return 1
+      [[ "$raw" == "null" ]] && return 1
+      printf '%s\n' "$raw"
+      ;;
+  esac
 }
 
 set_setting_value() {
   local entry; entry=$(find_setting "$1") || { echo "unknown setting: $1" >&2; return 1; }
-  local file jqpath type label unit min max value="$2"
-  file=$(setting_field "$entry" 2); jqpath=$(setting_field "$entry" 3); type=$(setting_field "$entry" 4)
-  label=$(setting_field "$entry" 5); unit=$(setting_field "$entry" 6)
-  min=$(setting_field "$entry" 7); max=$(setting_field "$entry" 8)
+  local file path type label unit min max options value="$2"
+  file=$(setting_field "$entry" 2);   path=$(setting_field "$entry" 3)
+  type=$(setting_field "$entry" 4);   label=$(setting_field "$entry" 5)
+  unit=$(setting_field "$entry" 6);   min=$(setting_field "$entry" 7)
+  max=$(setting_field "$entry" 8);    options=$(setting_field "$entry" 9)
   [[ -f "$file" ]] || { echo "file not found: $file" >&2; return 1; }
+
   case "$type" in
-    number)
-      [[ "$value" =~ ^-?[0-9]+$ ]] || { echo "$1: '$value' is not an integer" >&2; return 1; }
-      if [[ -n "$min" ]] && (( value < min )); then echo "$1: $value is below the minimum ($min$unit)" >&2; return 1; fi
-      if [[ -n "$max" ]] && (( value > max )); then echo "$1: $value is above the maximum ($max$unit)" >&2; return 1; fi
+    number|toml-number)
+      [[ "$value" =~ ^-?[0-9]+$ ]] || { echo "$1: '$value' is not a whole number" >&2; return 1; }
+      if [[ -n "$min" ]] && (( value < min )); then echo "$1: $value$unit is below the minimum ($min$unit)" >&2; return 1; fi
+      if [[ -n "$max" ]] && (( value > max )); then echo "$1: $value$unit is above the maximum ($max$unit)" >&2; return 1; fi
       ;;
     bool)
       [[ "$value" == "true" || "$value" == "false" ]] || { echo "$1: '$value' must be true or false" >&2; return 1; }
       ;;
+    enum)
+      [[ ",$options," == *",$value,"* ]] || { echo "$1: '$value' is not one of: ${options//,/, }" >&2; return 1; }
+      ;;
   esac
+
   cp -a "$file" "$file.bak.$(date +%s)"
-  local tmp; tmp=$(mktemp)
   case "$type" in
-    number|bool) jq --argjson v "$value" "$jqpath = \$v" "$file" > "$tmp" ;;
-    *)           jq --arg v "$value" "$jqpath = \$v" "$file" > "$tmp" ;;
+    toml-number)
+      toml_set "$file" "$path" "$value" || { echo "$1: could not find '$path' in $file — left untouched" >&2; return 1; }
+      ;;
+    number|bool)
+      local tmp; tmp=$(mktemp)
+      jq --argjson v "$value" "$path = \$v" "$file" > "$tmp" 2>/dev/null
+      [[ -s "$tmp" ]] || { echo "$1: write failed, left $file untouched" >&2; rm -f "$tmp"; return 1; }
+      mv "$tmp" "$file"
+      ;;
+    *)
+      local tmp; tmp=$(mktemp)
+      jq --arg v "$value" "$path = \$v" "$file" > "$tmp" 2>/dev/null
+      [[ -s "$tmp" ]] || { echo "$1: write failed, left $file untouched" >&2; rm -f "$tmp"; return 1; }
+      mv "$tmp" "$file"
+      ;;
   esac
-  if [[ ! -s "$tmp" ]]; then echo "$1: jq write failed, left $file untouched" >&2; rm -f "$tmp"; return 1; fi
-  mv "$tmp" "$file"
   echo "$label -> $value$unit" >&2
 }
 
 build_settings_json() {
   local entries=()
-  local entry id file jqpath type label unit min max value
+  local entry id file path type label unit min max options hint value opts_json
   for entry in "${SETTINGS[@]}"; do
-    id=$(setting_field "$entry" 1); file=$(setting_field "$entry" 2); jqpath=$(setting_field "$entry" 3)
-    type=$(setting_field "$entry" 4); label=$(setting_field "$entry" 5); unit=$(setting_field "$entry" 6)
-    min=$(setting_field "$entry" 7); max=$(setting_field "$entry" 8)
+    id=$(setting_field "$entry" 1);     file=$(setting_field "$entry" 2)
+    path=$(setting_field "$entry" 3);   type=$(setting_field "$entry" 4)
+    label=$(setting_field "$entry" 5);  unit=$(setting_field "$entry" 6)
+    min=$(setting_field "$entry" 7);    max=$(setting_field "$entry" 8)
+    options=$(setting_field "$entry" 9); hint=$(setting_field "$entry" 10)
     value=$(get_setting_value "$id")
-    if [[ "$type" == "number" ]]; then
-      entries+=("$(jq -nc --arg id "$id" --arg label "$label" --arg type "$type" --arg unit "$unit" --argjson min "${min:-null}" --argjson max "${max:-null}" --argjson value "${value:-null}" '{id:$id,label:$label,type:$type,unit:$unit,min:$min,max:$max,value:$value}')")
+    if [[ -n "$options" ]]; then
+      opts_json=$(printf '%s' "$options" | jq -Rc 'split(",")')
     else
-      entries+=("$(jq -nc --arg id "$id" --arg label "$label" --arg type "$type" --arg unit "$unit" --argjson min "${min:-null}" --argjson max "${max:-null}" --arg value "${value:-}" '{id:$id,label:$label,type:$type,unit:$unit,min:$min,max:$max,value:$value}')")
+      opts_json='[]'
     fi
+    case "$type" in
+      number|toml-number)
+        entries+=("$(jq -nc --arg id "$id" --arg label "$label" --arg type "$type" --arg unit "$unit" \
+          --argjson min "${min:-null}" --argjson max "${max:-null}" --argjson options "$opts_json" \
+          --arg hint "$hint" --arg file "$file" --argjson value "${value:-null}" \
+          '{id:$id,label:$label,type:$type,unit:$unit,min:$min,max:$max,options:$options,hint:$hint,file:$file,value:$value}')")
+        ;;
+      bool)
+        [[ "$value" == "true" || "$value" == "false" ]] || value="false"
+        entries+=("$(jq -nc --arg id "$id" --arg label "$label" --arg type "$type" --arg unit "$unit" \
+          --argjson min null --argjson max null --argjson options "$opts_json" \
+          --arg hint "$hint" --arg file "$file" --argjson value "$value" \
+          '{id:$id,label:$label,type:$type,unit:$unit,min:$min,max:$max,options:$options,hint:$hint,file:$file,value:$value}')")
+        ;;
+      *)
+        entries+=("$(jq -nc --arg id "$id" --arg label "$label" --arg type "$type" --arg unit "$unit" \
+          --argjson min null --argjson max null --argjson options "$opts_json" \
+          --arg hint "$hint" --arg file "$file" --arg value "${value:-}" \
+          '{id:$id,label:$label,type:$type,unit:$unit,min:$min,max:$max,options:$options,hint:$hint,file:$file,value:$value}')")
+        ;;
+    esac
   done
   printf '%s\n' "${entries[@]}" | jq -s '.'
 }
@@ -525,8 +611,10 @@ core_status() {
     configs_json=$(build_configs_json)
     secrets_json=$(build_secrets_json)
     settings_json=$(build_settings_json)
-    jq -nc --arg branch "$branch" --arg remote "$remote" --argjson dirty "$dirty" --argjson untracked "$untracked" --argjson ahead "$ahead" --argjson behind "$behind" --arg pending "$pending_groups" --argjson configs "$configs_json" --argjson secrets "$secrets_json" --argjson settings "$settings_json" \
-      '{initialized:true, branch:$branch, remote:$remote, dirty:$dirty, untracked:$untracked, ahead:$ahead, behind:$behind, pending:$pending, configs:$configs, secrets:$secrets, settings:$settings}'
+    local remote_name=""
+    [[ -n "$remote" ]] && remote_name="${remote##*/}" && remote_name="${remote_name%.git}"
+    jq -nc --arg branch "$branch" --arg remote "$remote" --arg remote_name "$remote_name" --arg repo_dir "$REPO_DIR" --argjson dirty "$dirty" --argjson untracked "$untracked" --argjson ahead "$ahead" --argjson behind "$behind" --arg pending "$pending_groups" --argjson configs "$configs_json" --argjson secrets "$secrets_json" --argjson settings "$settings_json" \
+      '{initialized:true, branch:$branch, remote:$remote, remote_name:$remote_name, repo_dir:$repo_dir, dirty:$dirty, untracked:$untracked, ahead:$ahead, behind:$behind, pending:$pending, configs:$configs, secrets:$secrets, settings:$settings}'
   else
     echo "branch: $branch"
     echo "remote: ${remote:-<none>}"

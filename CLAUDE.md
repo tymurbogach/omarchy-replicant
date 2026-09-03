@@ -80,6 +80,28 @@ Other plugins' `console.log` shows up as `DEBUG qml:` — if yours doesn't appea
 all, the component isn't being instantiated from your file, and the cache is stale.
 That check takes seconds and beats hours of reasoning about correct-looking code.
 
+## Two QML traps that silently produce a half-rendered panel
+
+Both of these cost a full debugging session. Neither produces an error you'd notice: `qmllint`
+passes, the CLI's JSON is correct, and the panel just quietly renders wrong.
+
+**1. `state` is a built-in property of every QML Item.** Our panel data lives in
+`property var state`, but inside any nested item (`Column`, `Row`, `Text`, `Button`) the bare
+name `state` resolves to *that item's* own built-in state string — `""` — not ours. The symptom
+is a panel where the header is right (root scope) while every nested section believes there is no
+repo: buttons disabled, "No local repo yet" showing, and whole sections invisible.
+**Always write `root.state.…` inside nested items**, never bare `state.…`.
+
+**2. `Style.spacing.rowPaddingY` does not exist.** `rowPaddingX` does, `rowPaddingY` does not, so
+`row.implicitHeight + Style.spacing.rowPaddingY * 2` evaluates to `NaN`, the delegate gets a NaN
+height, and the list renders section headers with invisible rows between them. Use
+`Style.spacing.controlPaddingY`. When a delegate renders blank, log its
+`width/height/implicitHeight` first — a `NaN` shows up immediately.
+
+Related layout rule: a `Row` anchored with `anchors.verticalCenter` inside an item whose
+`implicitHeight` is derived from that same Row is a parent-height ↔ child-position feedback loop
+(Qt logs `polish() loop` and the section collapses). Give such rows a fixed height.
+
 ## Verify before calling it done
 
 - `omarchy-plugin-validate` on this directory after any structural change.

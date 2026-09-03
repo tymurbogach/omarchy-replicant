@@ -97,6 +97,19 @@ omarchy plugin remove io.github.tymurbogach.omarchy-replicant
 
 Your GitHub repo is untouched either way.
 
+## Requirements
+
+Omarchy 4 (Quattro). Two things beyond a stock install, both checked by
+`omarchy-replicant doctor`, which names the exact command if either is missing:
+
+| | Why | Install |
+| --- | --- | --- |
+| `github-cli` (`gh`) | logs you in and creates the private repo | `omarchy pkg add github-cli` |
+| `jq` | reads and writes the JSON configs | `omarchy pkg add jq` |
+
+`git` is already on every Omarchy machine. Nothing else is pulled in, and the plugin writes
+nothing outside its own folder and `~/.local/share/omarchy-replicant/`.
+
 ## Docs
 
 - [First-time setup](docs/getting-started.md)

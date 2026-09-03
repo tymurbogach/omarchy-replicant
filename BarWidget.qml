@@ -24,15 +24,20 @@ BarWidget {
   function close() { if (panelLoader.item) panelLoader.item.close() }
   function toggle() { if (panelLoader.item) panelLoader.item.toggle() }
 
-  // symbol by state
+  // Symbol by state. Material Design Icon code points, not pasted glyphs — see
+  // the note in Panel.qml: these all live above U+FFFF, where a re-encoding of
+  // the file silently truncates the character into a different symbol. The
+  // letter "R" was a placeholder; at rest the widget now shows the GitHub mark,
+  // which is what it is actually watching.
+  function mdi(cp) { return String.fromCodePoint(cp) }
   readonly property string glyph: {
-    if (!asked) return "⟳"
-    if (!repoState.initialized) return "＋"
-    if ((repoState.ahead || 0) > 0 && (repoState.behind || 0) > 0) return "⇅"
-    if ((repoState.ahead || 0) > 0) return "↑"
-    if ((repoState.behind || 0) > 0) return "↓"
-    if ((repoState.dirty || 0) > 0) return "●"
-    return "R"
+    if (!asked) return root.mdi(0xF0450)                                         // refresh
+    if (!repoState.initialized) return root.mdi(0xF0415)                         // plus
+    if ((repoState.ahead || 0) > 0 && (repoState.behind || 0) > 0) return root.mdi(0xF002A)  // alert
+    if ((repoState.ahead || 0) > 0) return root.mdi(0xF0167)                     // cloud-upload
+    if ((repoState.behind || 0) > 0) return root.mdi(0xF0162)                    // cloud-download
+    if ((repoState.dirty || 0) > 0) return root.mdi(0xF0193)                     // content-save
+    return root.mdi(0xF02A4)                                                     // github
   }
   readonly property string tooltip: {
     if (!asked) return "Replicant — loading…"

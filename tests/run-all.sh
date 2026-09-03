@@ -79,6 +79,13 @@ for f in "$ROOT"/Panel.qml "$ROOT"/BarWidget.qml "$ROOT"/Service.qml; do
   grep -q 'Qt.resolvedUrl("bin/omarchy-replicant")' "$f" || {
     printf '  \033[31m✗\033[0m %s does not resolve the CLI relative to itself\n' "$(basename "$f")"; qml_problem=1; }
 done
+# 6. Icons above U+FFFF pasted into the file as literal glyphs. They survive a
+#    normal edit but not every re-encoding, and a truncated one silently becomes
+#    a different symbol (a plus-minus sign shipped as "reset" once). Hold them as
+#    code points and let mdi() build the string.
+if grep -nP '[\x{f0000}-\x{ffffd}]' "$ROOT"/*.qml; then
+  printf '  \033[31m✗\033[0m a pasted Nerd Font glyph in QML — use root.mdi(0xF….) — see CLAUDE.md\n'; qml_problem=1
+fi
 if (( qml_problem == 0 )); then printf '  \033[32m✓\033[0m none present\n'; else failed=$((failed+1)); fi
 
 banner "manifest"

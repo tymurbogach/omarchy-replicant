@@ -61,7 +61,23 @@ machine- or user-specific except through `MANIFEST`/`SECRETS_MANIFEST` in
    Anything a future feature leaves elsewhere must be listed in `cmd_purge`, so removing the
    plugin can never leave a user guessing what is still on disk. `purge` is dry-run by default
    and never touches the GitHub repo.
-9. **Names that are already taken.** `state` is a built-in property of every QML Item (see below),
+9. **The restore plan is derived from `MANIFEST`, never hand-written.** `plan_for_category()`
+   computes "repo path → destination → mode" from the one list. There used to be a second,
+   hand-maintained copy of that mapping inside `cmd_restore`, which meant adding a file to
+   `MANIFEST` backed it up but never restored it — a bug you only discover on the day you need
+   the backup. `tests/test-core.sh` fails if any saved file is absent from every category's plan.
+10. **Restoring is not copying.** Every category declares what has to run afterwards
+   (`apply_for_category`): Hyprland gets `hyprctl reload` plus a `configerrors` check, terminals
+   get `omarchy restart terminal`, the theme is replayed through `omarchy-theme-set` rather than
+   copied, plugins are reinstalled with `omarchy plugin add` from the recorded origin. This is the
+   plugin's stated selling point ("the right way to back up Omarchy"), it is shown in the panel
+   under every open category, and it is in the README table — don't add a category that copies
+   files and stops.
+11. **Never render a secret.** `core_diff` refuses to print the contents of `ssh/id_*` or `env/*`
+   (`.pub` files excepted) and says only whether they differ; `build_secrets_json` carries a kind,
+   a mode and variable *names*, never values. A diff on screen is a diff on any screen share.
+   `tests/test-core.sh` greps the payload and the diff for planted secrets.
+12. **Names that are already taken.** `state` is a built-in property of every QML Item (see below),
    and `GROUPS` is a bash special variable — `local GROUPS=(...)` aborts the enclosing function
    with "variable may not be assigned value", which silently turned `restore` into a no-op for
    an entire release. Before naming a shell array or a QML property, check it is yours to use.
@@ -83,7 +99,7 @@ machine- or user-specific except through `MANIFEST`/`SECRETS_MANIFEST` in
   four rows the user could not act on, and `restore` never had a group for them. What is recorded
   instead is `state/omarchy-plugins.txt`: every installed plugin's id, version and git origin, so
   a second machine can be rebuilt with `omarchy plugin add`.
-- **Adding a setting is one line** in the `SETTINGS` registry in `replicant-core.sh`: 13
+- **Adding a setting is one line** in the `SETTINGS` registry in `replicant-core.sh`: 15
   pipe-separated fields, documented above the array. `Panel.qml` renders the control from the
   `type`, so no QML change is needed for a new setting of an existing type. Give it a `fallback`
   only when the writer can create the key from nothing (the `toml-*` types) — otherwise the panel
@@ -158,6 +174,58 @@ and the item collapses to nothing. Two ways out, both used here:
 And a child in a `Row` gets **no width of its own**. `StatCard` rendered as nothing at all until
 it was given an explicit `width` — a `BorderSurface` at width 0 draws nothing and reports no
 error.
+
+## Nerd Font glyphs are code points, not pasted characters
+
+The MDI glyphs this plugin uses all live above U+FFFF. Pasted into a `.qml` as literal characters
+they survive normal editing but not every re-encoding, and a truncated four-byte sequence silently
+becomes a *different* symbol — that is how `U+F0992` (plus-minus) once shipped as the "reset"
+icon. They are held as code points and built with `root.mdi(0xF0450)`, with the MDI name in a
+trailing comment so the next person can tell what it is meant to be without rendering it.
+`tests/run-all.sh` fails on a pasted PUA glyph in any `.qml`.
+
+**Verify a new glyph by looking at it**, not by checking the font covers it — coverage says
+nothing about whether the code point is the icon you meant:
+
+```bash
+F=$(fc-match -f '%{file}' 'JetBrainsMono Nerd Font')
+printf '\U000F0450 F0450   \U000F0167 F0167\n' > /tmp/g.txt
+magick -background '#101315' -fill '#cacccc' -font "$F" -pointsize 26 label:@/tmp/g.txt /tmp/g.png
+```
+
+## Two machines, one repo
+
+The plugin is built for a desktop *and* a laptop sharing one private repo, which rules out two
+shapes that look fine with a single machine:
+
+- **`state/` is scoped by hostname** (`state/<machine>/`). A shared inventory meant each machine
+  overwrote the other's package list on every save and every pull looked like a change.
+  `ensure_repo_layout` migrates a flat `state/*.txt` under the current machine.
+- **Every tracked file has a sync switch**, and the off-list lives in `.replicant-exclude` **in
+  the repo** — "monitors are machine-specific" is a fact about the setup, not about one machine.
+  Off means: not copied from here, not restored onto here, and whatever the repo already holds is
+  left alone (`core_backup` still counts it as expected, so the prune pass does not delete it).
+  `hypr/monitors.lua` is seeded off.
+
+## Values are stored in one unit and shown in another
+
+`SETTINGS` fields 14/15 (`scale`, `display`) exist because Omarchy stores idle timers in seconds
+and nobody thinks in "600". The panel edits minutes and multiplies back; **the CLI always speaks
+the stored unit** (`set idle.lock 600` is still seconds) so scripts never have to know what the
+panel happens to display. `value_text` carries the exact current value written out in full — the
+stepper rounds 150 s to 3 min, and the row says "2 min 30 s" underneath so the rounding can never
+be mistaken for the value.
+
+Comparisons for the two revert buttons are made on the *rendered* text, not the raw string:
+`shell.toml` holding `1` and a fallback of `1.0` are the same density, and a revert button that
+would change nothing is worse than no button.
+
+## `grep -q` on a pipeline under `pipefail` reports failure on success
+
+`plan_for_category "$c" | grep -q "$x"` fails for every match that is not the last line: `grep -q`
+exits at the first hit, the writer takes a SIGPIPE, and `set -o pipefail` turns that into a
+non-zero pipeline. Capture first (`p=$(plan_for_category "$c"); grep -qF "$x" <<<"$p"`). This cost
+a confusing test failure where the value being searched for was visibly present in the output.
 
 ## Verify before calling it done
 

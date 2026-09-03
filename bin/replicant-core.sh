@@ -12,7 +12,14 @@ REPLICANT_HOME="${OMARCHY_REPLICANT_HOME:-$HOME/.local/share/omarchy-replicant}"
 REPO_DIR="$REPLICANT_HOME/repo"
 CONFIG_DIR="$REPO_DIR/config"
 SECRETS_DIR="$REPO_DIR/secrets"
-STATE_DIR="$REPO_DIR/state"
+# One repo, several machines. state/ is an inventory OF A MACHINE — its
+# packages, its services, its plugins — so a shared state/ meant the desktop and
+# the laptop overwrote each other's inventory on every save, and every pull
+# looked like a change. Scoping it by hostname makes two machines additive
+# instead of competing.
+MACHINE="${REPLICANT_MACHINE:-$(hostnamectl --static 2>/dev/null || hostname 2>/dev/null || echo unknown)}"
+STATE_ROOT="$REPO_DIR/state"
+STATE_DIR="$STATE_ROOT/$MACHINE"
 TEMPLATES_DIR="$REPO_DIR/templates"
 GITHOOKS_DIR="$REPO_DIR/.githooks"
 
@@ -32,10 +39,15 @@ MANIFEST=(
   "$HOME/.claude/.mcp.json:claude/mcp.json"
   "$HOME/.config/Code/User/settings.json:vscode/settings.json"
   "$HOME/.config/mise/config.toml:mise/config.toml"
+  "$HOME/.config/hypr/bindings.lua:hypr/bindings.lua"
+  "$HOME/.config/hypr/hyprland.lua:hypr/hyprland.lua"
   "$HOME/.config/hypr/input.lua:hypr/input.lua"
   "$HOME/.config/hypr/looknfeel.lua:hypr/looknfeel.lua"
   "$HOME/.config/hypr/monitors.lua:hypr/monitors.lua"
   "$HOME/.config/hypr/autostart.lua:hypr/autostart.lua"
+  "$HOME/.config/hypr/hyprlock.conf:hypr/hyprlock.conf"
+  "$HOME/.config/hypr/hyprsunset.conf:hypr/hyprsunset.conf"
+  "$HOME/.config/hypr/xdph.conf:hypr/xdph.conf"
   "$HOME/.config/uwsm/env.d/50-local-bin-priority.sh:uwsm/env.d/50-local-bin-priority.sh"
   "$HOME/.config/xdg-terminals.list:xdg-terminals.list"
   "$HOME/.config/opencode/opencode.json:opencode/opencode.json"
@@ -48,6 +60,7 @@ MANIFEST=(
   "$HOME/.config/omarchy-audit-ignore:omarchy-audit-ignore"
   "$HOME/.config/omarchy/hooks/post-update.d/audit-config.hook:omarchy/hooks/post-update.d/audit-config.hook"
   "$HOME/.config/omarchy/shell.json:omarchy/shell.json"
+  "$HOME/.config/omarchy/extensions/omarchy-menu.jsonc:omarchy/extensions/omarchy-menu.jsonc"
   "$HOME/.config/omarchy/shell.toml:omarchy/shell.toml"
   # Outside ~/.config, but they are what makes a machine look like yours:
   # the active theme's name and the editor Omarchy opens config files with.
@@ -69,6 +82,119 @@ SECRETS_MANIFEST=(
   "$HOME/dev/portfolio/.env:env/portfolio.env"
   "$HOME/dev/lazytripz/backend/.env:env/lazytrip-backend.env"
 )
+
+# ─── CATEGORIES — how the panel files everything, and how each is put back ───
+# The panel shows one collapsed card per category instead of one long list of
+# 40 files, so nothing needs a long scroll. `method` is the honest answer to
+# "what will Replicant actually run to restore this?" — it is shown in the UI
+# rather than hidden in the code, because using the Omarchy-sanctioned path
+# (omarchy theme set, omarchy plugin add, hyprctl reload) instead of blindly
+# copying files back is the whole point of this plugin.
+#
+# Format: "id|icon|label|description|method"
+CATEGORIES=(
+  "shortcuts|󰌌|Shortcuts|Your keybinding overrides, layered on top of Omarchy's defaults|Copied back, then hyprctl reload"
+  "appearance|󰏘|Appearance|Theme, look & feel, fonts, interface density and branding|Theme re-applied with omarchy theme set"
+  "desktop|󰍹|Desktop & bar|The Omarchy shell: bar layout, widgets, menu and idle behaviour|Written to shell.json / shell.toml, which the shell watches live"
+  "hyprland|󰖯|Hyprland|Input, monitors, autostart, lock screen and night light|Copied back, then hyprctl reload and a config-error check"
+  "terminal|󰆍|Terminal & shell|Alacritty, foot, the default terminal, bashrc and compose keys|Copied back, then omarchy restart terminal"
+  "development|󰅴|Development|git, editors, Claude and opencode, mise, VS Code|Copied back; nothing needs restarting"
+  "secrets|󰌆|Secrets & keys|SSH keys, tokens and .env files — private, mode 600|Copied back as mode 600; contents are never printed"
+  "plugins|󰐱|Plugins|Plugin settings, plus every installed plugin's id and git origin|Reinstalled with omarchy plugin add, then their settings copied back"
+  "scripts|󰈙|Scripts|Your own helper scripts under ~/.local/bin and Omarchy hooks|Copied back with the executable bit kept"
+  "system|󰋊|System|systemd drop-ins for lid, sleep and fingerprint|Copied back with sudo, then systemctl daemon-reload"
+  "other|󰈔|Other|Anything else you asked Replicant to track|Copied back as-is"
+)
+CATEGORY_ORDER=(shortcuts appearance desktop hyprland terminal development secrets plugins scripts system other)
+
+category_field() { local -a f; IFS='|' read -ra f <<<"$1"; printf '%s' "${f[$(($2 - 1))]:-}"; }
+find_category() {
+  local id="$1" entry
+  for entry in "${CATEGORIES[@]}"; do
+    [[ "$(category_field "$entry" 1)" == "$id" ]] && { printf '%s\n' "$entry"; return 0; }
+  done
+  return 1
+}
+
+# category_for_rel <repo-relative-id> — one place deciding where a tracked file
+# shows up. It used to live inline in build_configs_json, which meant the CLI
+# and the panel could disagree about what "appearance" meant.
+category_for_rel() {
+  case "$1" in
+    hypr/bindings.lua)                                 echo shortcuts ;;
+    hypr/looknfeel.lua|omarchy/theme.name|omarchy/shell.toml|branding/*) echo appearance ;;
+    omarchy/shell.json|omarchy/extensions/*)           echo desktop ;;
+    hypr/*)                                            echo hyprland ;;
+    alacritty/*|foot/*|kitty/*|ghostty/*|xdg-terminals.list|home/*) echo terminal ;;
+    git/*|vscode/*|mise/*|claude/*|opencode/*|dev/*|omarchy/defaults/*) echo development ;;
+    ssh/*|env/*)                                       echo secrets ;;
+    plugins/*)                                         echo plugins ;;
+    bin/*|omarchy/hooks/*|omarchy-audit-ignore)        echo scripts ;;
+    etc/*|uwsm/*)                                      echo system ;;
+    *)                                                 echo other ;;
+  esac
+}
+
+build_categories_json() {
+  local entries=() entry
+  local id
+  for id in "${CATEGORY_ORDER[@]}"; do
+    entry=$(find_category "$id") || continue
+    entries+=("$(jq -nc --arg id "$id" \
+      --arg icon "$(category_field "$entry" 2)" \
+      --arg label "$(category_field "$entry" 3)" \
+      --arg description "$(category_field "$entry" 4)" \
+      --arg method "$(category_field "$entry" 5)" \
+      '{id:$id,icon:$icon,label:$label,description:$description,method:$method}')")
+  done
+  printf '%s\n' "${entries[@]}" | jq -s '.'
+}
+
+# ─── What NOT to sync ───────────────────────────────────────────────────────
+# Some files are about the machine, not about the user: hypr/monitors.lua
+# describes the screens physically plugged into THIS box, and copying the
+# laptop's version onto the desktop is actively wrong. Rather than guessing,
+# every tracked file carries a switch, and this list is the off position.
+#
+# It lives in the repo, not in ~/.local/share, because "monitors are
+# machine-specific" is a fact about the setup, not about one machine — you want
+# to make that decision once and have the other machine honour it. A file that
+# is switched off is neither copied INTO the repo from here nor restored OUT of
+# it onto here; whatever copy the repo already has is left exactly as it is.
+EXCLUDE_FILE="$REPO_DIR/.replicant-exclude"
+# Seeded on a fresh repo. Not a hardcoded rule: it is written into a file the
+# user can see, edit and switch back on from the panel.
+DEFAULT_EXCLUDES=("hypr/monitors.lua")
+
+read_excludes() {
+  [[ -f "$EXCLUDE_FILE" ]] || return 0
+  sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$EXCLUDE_FILE" 2>/dev/null || true
+}
+
+is_excluded() {
+  local rel="$1" line
+  while IFS= read -r line; do [[ "$line" == "$rel" ]] && return 0; done < <(read_excludes)
+  return 1
+}
+
+# core_sync <rel> <on|off> — the panel's per-file switch.
+core_sync() {
+  local rel="$1" want="$2" line
+  local -a keep=()
+  case "$want" in on|off) ;; *) echo "sync: expected 'on' or 'off'" >&2; return 1 ;; esac
+  resolve_manifest_src "$rel" >/dev/null 2>&1 || { echo "unknown id: $rel" >&2; return 1; }
+  mkdir -p "$(dirname "$EXCLUDE_FILE")"
+  while IFS= read -r line; do [[ "$line" == "$rel" ]] || keep+=("$line"); done < <(read_excludes)
+  [[ "$want" == "off" ]] && keep+=("$rel")
+  {
+    echo "# Files Replicant does not sync, one repo path per line."
+    echo "# Written by the panel's per-file switch; safe to edit by hand."
+    echo "# A file listed here is neither saved from nor restored onto any machine"
+    echo "# that shares this repo. Its last saved copy, if any, is left untouched."
+    (( ${#keep[@]} )) && printf '%s\n' "${keep[@]}"
+  } > "$EXCLUDE_FILE"
+  if [[ "$want" == "off" ]]; then echo "$rel will no longer sync" >&2; else echo "$rel will sync again" >&2; fi
+}
 
 # install helpers — install_file() writes with a .bak.<epoch> of whatever it overwrites
 DRY=${DRY:-0}
@@ -97,6 +223,33 @@ install_file() {
 
 ensure_repo_layout() {
   mkdir -p "$CONFIG_DIR" "$STATE_DIR" "$TEMPLATES_DIR"
+  # A repo written before state/ was scoped by machine has its inventory flat in
+  # state/. Move it under this machine's name rather than leaving two shapes to
+  # support forever; git records the move like any other change.
+  # `mv -n` is not enough: it exits 0 and does NOTHING when the target already
+  # exists, so a half-migrated repo kept a stale flat copy of every inventory
+  # file next to the scoped one, forever. The scoped copy is regenerated from
+  # this machine on every backup, so where both exist it is the newer of the
+  # two and the flat one is what goes.
+  local flat name
+  for flat in "$STATE_ROOT"/*.txt; do
+    [[ -f "$flat" ]] || continue
+    name=$(basename "$flat")
+    if [[ -f "$STATE_DIR/$name" ]]; then
+      rm -f -- "$flat"
+    else
+      mv -- "$flat" "$STATE_DIR/$name" 2>/dev/null || true
+    fi
+  done
+  if [[ ! -f "$EXCLUDE_FILE" ]]; then
+    {
+      echo "# Files Replicant does not sync, one repo path per line."
+      echo "# Written by the panel's per-file switch; safe to edit by hand."
+      echo "# A file listed here is neither saved from nor restored onto any machine"
+      echo "# that shares this repo. Its last saved copy, if any, is left untouched."
+      printf '%s\n' "${DEFAULT_EXCLUDES[@]}"
+    } > "$EXCLUDE_FILE"
+  fi
   install -d -m 700 "$SECRETS_DIR" 2>/dev/null || mkdir -p "$SECRETS_DIR"
   # templates placeholder
   if [[ ! -f "$TEMPLATES_DIR/60-secrets.conf.example" && -f "$HOME/omarchy_thinkpad/templates/60-secrets.conf.example" ]]; then
@@ -172,9 +325,17 @@ core_backup() {
   ensure_repo_layout
   echo "→ Copying configuration (fixed MANIFEST, savegame)" >&2
   copied=0; missing=0
+  local skipped=0
   for entry in "${MANIFEST[@]}"; do
     src=${entry%%:*}
-    dst="$CONFIG_DIR/${entry##*:}"
+    rel="${entry##*:}"
+    dst="$CONFIG_DIR/$rel"
+    # Switched off in .replicant-exclude: not copied from here, and (see the
+    # prune pass below) whatever the repo already holds is left alone.
+    if is_excluded "$rel"; then
+      skipped=$((skipped + 1))
+      continue
+    fi
     if [[ -f $src ]]; then
       mkdir -p "$(dirname "$dst")"
       cp -f "$src" "$dst"
@@ -184,7 +345,11 @@ core_backup() {
       ((missing++)) || true
     fi
   done
-  echo "  $copied copied, $missing missing" >&2
+  if (( skipped > 0 )); then
+    echo "  $copied copied, $missing missing, $skipped not synced (switched off)" >&2
+  else
+    echo "  $copied copied, $missing missing" >&2
+  fi
 
   echo "→ Copying auto-detected plugin configs" >&2
   local pcopied=0 psrc prel _pname
@@ -226,7 +391,9 @@ core_backup() {
   scopied=0
   for entry in "${SECRETS_MANIFEST[@]}"; do
     src=${entry%%:*}
-    dst="$SECRETS_DIR/${entry##*:}"
+    rel="${entry##*:}"
+    dst="$SECRETS_DIR/$rel"
+    is_excluded "$rel" && continue
     if [[ -f $src ]]; then
       install -d -m 700 "$(dirname "$dst")" 2>/dev/null || mkdir -p "$(dirname "$dst")"
       install -m 600 "$src" "$dst"
@@ -413,7 +580,7 @@ discover_plugin_entries() {
 # mechanically. The panel renders a control per type, so adding a setting is one
 # line here and no QML change.
 #
-# Format: "id|group|file|path|type|label|unit|min|max|options|hint|apply|fallback"
+# Format: "id|group|file|path|type|label|unit|min|max|options|hint|apply|fallback|scale|display"
 #
 #   group    the section the panel files this control under
 #   file     the file holding the value ("-" for types that don't read a file)
@@ -425,7 +592,7 @@ discover_plugin_entries() {
 #                                            Lua config (see lua_get for limits)
 #            theme                           the active Omarchy theme
 #            line-enum                       a file holding one bare word
-#   min/max  numeric types only
+#   min/max  numeric types only, in the STORED unit
 #   options  enum types only, comma-separated
 #   hint     one short line shown under the control
 #   apply    command run after a successful write. Empty means the value is
@@ -438,40 +605,63 @@ discover_plugin_entries() {
 #            appearance keys are missing until you change one, and reporting
 #            them as "unavailable" would leave a control the user can see but
 #            never touch. Reported with implicit:true so the panel can say the
-#            value is inherited rather than written down anywhere.
+#            value is inherited rather than written down anywhere. It doubles as
+#            the value "reset to the Omarchy default" writes when the file
+#            Omarchy ships has nothing to read.
+#   scale    stored-unit -> shown-unit divisor. Omarchy stores idle timers in
+#            seconds; nobody thinks in "600 seconds", so the panel edits them in
+#            minutes (scale 60) and multiplies back before writing. Empty or 1
+#            means the two units are the same. The CLI always speaks the STORED
+#            unit — `set idle.lock 600` is still seconds — so scripts do not
+#            have to know what the panel happens to display.
+#   display  the unit shown next to the control once `scale` is applied
+#            ("min"). Empty falls back to `unit`.
 #
 # A setting whose file or key is missing on this machine reads as null and the
 # panel greys the control out. That is the intended behaviour, not an error:
 # these files are the user's own and no two machines carry the same keys.
 SETTINGS=(
-  # ── Idle & power — ~/.config/omarchy/shell.json, watched live by the shell
-  "idle.screensaver|Idle & power|$HOME/.config/omarchy/shell.json|.idle.screensaver|number|Screensaver|s|10|3600||Idle time before the screensaver starts||"
-  "idle.lock|Idle & power|$HOME/.config/omarchy/shell.json|.idle.lock|number|Lock screen|s|10|7200||Idle time before the screen locks||"
-  "idle.lazyDpms|Idle & power|$HOME/.config/omarchy/shell.json|.idle.lazyDpms|number|Turn off display|s|10|7200||Idle time before the display powers down||"
-  "idle.lazySuspendAc|Idle & power|$HOME/.config/omarchy/shell.json|.idle.lazySuspendAc|number|Suspend on AC|s|0|14400||Idle time before suspending on AC power (0 = never)||"
-  "idle.lazySuspendBatt|Idle & power|$HOME/.config/omarchy/shell.json|.idle.lazySuspendBatt|number|Suspend on battery|s|0|14400||Idle time before suspending on battery (0 = never)||"
+  # ── Idle & power — ~/.config/omarchy/shell.json, watched live by the shell.
+  # Stored in seconds by Omarchy, edited in minutes here.
+  "idle.screensaver|Idle & power|$HOME/.config/omarchy/shell.json|.idle.screensaver|number|Screensaver|s|60|3600||Idle time before the screensaver starts|||60|min"
+  "idle.lock|Idle & power|$HOME/.config/omarchy/shell.json|.idle.lock|number|Lock screen|s|60|7200||Idle time before the screen locks|||60|min"
+  "idle.lazyDpms|Idle & power|$HOME/.config/omarchy/shell.json|.idle.lazyDpms|number|Turn off display|s|60|7200||Idle time before the display powers down|||60|min"
+  "idle.lazySuspendAc|Idle & power|$HOME/.config/omarchy/shell.json|.idle.lazySuspendAc|number|Suspend on AC|s|0|14400||Idle time before suspending on AC power (0 = never)|||60|min"
+  "idle.lazySuspendBatt|Idle & power|$HOME/.config/omarchy/shell.json|.idle.lazySuspendBatt|number|Suspend on battery|s|0|14400||Idle time before suspending on battery (0 = never)|||60|min"
   # ── Appearance
-  "theme.current|Appearance|-|-|theme|Theme|||||The theme applied to the shell, terminals and editor||"
-  "bar.position|Appearance|$HOME/.config/omarchy/shell.json|.bar.position|enum|Bar position||||top,bottom,left,right|Which screen edge the status bar sits on||"
-  "bar.transparent|Appearance|$HOME/.config/omarchy/shell.json|.bar.transparent|bool|Transparent bar|||||Let the wallpaper show through the bar||"
-  "font.baseSize|Appearance|$HOME/.config/omarchy/shell.toml|font.base-size|toml-int|Interface font size|pt|8|32||Base size every bar, menu and panel font derives from||12"
-  "spacing.scale|Appearance|$HOME/.config/omarchy/shell.toml|spacing.scale|toml-float|Interface density|×|0.5|2||Multiplies every margin, gap and control size||1.0"
-  "bar.sizeHorizontal|Appearance|$HOME/.config/omarchy/shell.toml|bar.size-horizontal|toml-int|Bar thickness (top/bottom)|px|16|80||Height of the bar when it sits on a horizontal edge; setting it stops the bar scaling with the font||26"
-  "bar.sizeVertical|Appearance|$HOME/.config/omarchy/shell.toml|bar.size-vertical|toml-int|Bar thickness (left/right)|px|16|120||Width of the bar when it sits on a vertical edge; setting it stops the bar scaling with the font||28"
+  "theme.current|Appearance|-|-|theme|Theme|||||The theme applied to the shell, terminals and editor||tokyo-night|1|"
+  "bar.position|Appearance|$HOME/.config/omarchy/shell.json|.bar.position|enum|Bar position||||top,bottom,left,right|Which screen edge the status bar sits on|||1|"
+  "bar.transparent|Appearance|$HOME/.config/omarchy/shell.json|.bar.transparent|bool|Transparent bar|||||Let the wallpaper show through the bar|||1|"
+  "font.baseSize|Appearance|$HOME/.config/omarchy/shell.toml|font.base-size|toml-int|Interface font size|pt|8|32||Base size every bar, menu and panel font derives from||12|1|"
+  "spacing.scale|Appearance|$HOME/.config/omarchy/shell.toml|spacing.scale|toml-float|Interface density|×|0.5|2||Multiplies every margin, gap and control size||1.0|1|"
+  "bar.sizeHorizontal|Appearance|$HOME/.config/omarchy/shell.toml|bar.size-horizontal|toml-int|Bar thickness (top/bottom)|px|16|80||Height of the bar when it sits on a horizontal edge; setting it stops the bar scaling with the font||26|1|"
+  "bar.sizeVertical|Appearance|$HOME/.config/omarchy/shell.toml|bar.size-vertical|toml-int|Bar thickness (left/right)|px|16|120||Width of the bar when it sits on a vertical edge; setting it stops the bar scaling with the font||28|1|"
+  "bar.iconFont|Appearance|$HOME/.config/omarchy/shell.toml|bar.icon-font|toml-int|Bar icon size|px|8|28||How large the glyphs in the bar are drawn||13|1|"
   # ── Input — Hyprland reads Lua at startup, so these need an explicit reload
-  "input.repeatRate|Input|$HOME/.config/hypr/input.lua|repeat_rate|lua-int|Key repeat rate|/s|1|100||Characters a held key sends per second|hyprctl reload|"
-  "input.repeatDelay|Input|$HOME/.config/hypr/input.lua|repeat_delay|lua-int|Key repeat delay|ms|100|2000||How long a key is held before it starts repeating|hyprctl reload|"
-  "input.kbLayout|Input|$HOME/.config/hypr/input.lua|kb_layout|lua-enum|Keyboard layout||||es,us,gb,de,fr,it,pt,latam|X11 layout code for the keyboard|hyprctl reload|"
-  "input.naturalScroll|Input|$HOME/.config/hypr/input.lua|natural_scroll|lua-bool|Natural scrolling|||||Touchpad: two fingers down moves the page up|hyprctl reload|"
-  "input.tapToClick|Input|$HOME/.config/hypr/input.lua|tap_to_click|lua-bool|Tap to click|||||Touchpad: a tap counts as a click|hyprctl reload|"
-  "input.disableWhileTyping|Input|$HOME/.config/hypr/input.lua|disable_while_typing|lua-bool|Ignore touchpad while typing|||||Stops the cursor jumping mid-sentence|hyprctl reload|"
+  "input.repeatRate|Input|$HOME/.config/hypr/input.lua|repeat_rate|lua-int|Key repeat rate|/s|1|100||Characters a held key sends per second|hyprctl reload||1|"
+  "input.repeatDelay|Input|$HOME/.config/hypr/input.lua|repeat_delay|lua-int|Key repeat delay|ms|100|2000||How long a key is held before it starts repeating|hyprctl reload||1|"
+  "input.kbLayout|Input|$HOME/.config/hypr/input.lua|kb_layout|lua-enum|Keyboard layout||||es,us,gb,de,fr,it,pt,latam|X11 layout code for the keyboard|hyprctl reload||1|"
+  "input.numlock|Input|$HOME/.config/hypr/input.lua|numlock_by_default|lua-bool|Num lock at login|||||Turn the numeric keypad on when the session starts|hyprctl reload||1|"
+  "input.naturalScroll|Input|$HOME/.config/hypr/input.lua|natural_scroll|lua-bool|Natural scrolling|||||Touchpad: two fingers down moves the page up|hyprctl reload||1|"
+  "input.tapToClick|Input|$HOME/.config/hypr/input.lua|tap_to_click|lua-bool|Tap to click|||||Touchpad: a tap counts as a click|hyprctl reload||1|"
+  "input.disableWhileTyping|Input|$HOME/.config/hypr/input.lua|disable_while_typing|lua-bool|Ignore touchpad while typing|||||Stops the cursor jumping mid-sentence|hyprctl reload||1|"
   # ── Defaults
-  "default.editor|Defaults|$HOME/.local/state/omarchy/defaults/editor|-|line-enum|Default editor||||nvim,code,hx,micro,nano,zed|Editor Omarchy opens config files with||"
+  "default.editor|Defaults|$HOME/.local/state/omarchy/defaults/editor|-|line-enum|Default editor||||nvim,code,hx,micro,nano,zed|Editor Omarchy opens config files with||nvim|1|"
 )
 
-SETTING_GROUP_ORDER=("Idle & power" "Appearance" "Input" "Defaults")
+# Settings groups, in panel order: "name|icon|description"
+SETTING_GROUPS=(
+  "Idle & power|󰐥|When the screen dims, locks and the machine suspends"
+  "Appearance|󰏘|Theme, bar and how large everything is drawn"
+  "Input|󰌌|Keyboard and touchpad behaviour"
+  "Defaults|󰒓|Which program Omarchy reaches for"
+)
 
-setting_field() { printf '%s' "$1" | cut -d'|' -f"$2"; }
+
+# Pure bash: `cut` here meant a fork per field, and the panel reads fifteen
+# fields from twenty-odd settings on every refresh — three hundred processes
+# for a string split.
+setting_field() { local -a f; IFS='|' read -ra f <<<"$1"; printf '%s' "${f[$(($2 - 1))]:-}"; }
 
 find_setting() {
   local id="$1" entry
@@ -725,9 +915,155 @@ set_setting_value() {
   echo "$label -> $value$unit" >&2
 }
 
+# ── humanising values ───────────────────────────────────────────────────────
+# Omarchy stores idle timers in seconds and densities as bare multipliers.
+# Those are the right things to store and the wrong things to *read*: "600"
+# tells you nothing, "10 min" tells you everything. Every number the panel
+# shows goes through here, and the CLI keeps speaking the stored unit.
+human_duration() {
+  local s="$1" h m
+  [[ "$s" =~ ^[0-9]+$ ]] || { printf '%s\n' "$s"; return; }
+  (( s == 0 )) && { echo "never"; return; }
+  (( s < 60 )) && { echo "${s} s"; return; }
+  if (( s < 3600 )); then
+    m=$(( s / 60 ))
+    if (( s % 60 == 0 )); then echo "${m} min"; else echo "${m} min $(( s % 60 )) s"; fi
+    return
+  fi
+  h=$(( s / 3600 )); m=$(( (s % 3600) / 60 ))
+  if (( m == 0 )); then echo "${h} h"; else echo "${h} h ${m} min"; fi
+}
+
+# "1" and "1.0" are the same density; printing them differently made the panel
+# offer a "back to the Omarchy default" button that would have changed nothing.
+canon_number() {
+  local v="$1"
+  [[ "$v" == *.* ]] || { printf '%s\n' "$v"; return; }
+  v="${v%"${v##*[!0]}"}"   # drop trailing zeros
+  v="${v%.}"               # and a bare trailing dot
+  printf '%s\n' "${v:-0}"
+}
+
+# human_value <type> <unit> <scale> <display_unit> <raw>
+human_value() {
+  local type="$1" unit="$2" scale="$3" disp="$4" raw="$5"
+  [[ -n "$raw" ]] || { echo "—"; return; }
+  case "$type" in
+    bool|lua-bool) [[ "$raw" == "true" ]] && echo "on" || echo "off"; return ;;
+    toml-float)    raw=$(canon_number "$raw") ;;
+  esac
+  if [[ "$scale" == "60" ]]; then human_duration "$raw"; return; fi
+  case "$unit" in
+    "")  printf '%s\n' "$raw" ;;
+    "×") printf '%s×\n' "$raw" ;;
+    "/s") printf '%s/s\n' "$raw" ;;
+    *)   printf '%s %s\n' "$raw" "${disp:-$unit}" ;;
+  esac
+}
+
+# ── where a setting's value came from, and what to put back ─────────────────
+# rel_for_src is the reverse of resolve_manifest_src: it answers "which repo
+# path holds the saved copy of this file", so a single setting can be reverted
+# to what the repo has without restoring the whole file.
+rel_for_src() {
+  local src="$1" entry
+  for entry in "${MANIFEST[@]}" "${SECRETS_MANIFEST[@]}"; do
+    [[ "${entry%%:*}" == "$src" ]] && { printf '%s\n' "${entry##*:}"; return 0; }
+  done
+  return 1
+}
+
+repo_copy_for_rel() {
+  case "$1" in
+    ssh/*|env/*) printf '%s\n' "$SECRETS_DIR/$1" ;;
+    *)           printf '%s\n' "$CONFIG_DIR/$1" ;;
+  esac
+}
+
+# read_setting_from <entry> <file> — the same getter as get_setting_value, but
+# pointed at any file. Used to read the key out of Omarchy's shipped default
+# and out of the repo's saved copy, which is what makes the two revert buttons
+# possible without a second parser.
+read_setting_from() {
+  local entry="$1" file="$2" path type raw
+  path=$(setting_field "$entry" 4); type=$(setting_field "$entry" 5)
+  [[ -f "$file" ]] || return 1
+  case "$type" in
+    line-enum)
+      raw=$(head -n1 "$file" 2>/dev/null | tr -d '[:space:]')
+      [[ -n "$raw" ]] && printf '%s\n' "$raw" || return 1 ;;
+    toml-int|toml-float)
+      raw=$(toml_get "$file" "$path") || return 1
+      [[ -n "$raw" ]] && printf '%s\n' "$raw" || return 1 ;;
+    lua-int|lua-bool|lua-enum)
+      lua_get "$file" "$path" ;;
+    number|bool|enum)
+      raw=$(jq -r "$path" "$file" 2>/dev/null) || return 1
+      [[ "$raw" == "null" ]] && return 1
+      printf '%s\n' "$raw" ;;
+    *) return 1 ;;
+  esac
+}
+
+# The value this setting would have on a machine that had never been touched.
+# Read out of the file Omarchy actually ships where there is one; otherwise the
+# registry's `fallback`, which is the shell's own built-in default.
+setting_default_value() {
+  local entry; entry=$(find_setting "$1") || return 1
+  local file def
+  file=$(setting_field "$entry" 3)
+  if [[ "$file" != "-" ]] && def=$(default_for_src "$file" 2>/dev/null) && [[ -n "$def" ]]; then
+    read_setting_from "$entry" "$def" && return 0
+  fi
+  def=$(setting_field "$entry" 13)
+  [[ -n "$def" ]] && { printf '%s\n' "$def"; return 0; }
+  return 1
+}
+
+# The value saved in the user's own repo — "what my other machine has".
+setting_repo_value() {
+  local entry; entry=$(find_setting "$1") || return 1
+  local file rel copy
+  file=$(setting_field "$entry" 3)
+  [[ "$file" != "-" ]] || return 1
+  rel=$(rel_for_src "$file") || return 1
+  copy=$(repo_copy_for_rel "$rel")
+  read_setting_from "$entry" "$copy"
+}
+
+# core_revert <id> <default|repo> — put one setting back without touching the
+# rest of the file it lives in. The whole-file equivalents (`reset`, `restore`)
+# are still there; this is the small, everyday one.
+core_revert() {
+  local id="$1" to="${2:-default}" value
+  case "$to" in
+    default) value=$(setting_default_value "$id") || { echo "no Omarchy default known for $id" >&2; return 1; } ;;
+    repo)    value=$(setting_repo_value "$id")    || { echo "$id is not saved in your repo yet" >&2; return 1; } ;;
+    *)       echo "revert: --to must be 'default' or 'repo'" >&2; return 1 ;;
+  esac
+  set_setting_value "$id" "$value"
+}
+
+# Numbers the panel can show without the user doing arithmetic. `value` stays
+# the stored value (what the CLI reads and writes); `display_*` is the same
+# quantity in the unit a person thinks in, and `value_text` is the exact
+# current value written out in full, which is what the Overview table shows.
+settings_display_step() {
+  local scale="$1" dmax="$2" unit="$3"
+  if [[ "$scale" != "1" && -n "$scale" ]]; then
+    if [[ -n "$dmax" ]] && (( dmax > 60 )); then echo 5; else echo 1; fi
+  elif [[ "$unit" == "ms" ]]; then echo 50
+  else echo 1
+  fi
+}
+
 build_settings_json() {
-  local entries=()
-  local entry id group file path type label unit min max options hint value opts_json available fallback implicit
+  # One jq invocation for the whole array, not one per setting. The panel polls
+  # status once a minute and refreshes after every write, and twenty-odd `jq -n`
+  # spawns per build were most of the time that took.
+  local entry id group file path type label unit min max options hint value available fallback implicit
+  local scale disp dvalue dmin dmax dstep vtext defval deftext repoval repotext canrd canrr numeric boolean
+  {
   for entry in "${SETTINGS[@]}"; do
     id=$(setting_field "$entry" 1);      group=$(setting_field "$entry" 2)
     file=$(setting_field "$entry" 3);    path=$(setting_field "$entry" 4)
@@ -735,112 +1071,256 @@ build_settings_json() {
     unit=$(setting_field "$entry" 7);    min=$(setting_field "$entry" 8)
     max=$(setting_field "$entry" 9);     hint=$(setting_field "$entry" 11)
     fallback=$(setting_field "$entry" 13)
+    scale=$(setting_field "$entry" 14);  disp=$(setting_field "$entry" 15)
+    [[ -n "$scale" ]] || scale=1
+    [[ -n "$disp" ]] || disp="$unit"
     options=$(setting_options "$entry")
     value=$(get_setting_value "$id" 2>/dev/null) || value=""
-    if [[ -n "$options" ]]; then opts_json=$(printf '%s' "$options" | jq -Rc 'split(",")'); else opts_json='[]'; fi
     implicit=false
     if [[ -z "$value" && -n "$fallback" ]]; then value="$fallback"; implicit=true; fi
     if [[ -n "$value" ]]; then available=true; else available=false; fi
+
+    # Shape check per type — a malformed value is "not available", never a
+    # control bound to a value it cannot render.
+    numeric=false; boolean=false
     case "$type" in
       number|toml-int|lua-int)
-        [[ "$value" =~ ^-?[0-9]+$ ]] || { value=""; available=false; }
-        entries+=("$(jq -nc --arg id "$id" --arg group "$group" --arg label "$label" --arg type "$type" --arg unit "$unit" \
-          --argjson min "${min:-null}" --argjson max "${max:-null}" --argjson options "$opts_json" \
-          --arg hint "$hint" --arg file "$file" --argjson available "$available" --argjson implicit "$implicit" --argjson value "${value:-null}" \
-          '{id:$id,group:$group,label:$label,type:$type,unit:$unit,min:$min,max:$max,options:$options,hint:$hint,file:$file,available:$available,implicit:$implicit,value:$value}')")
-        ;;
+        numeric=true; [[ "$value" =~ ^-?[0-9]+$ ]] || { value=""; available=false; } ;;
       toml-float)
-        [[ "$value" =~ ^-?[0-9]*\.?[0-9]+$ ]] || { value=""; available=false; }
-        entries+=("$(jq -nc --arg id "$id" --arg group "$group" --arg label "$label" --arg type "$type" --arg unit "$unit" \
-          --argjson min "${min:-null}" --argjson max "${max:-null}" --argjson options "$opts_json" \
-          --arg hint "$hint" --arg file "$file" --argjson available "$available" --argjson implicit "$implicit" --argjson value "${value:-null}" \
-          '{id:$id,group:$group,label:$label,type:$type,unit:$unit,min:$min,max:$max,options:$options,hint:$hint,file:$file,available:$available,implicit:$implicit,value:$value}')")
-        ;;
+        numeric=true; [[ "$value" =~ ^-?[0-9]*\.?[0-9]+$ ]] || { value=""; available=false; } ;;
       bool|lua-bool)
-        [[ "$value" == "true" || "$value" == "false" ]] || { value="false"; available=false; }
-        entries+=("$(jq -nc --arg id "$id" --arg group "$group" --arg label "$label" --arg type "$type" --arg unit "$unit" \
-          --argjson min null --argjson max null --argjson options "$opts_json" \
-          --arg hint "$hint" --arg file "$file" --argjson available "$available" --argjson implicit "$implicit" --argjson value "$value" \
-          '{id:$id,group:$group,label:$label,type:$type,unit:$unit,min:$min,max:$max,options:$options,hint:$hint,file:$file,available:$available,implicit:$implicit,value:$value}')")
-        ;;
-      *)
-        entries+=("$(jq -nc --arg id "$id" --arg group "$group" --arg label "$label" --arg type "$type" --arg unit "$unit" \
-          --argjson min null --argjson max null --argjson options "$opts_json" \
-          --arg hint "$hint" --arg file "$file" --argjson available "$available" --argjson implicit "$implicit" --arg value "${value:-}" \
-          '{id:$id,group:$group,label:$label,type:$type,unit:$unit,min:$min,max:$max,options:$options,hint:$hint,file:$file,available:$available,implicit:$implicit,value:$value}')")
-        ;;
+        boolean=true; [[ "$value" == "true" || "$value" == "false" ]] || { value="false"; available=false; } ;;
     esac
+
+    dvalue=""; dmin=""; dmax=""; dstep=1
+    if [[ "$numeric" == true ]]; then
+      if [[ "$scale" == "1" ]]; then
+        dvalue="$value"; dmin="$min"; dmax="$max"
+      else
+        [[ -n "$value" ]] && dvalue=$(( (value + scale / 2) / scale ))
+        [[ -n "$min" ]] && dmin=$(( (min + scale - 1) / scale ))
+        [[ -n "$max" ]] && dmax=$(( max / scale ))
+      fi
+      dstep=$(settings_display_step "$scale" "$dmax" "$unit")
+    fi
+
+    vtext=$(human_value "$type" "$unit" "$scale" "$disp" "$value")
+    defval=$(setting_default_value "$id" 2>/dev/null) || defval=""
+    repoval=$(setting_repo_value "$id" 2>/dev/null) || repoval=""
+    deftext=$(human_value "$type" "$unit" "$scale" "$disp" "$defval")
+    repotext=$(human_value "$type" "$unit" "$scale" "$disp" "$repoval")
+    # Compare the rendered text, not the raw string: shell.toml holding "1" and
+    # a fallback of "1.0" are the same density, and offering a revert button
+    # that would change nothing is worse than offering none.
+    canrd=false; canrr=false
+    [[ -n "$defval"  && "$deftext"  != "$vtext" && "$available" == true ]] && canrd=true
+    [[ -n "$repoval" && "$repotext" != "$vtext" && "$available" == true ]] && canrr=true
+
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+      "$id" "$group" "$label" "$type" "$unit" "$min" "$max" "$options" "$hint" "$file" \
+      "$available" "$implicit" "$value" "$scale" "$disp" "$dvalue" "$dmin" "$dmax" "$dstep" \
+      "$vtext" "$defval" "$deftext" "$repoval" "$repotext" "$canrd" "$canrr" "$numeric" "$boolean"
+  done
+  } | jq -Rsc '
+    def num: if . == "" then null else (tonumber? // null) end;
+    def flag: . == "true";
+    split("\n") | map(select(length > 0) | split("\u001f") | {
+      id: .[0], group: .[1], label: .[2], type: .[3], unit: .[4],
+      min: (.[5]|num), max: (.[6]|num),
+      options: (if .[7] == "" then [] else (.[7]|split(",")) end),
+      hint: .[8], file: .[9],
+      available: (.[10]|flag), implicit: (.[11]|flag),
+      value: (if (.[27]|flag) then (.[12] == "true")
+              elif (.[26]|flag) then (.[12]|num)
+              else .[12] end),
+      scale: (.[13]|num), display_unit: .[14],
+      display_value: (.[15]|num), display_min: (.[16]|num),
+      display_max: (.[17]|num), display_step: ((.[18]|num) // 1),
+      value_text: .[19],
+      default_value: .[20], default_text: .[21],
+      repo_value: .[22], repo_text: .[23],
+      can_revert_default: (.[24]|flag), can_revert_repo: (.[25]|flag)
+    })'
+}
+
+build_setting_groups_json() {
+  local entries=() entry
+  for entry in "${SETTING_GROUPS[@]}"; do
+    entries+=("$(jq -nc --arg name "$(printf '%s' "$entry" | cut -d'|' -f1)" \
+      --arg icon "$(printf '%s' "$entry" | cut -d'|' -f2)" \
+      --arg description "$(printf '%s' "$entry" | cut -d'|' -f3)" \
+      '{name:$name,icon:$icon,description:$description}')")
   done
   printf '%s\n' "${entries[@]}" | jq -s '.'
 }
 
 build_configs_json() {
-  local entries=()
-  local entry src dst rel label group exists is_default
+  # One jq for the whole list. Same reason as build_settings_json: this runs on
+  # every panel refresh and there are forty-odd rows.
+  local entry src rel label category exists is_default has_default default_src config_rel
+  local dirty unpushed sync_state saved synced source
+  {
   for entry in "${MANIFEST[@]}"; do
-    src="${entry%%:*}"
-    rel="${entry##*:}"
-    label="$rel"
-    # group by prefix
-    case "$rel" in
-      home/*) group="shell" ;;
-      ssh/*|git/*) group="git/ssh" ;;
-      claude/*) group="claude" ;;
-      hypr/*) group="hypr" ;;
-      uwsm/*|xdg-terminals*) group="session" ;;
-      omarchy/theme.name|omarchy/defaults/*) group="appearance" ;;
-      omarchy/*|omarchy-audit*|branding/*) group="omarchy" ;;
-      alacritty*|foot*|kitty*|ghostty*) group="terminal" ;;
-      opencode*|mise*|vscode*|dev/*) group="dev" ;;
-      bin/*) group="scripts" ;;
-      etc/*) group="system" ;;
-      omarchy-plugin/*) group="replicant" ;;
-      *) group="other" ;;
-    esac
-    if [[ -f "$src" ]]; then exists=true; else exists=false; fi
-    local default_src="" has_default=false config_rel=""
-    if default_src=$(default_for_src "$src"); then has_default=true; fi
+    src="${entry%%:*}"; rel="${entry##*:}"; label="$rel"
+    category=$(category_for_rel "$rel")
+    [[ -f "$src" ]] && exists=true || exists=false
+    has_default=false; default_src=""
+    if default_src=$(default_for_src "$src" 2>/dev/null) && [[ -n "$default_src" ]]; then has_default=true; fi
     config_rel=$(config_rel_for_src "$src" 2>/dev/null || true)
-    if [[ -f "$src" && "$has_default" == true ]] && cmp -s "$src" "$default_src" 2>/dev/null; then is_default=true; else is_default=false; fi
-    # does the repo have uncommitted changes for this rel (vs. the last local commit)?
-    local dirty=false
-    if git -C "$REPO_DIR" status --porcelain -- "config/$rel" 2>/dev/null | grep -q .; then dirty=true; fi
-    # is that rel's last local commit not on origin yet (vs. GitHub)?
-    local unpushed=false
-    if path_unpushed "config/$rel"; then unpushed=true; fi
-    # third state: default (○ default) > modified (● changed or not pushed) > saved (◆ on GitHub)
-    local sync_state
-    if [[ "$is_default" == true ]]; then sync_state="default"
+    if [[ "$exists" == true && "$has_default" == true ]] && cmp -s "$src" "$default_src" 2>/dev/null; then
+      is_default=true
+    else
+      is_default=false
+    fi
+    dirty=false
+    git -C "$REPO_DIR" status --porcelain -- "config/$rel" 2>/dev/null | grep -q . && dirty=true
+    unpushed=false
+    path_unpushed "config/$rel" && unpushed=true
+    saved=false
+    [[ -f "$CONFIG_DIR/$rel" ]] && saved=true
+    synced=true
+    is_excluded "$rel" && synced=false
+    # Precedence for the badge: off > default > modified > saved.
+    if [[ "$synced" == false ]]; then sync_state="off"
+    elif [[ "$is_default" == true ]]; then sync_state="default"
     elif [[ "$dirty" == true || "$unpushed" == true ]]; then sync_state="modified"
     else sync_state="saved"
     fi
-    entries+=("$(jq -nc --arg id "$rel" --arg label "$label" --arg src "$src" --arg group "$group" --argjson exists "$exists" --argjson is_default "$is_default" --argjson has_default "$has_default" --arg config_rel "$config_rel" --argjson dirty "$dirty" --argjson unpushed "$unpushed" --arg sync_state "$sync_state" --arg source "manifest" '{id:$id,label:$label,src:$src,group:$group,exists:$exists,is_default:$is_default,has_default:$has_default,config_rel:$config_rel,dirty:$dirty,unpushed:$unpushed,sync_state:$sync_state,source:$source}')")
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+      "$rel" "$label" "$src" "$category" "$exists" "$is_default" "$has_default" \
+      "$config_rel" "$dirty" "$unpushed" "$sync_state" "$saved" "$synced" "manifest"
   done
-  # auto-detected entries from other plugins (no known Omarchy default -> never "default")
-  local psrc prel pname pdirty punpushed psync
+  # Auto-detected entries from other plugins. No Omarchy default ships for
+  # these, so they can never read as "default".
+  local psrc prel pname
   while IFS=$'\t' read -r psrc prel pname; do
     [[ -n "$psrc" ]] || continue
-    pdirty=false
-    if git -C "$REPO_DIR" status --porcelain -- "config/$prel" 2>/dev/null | grep -q .; then pdirty=true; fi
-    punpushed=false
-    if path_unpushed "config/$prel"; then punpushed=true; fi
-    if [[ "$pdirty" == true || "$punpushed" == true ]]; then psync="modified"; else psync="saved"; fi
-    entries+=("$(jq -nc --arg id "$prel" --arg label "$pname" --arg src "$psrc" --arg group "plugins" --argjson exists true --argjson is_default false --argjson has_default false --arg config_rel "omarchy/${psrc##*/}" --argjson dirty "$pdirty" --argjson unpushed "$punpushed" --arg sync_state "$psync" --arg source "auto" '{id:$id,label:$label,src:$src,group:$group,exists:$exists,is_default:$is_default,has_default:$has_default,config_rel:$config_rel,dirty:$dirty,unpushed:$unpushed,sync_state:$sync_state,source:$source}')")
+    dirty=false
+    git -C "$REPO_DIR" status --porcelain -- "config/$prel" 2>/dev/null | grep -q . && dirty=true
+    unpushed=false
+    path_unpushed "config/$prel" && unpushed=true
+    saved=false
+    [[ -f "$CONFIG_DIR/$prel" ]] && saved=true
+    synced=true
+    is_excluded "$prel" && synced=false
+    if [[ "$synced" == false ]]; then sync_state="off"
+    elif [[ "$dirty" == true || "$unpushed" == true ]]; then sync_state="modified"
+    else sync_state="saved"
+    fi
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+      "$prel" "$pname" "$psrc" "plugins" "true" "false" "false" \
+      "omarchy/${psrc##*/}" "$dirty" "$unpushed" "$sync_state" "$saved" "$synced" "auto"
   done < <(discover_plugin_entries)
-  printf '%s\n' "${entries[@]}" | jq -s '.'
+  } | jq -Rsc '
+    def flag: . == "true";
+    split("\n") | map(select(length > 0) | split("\u001f") | {
+      id: .[0], label: .[1], src: .[2],
+      category: .[3], group: .[3],
+      exists: (.[4]|flag), is_default: (.[5]|flag), has_default: (.[6]|flag),
+      config_rel: .[7], dirty: (.[8]|flag), unpushed: (.[9]|flag),
+      sync_state: .[10], saved: (.[11]|flag), synced: (.[12]|flag),
+      source: .[13]
+    })'
 }
 
+# Secrets get their own shape, and deliberately never their own content. What
+# the panel needs is "is it here, is it saved, are the permissions right" — a
+# preview of an SSH private key on screen is a way to leak it over a shoulder or
+# a screen share, so the only thing read out of an env file is the NAMES of the
+# variables it defines.
 build_secrets_json() {
-  local entries=()
-  local entry src rel exists
+  local entry src rel exists mode kind dirty unpushed saved synced sync_state vars nvars
+  {
   for entry in "${SECRETS_MANIFEST[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"
-    if [[ -f "$src" ]]; then exists=true; else exists=false; fi
-    local dirty=false
-    if git -C "$REPO_DIR" status --porcelain -- "secrets/$rel" 2>/dev/null | grep -q .; then dirty=true; fi
-    entries+=("$(jq -nc --arg id "$rel" --arg src "$src" --argjson exists "$exists" --argjson dirty "$dirty" '{id:$id,src:$src,exists:$exists,dirty:$dirty}')")
+    [[ -f "$src" ]] && exists=true || exists=false
+    mode=""
+    [[ "$exists" == true ]] && mode=$(stat -c '%a' "$src" 2>/dev/null || echo "")
+    case "$rel" in
+      *.pub)  kind="public key" ;;
+      ssh/*)  kind="private key" ;;
+      env/*)  kind="environment" ;;
+      *)      kind="secret" ;;
+    esac
+    vars=""; nvars=0
+    if [[ "$exists" == true && "$rel" == env/* ]]; then
+      vars=$(grep -oE '^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*(?==)' "$src" 2>/dev/null \
+             | sed -e 's/^[[:space:]]*//' -e 's/^export[[:space:]]*//' | sort -u | paste -sd, - || true)
+      [[ -z "$vars" ]] && vars=$(grep -oE '^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=' "$src" 2>/dev/null \
+             | sed -e 's/^[[:space:]]*//' -e 's/^export[[:space:]]*//' -e 's/=$//' | sort -u | paste -sd, - || true)
+      [[ -n "$vars" ]] && nvars=$(printf '%s' "$vars" | tr ',' '\n' | grep -c .)
+    fi
+    dirty=false
+    git -C "$REPO_DIR" status --porcelain -- "secrets/$rel" 2>/dev/null | grep -q . && dirty=true
+    unpushed=false
+    path_unpushed "secrets/$rel" && unpushed=true
+    saved=false
+    [[ -f "$SECRETS_DIR/$rel" ]] && saved=true
+    synced=true
+    is_excluded "$rel" && synced=false
+    if [[ "$synced" == false ]]; then sync_state="off"
+    elif [[ "$dirty" == true || "$unpushed" == true ]]; then sync_state="modified"
+    elif [[ "$saved" == true ]]; then sync_state="saved"
+    else sync_state="modified"
+    fi
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+      "$rel" "$src" "$exists" "$mode" "$kind" "$dirty" "$unpushed" "$saved" \
+      "$synced" "$sync_state" "$vars" "$nvars"
   done
-  printf '%s\n' "${entries[@]}" | jq -s '.'
+  } | jq -Rsc '
+    def flag: . == "true";
+    split("\n") | map(select(length > 0) | split("\u001f") | {
+      id: .[0], src: .[1], exists: (.[2]|flag), mode: .[3], kind: .[4],
+      dirty: (.[5]|flag), unpushed: (.[6]|flag), saved: (.[7]|flag),
+      synced: (.[8]|flag), sync_state: .[9],
+      vars: (if .[10] == "" then [] else (.[10]|split(",")) end),
+      var_count: ((.[11]|tonumber?) // 0)
+    })'
+}
+
+# core_shortcuts — the keyboard, in two halves. Omarchy's model is "defaults,
+# plus your overrides in hypr/bindings.lua", so the backup tracks the overrides
+# (a snapshot of every active binding would go stale with the next update) while
+# the panel shows both: what you changed, and what is actually bound right now.
+core_shortcuts() {
+  local own_file="$HOME/.config/hypr/bindings.lua"
+  local own active
+  own=$(awk '
+    /^[[:space:]]*--/ { next }
+    match($0, /o\.bind\(/) {
+      line = $0
+      n = split(line, parts, /"/)
+      if (n >= 3) {
+        key = parts[2]
+        # o.bind(keys, description, command) — but the description is often
+        # written as a bare `nil`, and then the second quoted string is the
+        # COMMAND. Counting quotes alone labels every such binding with its own
+        # command as its name.
+        if (parts[3] ~ /,[[:space:]]*nil[[:space:]]*,/) {
+          desc = ""
+          cmd  = (n >= 5) ? parts[4] : ""
+        } else {
+          desc = (n >= 5) ? parts[4] : ""
+          cmd  = (n >= 7) ? parts[6] : ""
+        }
+        printf "%s\t%s\t%s\tbind\n", key, desc, cmd
+      }
+      next
+    }
+    match($0, /hl\.unbind\(/) {
+      n = split($0, parts, /"/)
+      if (n >= 3) printf "%s\t%s\t%s\tunbind\n", parts[2], "removed", "", ""
+    }
+  ' "$own_file" 2>/dev/null | jq -Rsc 'split("\n") | map(select(length > 0) | split("\t")
+      | {key: .[0], description: .[1], command: .[2], kind: .[3]})')
+  [[ -n "$own" ]] || own='[]'
+  active=$(omarchy menu keybindings --print 2>/dev/null |
+    sed -e 's/[[:space:]]*→[[:space:]]*/\t/' |
+    jq -Rsc 'split("\n") | map(select(length > 0) | split("\t")
+      | {key: (.[0] // "" | sub("[[:space:]]+$";"")), description: (.[1] // "")})')
+  [[ -n "$active" ]] || active='[]'
+  jq -nc --argjson own "$own" --argjson active "$active" --arg file "$own_file" \
+    '{file:$file, own:$own, active:$active, own_count:($own|length), active_count:($active|length)}'
 }
 
 # How often status may hit the network on its own. The bar widget polls this
@@ -892,14 +1372,43 @@ core_status() {
   if git -C "$REPO_DIR" status --porcelain -- secrets/ 2>/dev/null | grep -q .; then pending_groups="$pending_groups secrets"; fi
   if git -C "$REPO_DIR" status --porcelain -- state/ 2>/dev/null | grep -q .; then pending_groups="$pending_groups state"; fi
   if (( json )); then
-    local configs_json secrets_json settings_json
+    local configs_json secrets_json settings_json categories_json groups_json machines_json
     configs_json=$(build_configs_json)
     secrets_json=$(build_secrets_json)
     settings_json=$(build_settings_json)
-    local remote_name=""
+    categories_json=$(build_categories_json)
+    groups_json=$(build_setting_groups_json)
+    # Every machine that has ever saved into this repo, newest first. With one
+    # machine it is a footnote; with two it is the answer to "did the desktop
+    # actually push?", which is the whole reason the repo exists.
+    machines_json=$(
+      { for d in "$STATE_ROOT"/*/; do
+          [[ -d "$d" ]] || continue
+          local mname mwhen
+          mname=$(basename "$d")
+          mwhen=$(git -C "$REPO_DIR" log -1 --date=format:'%d %b %H:%M' --format='%ad' -- "state/$mname" 2>/dev/null || true)
+          printf '%s\t%s\t%s\n' "$mname" "$mwhen" "$( [[ "$mname" == "$MACHINE" ]] && echo true || echo false )"
+        done; } | jq -Rsc 'split("\n") | map(select(length > 0) | split("\t")
+          | {name: .[0], last_save: .[1], current: (.[2] == "true")})'
+    )
+    local remote_name="" last_save="" last_subject="" plugin_version=""
     [[ -n "$remote" ]] && remote_name="${remote##*/}" && remote_name="${remote_name%.git}"
-    jq -nc --arg branch "$branch" --arg remote "$remote" --arg remote_name "$remote_name" --arg repo_dir "$REPO_DIR" --argjson dirty "$dirty" --argjson untracked "$untracked" --argjson ahead "$ahead" --argjson behind "$behind" --arg pending "$pending_groups" --argjson configs "$configs_json" --argjson secrets "$secrets_json" --argjson settings "$settings_json" \
-      '{initialized:true, branch:$branch, remote:$remote, remote_name:$remote_name, repo_dir:$repo_dir, dirty:$dirty, untracked:$untracked, ahead:$ahead, behind:$behind, pending:$pending, configs:$configs, secrets:$secrets, settings:$settings}'
+    last_save=$(git -C "$REPO_DIR" log -1 --date=format:'%d %b %H:%M' --format='%ad' 2>/dev/null || true)
+    last_subject=$(git -C "$REPO_DIR" log -1 --format='%s' 2>/dev/null || true)
+    plugin_version=$(jq -r '.version // ""' "$PLUGIN_DIR/manifest.json" 2>/dev/null || true)
+    jq -nc --arg branch "$branch" --arg remote "$remote" --arg remote_name "$remote_name" \
+      --arg repo_dir "$REPO_DIR" --arg machine "$MACHINE" --arg plugin_version "$plugin_version" \
+      --arg last_save "$last_save" --arg last_subject "$last_subject" \
+      --argjson dirty "$dirty" --argjson untracked "$untracked" --argjson ahead "$ahead" --argjson behind "$behind" \
+      --arg pending "$pending_groups" --argjson configs "$configs_json" --argjson secrets "$secrets_json" \
+      --argjson settings "$settings_json" --argjson categories "$categories_json" \
+      --argjson setting_groups "$groups_json" --argjson machines "$machines_json" \
+      '{initialized:true, branch:$branch, remote:$remote, remote_name:$remote_name,
+        repo_dir:$repo_dir, machine:$machine, plugin_version:$plugin_version,
+        last_save:$last_save, last_subject:$last_subject,
+        dirty:$dirty, untracked:$untracked, ahead:$ahead, behind:$behind, pending:$pending,
+        configs:$configs, secrets:$secrets, settings:$settings,
+        categories:$categories, setting_groups:$setting_groups, machines:$machines}'
   else
     echo "branch: $branch"
     echo "remote: ${remote:-<none>}"
@@ -924,6 +1433,96 @@ resolve_manifest_src() {
   return 1
 }
 
+# ─── Restore planning — derived from MANIFEST, never hand-listed ────────────
+# The restore plan used to be a second, hand-written copy of the manifest inside
+# the CLI. Adding a file to MANIFEST then silently did not restore it, which is
+# the worst kind of backup bug: it looks like it worked right up until you need
+# it. Everything below is computed from the one list.
+#
+# Mode is decided by where the file goes, not by what it is called:
+# secrets are 600, anything under bin/ or a hooks/ directory has to stay
+# executable, and everything else is 644.
+restore_mode_for() {
+  case "$1" in
+    *.pub)                   echo 644 ;;
+    ssh/id_*|env/*)          echo 600 ;;
+    ssh/config)              echo 600 ;;
+    bin/*|*/hooks/*|*.hook)  echo 755 ;;
+    *)                       echo 644 ;;
+  esac
+}
+
+# plan_for_category <category> — "repo-path|destination|mode" per line.
+# Skips what the user switched off, what the repo does not have a copy of, and
+# theme.name (a theme is replayed through omarchy-theme-set, not copied).
+plan_for_category() {
+  local want="$1" entry src rel cat repo_path mode
+  for entry in "${MANIFEST[@]}"; do
+    src="${entry%%:*}"; rel="${entry##*:}"
+    [[ "$rel" == "omarchy/theme.name" ]] && continue
+    cat=$(category_for_rel "$rel")
+    [[ "$cat" == "$want" ]] || continue
+    is_excluded "$rel" && continue
+    repo_path="$CONFIG_DIR/$rel"
+    [[ -f "$repo_path" ]] || continue
+    printf '%s|%s|%s\n' "$repo_path" "$src" "$(restore_mode_for "$rel")"
+  done
+  [[ "$want" == "secrets" ]] || return 0
+  for entry in "${SECRETS_MANIFEST[@]}"; do
+    src="${entry%%:*}"; rel="${entry##*:}"
+    is_excluded "$rel" && continue
+    repo_path="$SECRETS_DIR/$rel"
+    [[ -f "$repo_path" ]] || continue
+    printf '%s|%s|%s\n' "$repo_path" "$src" "$(restore_mode_for "$rel")"
+  done
+}
+
+# What has to run for a restored category to actually take effect. Copying a
+# file into ~/.config and calling it done is the difference between a backup
+# tool and a restore tool.
+apply_for_category() {
+  case "$1" in
+    shortcuts|hyprland) echo "hyprctl reload" ;;
+    terminal)           echo "omarchy restart terminal" ;;
+    system)             echo "systemctl daemon-reload" ;;
+    *)                  echo "" ;;
+  esac
+}
+
+# core_restore_file <rel> — put one tracked file back from the repo, with the
+# same .bak.<epoch> every other write makes. The per-file counterpart of
+# `reset`, which goes to Omarchy's default instead.
+core_restore_file() {
+  local rel="$1" src repo_path mode
+  src=$(resolve_manifest_src "$rel") || { echo "unknown id: $rel" >&2; return 1; }
+  repo_path=$(repo_copy_for_rel "$rel")
+  [[ -f "$repo_path" ]] || { echo "$rel is not saved in your repo yet" >&2; return 1; }
+  if [[ -f "$src" ]] && cmp -s "$repo_path" "$src"; then
+    echo "$rel already matches the copy in your repo" >&2
+    return 0
+  fi
+  mode=$(restore_mode_for "$rel")
+  DRY=0 install_file "$repo_path" "$src" "$mode"
+  local apply; apply=$(apply_for_category "$(category_for_rel "$rel")")
+  [[ -n "$apply" ]] && bash -c "$apply" >/dev/null 2>&1 || true
+  return 0
+}
+
+# Plugins are not files to copy back — they are repos to reinstall. The saved
+# inventory records each one's id and git origin so a second machine can be
+# rebuilt with the command Omarchy itself provides.
+missing_plugins() {
+  local inv="$STATE_DIR/omarchy-plugins.txt" pid pver porigin
+  [[ -f "$inv" ]] || { for inv in "$STATE_ROOT"/*/omarchy-plugins.txt; do [[ -f "$inv" ]] && break; done; }
+  [[ -f "$inv" ]] || return 0
+  while IFS=$'\t' read -r pid pver porigin; do
+    [[ -n "$pid" && "$pid" != \#* ]] || continue
+    [[ -d "$HOME/.config/omarchy/plugins/$pid" ]] && continue
+    [[ "$porigin" == "-" || -z "$porigin" ]] && continue
+    printf '%s\t%s\n' "$pid" "$porigin"
+  done < "$inv"
+}
+
 # core_diff <id> [default|repo|auto] — plain unified diff on stdout, for the
 # panel to render inline. The panel used to shell out to a floating terminal
 # for this; a diff is something you read, not something you interact with, so
@@ -931,6 +1530,26 @@ resolve_manifest_src() {
 core_diff() {
   local id="$1" against="${2:-auto}" src repo_copy def
   src=$(resolve_manifest_src "$id") || { echo "unknown id: $id"; return 1; }
+  # A diff is rendered in the panel, on screen, possibly while sharing it. An
+  # SSH private key or a file of API tokens has no business being drawn there,
+  # so secrets report whether they changed and never what changed. Public keys
+  # are fine.
+  case "$id" in
+    *.pub) ;;
+    ssh/id_*|env/*)
+      repo_copy=$(repo_copy_for_rel "$id")
+      if [[ ! -f "$repo_copy" ]]; then echo "not saved in your repo yet"; return 0; fi
+      if cmp -s "$src" "$repo_copy" 2>/dev/null; then
+        echo "identical to the copy in your repo"
+      else
+        echo "This file differs from the copy in your repo."
+        echo
+        echo "Its contents are not shown: it holds a key or a token, and a diff"
+        echo "on screen is a diff on any screen share or over any shoulder."
+        echo "Open it yourself if you need to see it."
+      fi
+      return 0 ;;
+  esac
   [[ -f "$src" ]] || { echo "$src does not exist on this machine"; return 0; }
   repo_copy="$CONFIG_DIR/$id"
   [[ "$id" == ssh/* || "$id" == env/* ]] && repo_copy="$SECRETS_DIR/$id"
@@ -970,4 +1589,8 @@ if [[ "${1:-}" == "backup" ]]; then core_backup
 elif [[ "${1:-}" == "status" ]]; then shift; core_status "$@"
 elif [[ "${1:-}" == "diff" ]]; then core_diff "${2:-}" "${3:-auto}"
 elif [[ "${1:-}" == "log" ]]; then core_log "${2:-8}"
+elif [[ "${1:-}" == "shortcuts" ]]; then core_shortcuts
+elif [[ "${1:-}" == "sync" ]]; then core_sync "${2:-}" "${3:-}"
+elif [[ "${1:-}" == "revert" ]]; then core_revert "${2:-}" "${3:-default}"
+elif [[ "${1:-}" == "restore-file" ]]; then core_restore_file "${2:-}"
 fi

@@ -7,6 +7,11 @@ import qs.Ui
 
 // The Replicant panel: four tabs over one CLI.
 //
+// Layout note: everything below the Overview tab is an ACCORDION. Forty-odd
+// tracked files and twenty settings as one flat list meant a scrollbar the
+// length of your arm and no sense of where anything was. Collapsed cards, one
+// per area, fit the whole picture on one screen; you open the one you came for.
+//
 // Naming note: the status payload lives in `repoState`, NOT `state`. Every QML
 // Item already has a built-in `state` string, so inside any nested item a bare
 // `state.foo` silently resolves to that empty string instead of our data — the
@@ -16,7 +21,13 @@ import qs.Ui
 Panel {
   id: root
   moduleName: "io.github.tymurbogach.omarchy-replicant"
-  manageIpc: false
+  // Opens from a keybinding as well as from the bar icon:
+  //   omarchy shell replicant toggle
+  // Bind it in ~/.config/hypr/bindings.lua if you want the panel on a key. The
+  // base Panel's IpcHandler calls the open/close/toggle defined below, so both
+  // routes end up in exactly the same place.
+  manageIpc: true
+  ipcTarget: "replicant"
 
   // The CLI that ships inside this plugin. Resolved relative to this file, so
   // it is correct no matter where the plugin was installed — including a
@@ -26,7 +37,7 @@ Panel {
   // panel silently doing nothing. `omarchy-replicant link` is the opt-in that
   // adds it to PATH for terminal use; the UI never depends on it.
   readonly property string cli: String(Qt.resolvedUrl("bin/omarchy-replicant")).replace(/^file:\/\//, "")
-  property var repoState: ({ initialized: false, configs: [], secrets: [], settings: [] })
+  property var repoState: ({ initialized: false, configs: [], secrets: [], settings: [], categories: [], setting_groups: [], machines: [] })
   // True once a real status response has come back at least once. Gates the
   // "no repo yet — create one" screen: showing it before we know the state let
   // a stray click re-point an already-configured remote (a real incident).
@@ -34,9 +45,25 @@ Panel {
 
   property string lastOutput: ""
   property string activeTab: "overview"
-  property string fileFilter: "all"
   property string fileSearch: ""
   property var recent: []
+  property var shortcuts: ({ own: [], active: [], own_count: 0, active_count: 0 })
+  property bool shortcutsLoaded: false
+  property bool showAllShortcuts: false
+
+  // Which accordion cards are open. A plain object, reassigned wholesale on
+  // every change — mutating it in place does not re-evaluate the bindings that
+  // read it.
+  property var openCards: ({})
+  function isOpen(id) { return root.openCards[id] === true }
+  function toggleCard(id) {
+    var next = {}
+    for (var k in root.openCards) next[k] = root.openCards[k]
+    next[id] = !next[id]
+    root.openCards = next
+    if (id === "shortcuts" && next[id] && !root.shortcutsLoaded) root.loadShortcuts()
+  }
+  function closeAllCards() { root.openCards = ({}) }
 
   // ── in-flight state ───────────────────────────────────────────────────────
   readonly property bool busy: saveProc.running || setProc.running || pullProc.running
@@ -51,6 +78,35 @@ Panel {
 
   readonly property bool ready: !!(repoState && repoState.initialized === true)
 
+  // ── icons ─────────────────────────────────────────────────────────────────
+  // Held as Material Design Icon CODE POINTS, not as pasted glyphs. Two reasons:
+  // the name next to each number says what it is meant to be (the previous set
+  // was chosen from memory and shipped a plus-minus sign as "reset" and a
+  // crossed-out cloud as "pull"), and every one of these lives above U+FFFF,
+  // where a stray re-encoding of this file silently truncates the glyph to a
+  // different character. Each was rendered against the shell's own font and
+  // looked at before being used.
+  function mdi(cp) { return String.fromCodePoint(cp) }
+  readonly property string icRefresh: root.mdi(0xF0450)    // refresh
+  readonly property string icPush: root.mdi(0xF0167)    // cloud-upload
+  readonly property string icPull: root.mdi(0xF0162)    // cloud-download
+  readonly property string icCopy: root.mdi(0xF018F)    // content-copy
+  readonly property string icEdit: root.mdi(0xF03EB)    // pencil
+  readonly property string icDiff: root.mdi(0xF08AA)    // file-compare
+  readonly property string icSave: root.mdi(0xF0193)    // content-save
+  readonly property string icDefault: root.mdi(0xF099B)    // restore
+  readonly property string icFromRepo: root.mdi(0xF01DA)    // download
+  readonly property string icShield: root.mdi(0xF0498)    // shield
+  readonly property string icFolder: root.mdi(0xF024B)    // folder
+  readonly property string icPlus: root.mdi(0xF0415)    // plus
+  readonly property string icBranch: root.mdi(0xF062C)    // source-branch
+  readonly property string icClose: root.mdi(0xF0156)    // close
+  readonly property string icDown: root.mdi(0xF0140)    // chevron-down
+  readonly property string icRight: root.mdi(0xF0142)    // chevron-right
+  readonly property string icInfo: root.mdi(0xF02FC)    // information
+  readonly property string icGithub: root.mdi(0xF02A4)    // github
+  readonly property string icMachine: root.mdi(0xF0176)    // laptop
+
   // ── derived summaries ─────────────────────────────────────────────────────
   readonly property int nDirty: repoState.dirty || 0
   readonly property int nAhead: repoState.ahead || 0
@@ -59,7 +115,7 @@ Panel {
   readonly property string summary: {
     if (!root.asked) return "checking…"
     if (!root.ready) return "not set up yet"
-    if (root.nAhead > 0 && root.nBehind > 0) return "diverged ↑" + root.nAhead + " ↓" + root.nBehind
+    if (root.nAhead > 0 && root.nBehind > 0) return "diverged"
     if (root.nBehind > 0) return root.nBehind + " waiting on GitHub"
     if (root.nDirty > 0 || root.nAhead > 0) return "unsaved changes"
     return "everything saved"
@@ -76,50 +132,99 @@ Panel {
   }
 
   readonly property var tabs: [
-    { value: "overview", label: "Overview", icon: "󰸞", tooltip: "State of this machine and what to do next" },
-    { value: "settings", label: "Settings", icon: "󰒓", tooltip: "Change a value and it is written and saved" },
-    { value: "files",    label: "Files",    icon: "󰈔", tooltip: "Every file being backed up" },
-    { value: "restore",  label: "Restore",  icon: "󰦛", tooltip: "Bring a whole machine back" }
+    { value: "overview", label: "Overview", icon: root.mdi(0xF056E), tooltip: "This machine at a glance  (1)" },
+    { value: "configs",  label: "Configs",  icon: root.mdi(0xF107F), tooltip: "Everything being backed up, by area  (2)" },
+    { value: "settings", label: "Settings", icon: root.mdi(0xF0493), tooltip: "Change a value and it is written and saved  (3)" },
+    { value: "restore",  label: "Restore",  icon: root.mdi(0xF099B), tooltip: "Bring a whole machine back  (4)" }
   ]
 
-  // ── config list, grouped ──────────────────────────────────────────────────
-  readonly property var groupOrder: ["shell","git/ssh","claude","dev","hypr","session","omarchy","appearance","terminal","plugins","scripts","branding","system","replicant","other"]
-  readonly property var visibleConfigs: {
-    var arr = (root.repoState.configs || []).slice()
-    var needle = root.fileSearch.toLowerCase()
-    var filter = root.fileFilter
-    arr = arr.filter(function(c) {
-      if (filter === "changed" && c.sync_state !== "modified") return false
-      if (filter === "saved" && c.sync_state !== "saved") return false
-      if (filter === "default" && c.sync_state !== "default") return false
-      if (needle !== "") {
-        var hay = (String(c.label || "") + " " + String(c.src || "") + " " + String(c.group || "")).toLowerCase()
-        if (hay.indexOf(needle) === -1) return false
-      }
-      return true
-    })
-    var order = root.groupOrder
-    arr.sort(function(a, b) {
-      var ra = order.indexOf(a.group || "other"); if (ra === -1) ra = order.length
-      var rb = order.indexOf(b.group || "other"); if (rb === -1) rb = order.length
-      if (ra !== rb) return ra - rb
-      return String(a.label).localeCompare(String(b.label))
-    })
-    return arr
+  // ── one uniform row shape for configs and secrets ─────────────────────────
+  // Secrets live in their own part of the payload because they carry different
+  // facts (mode, kind, the NAMES of the variables and never their values), but
+  // the panel shows them in the same list as everything else in their area.
+  function secretRows() {
+    var out = []
+    var list = root.repoState.secrets || []
+    for (var i = 0; i < list.length; i++) {
+      var s = list[i]
+      out.push({
+        id: s.id, label: s.id, src: s.src, category: "secrets",
+        sync_state: s.sync_state, exists: s.exists, has_default: false,
+        synced: s.synced, secret: true, kind: s.kind, mode: s.mode,
+        vars: s.vars || [], var_count: s.var_count || 0
+      })
+    }
+    return out
   }
+
+  function rowsFor(categoryId) {
+    var out = []
+    var list = root.repoState.configs || []
+    var needle = root.fileSearch.toLowerCase()
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i]
+      if ((c.category || "other") !== categoryId) continue
+      out.push({
+        id: c.id, label: c.label, src: c.src, category: c.category,
+        sync_state: c.sync_state, exists: c.exists, has_default: c.has_default,
+        synced: c.synced, secret: false, kind: "", mode: "", vars: [], var_count: 0
+      })
+    }
+    if (categoryId === "secrets") out = out.concat(root.secretRows())
+    if (needle !== "") {
+      out = out.filter(function(r) {
+        return (String(r.label) + " " + String(r.src)).toLowerCase().indexOf(needle) !== -1
+      })
+    }
+    out.sort(function(a, b) { return String(a.label).localeCompare(String(b.label)) })
+    return out
+  }
+
+  // Categories that actually have something in them, with their counts. An
+  // empty card is a card you have to read and then dismiss.
+  readonly property var categoryCards: {
+    var cats = root.repoState.categories || []
+    var out = []
+    for (var i = 0; i < cats.length; i++) {
+      var rows = root.rowsFor(cats[i].id)
+      if (rows.length === 0) continue
+      var changed = 0, off = 0
+      for (var j = 0; j < rows.length; j++) {
+        if (rows[j].sync_state === "modified") changed++
+        if (rows[j].synced === false) off++
+      }
+      out.push({
+        id: cats[i].id, icon: cats[i].icon, label: cats[i].label,
+        description: cats[i].description, method: cats[i].method,
+        rows: rows, count: rows.length, changed: changed, off: off
+      })
+    }
+    return out
+  }
+
   readonly property int countChanged: (root.repoState.configs || []).filter(function(c){ return c.sync_state === "modified" }).length
+  readonly property int countOff: (root.repoState.configs || []).filter(function(c){ return c.synced === false }).length
 
   // ── settings, grouped in registry order ───────────────────────────────────
   readonly property var settingGroups: {
-    var out = []
-    var seen = ({})
+    var meta = root.repoState.setting_groups || []
     var list = root.repoState.settings || []
-    for (var i = 0; i < list.length; i++) {
-      var g = list[i].group || "Other"
-      if (seen[g] === undefined) { seen[g] = out.length; out.push({ name: g, items: [] }) }
-      out[seen[g]].items.push(list[i])
+    var out = []
+    for (var g = 0; g < meta.length; g++) {
+      var items = list.filter(function(s) { return s.group === meta[g].name })
+      if (items.length === 0) continue
+      var changed = items.filter(function(s) { return s.can_revert_default }).length
+      out.push({ id: "set:" + meta[g].name, name: meta[g].name, icon: meta[g].icon,
+                 description: meta[g].description, items: items, changed: changed })
     }
     return out
+  }
+
+  // A handful of values worth seeing without opening a tab.
+  function settingText(id) {
+    var list = root.repoState.settings || []
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i].value_text || "—"
+    return "—"
   }
 
   // ── actions ───────────────────────────────────────────────────────────────
@@ -130,6 +235,8 @@ Panel {
   function doPull()     { root.busyLabel = "Pulling…";          pullProc.command = [root.cli, "pull", "-y"]; pullProc.running = true }
   function doBackup()   { root.busyLabel = "Copying files…";    backupProc.command = [root.cli, "backup"]; backupProc.running = true }
   function doDoctor()   { root.busyLabel = "Checking…";         root.lastOutput = "Running health check…"; doctorProc.command = [root.cli, "doctor"]; doctorProc.running = true }
+
+  function loadShortcuts() { shortcutsProc.command = [root.cli, "shortcuts", "--json"]; shortcutsProc.running = true }
 
   // Open the editor. Deliberately NOT through
   // omarchy-launch-floating-terminal-with-presentation: that wraps the command
@@ -160,9 +267,20 @@ Panel {
 
   function doSetSetting(id, value) {
     root.busyLabel = "Saving " + id + "…"
-    root.lastOutput = id + " → " + value
     setProc.command = [root.cli, "set", id, String(value)]
     setProc.running = true
+  }
+
+  function doRevert(id, to) {
+    root.busyLabel = "Reverting " + id + "…"
+    setProc.command = [root.cli, "revert", id, "--to", to]
+    setProc.running = true
+  }
+
+  function doSync(id, on) {
+    root.busyLabel = (on ? "Resuming " : "Pausing ") + id + "…"
+    fileSaveProc.command = [root.cli, "sync", id, on ? "on" : "off"]
+    fileSaveProc.running = true
   }
 
   // Controls that emit a burst of values (holding a stepper, dragging a
@@ -172,7 +290,6 @@ Panel {
   function queueSetting(id, value) {
     root.pendingSettingId = id
     root.pendingSettingValue = String(value)
-    root.lastOutput = id + " → " + value + "  (saving in a moment…)"
     settingDebounce.restart()
   }
   Timer {
@@ -199,9 +316,11 @@ Panel {
     var a = root.confirmAction, arg = root.confirmArg
     root.confirmAction = ""; root.confirmArg = ""
     confirmDialog.opened = false
-    if (a === "reset-file")       { root.busyLabel = "Resetting " + arg + "…"; dangerProc.command = [root.cli, "reset", arg] }
-    else if (a === "reset-all")   { root.busyLabel = "Resetting everything…"; dangerProc.command = [root.cli, "reset-all", "--apply", "--yes"] }
-    else if (a === "restore-all") { root.busyLabel = "Restoring everything…"; dangerProc.command = [root.cli, "restore", "--apply", "--all", "--yes"] }
+    if (a === "reset-file")        { root.busyLabel = "Resetting " + arg + "…"; dangerProc.command = [root.cli, "reset", arg] }
+    else if (a === "restore-file") { root.busyLabel = "Restoring " + arg + "…"; dangerProc.command = [root.cli, "restore-file", arg] }
+    else if (a === "reset-all")    { root.busyLabel = "Resetting everything…"; dangerProc.command = [root.cli, "reset-all", "--apply", "--yes"] }
+    else if (a === "restore-all")  { root.busyLabel = "Restoring everything…"; dangerProc.command = [root.cli, "restore", "--apply", "--all", "--yes"] }
+    else if (a === "restore-cat")  { root.busyLabel = "Restoring " + arg + "…"; dangerProc.command = [root.cli, "restore", "--apply", "--all", "--yes", "--only", arg] }
     else return
     root.lastOutput = root.busyLabel
     dangerProc.running = true
@@ -222,7 +341,7 @@ Panel {
 
   function finish(label, code, out, err) {
     root.busyLabel = ""
-    var text = (String(out || "") + "\n" + String(err || "")).replace(/\n{3,}/g, "\n\n").trim()
+    var text = (String(out || "") + "\n" + String(err || "")).replace(/\x1b\[[0-9;]*m/g, "").replace(/\n{3,}/g, "\n\n").trim()
     if (code !== 0) text = label + " failed (exit " + code + ")\n" + text
     root.lastOutput = text.length > 1400 ? "…" + text.slice(-1400) : text
     root.refresh()
@@ -234,8 +353,18 @@ Panel {
   CliProcess { id: setProc;      onExited: function(c){ root.finish("Set", c, setProc.stdout.text, setProc.stderr.text) } }
   CliProcess { id: fileSaveProc; onExited: function(c){ root.finish("Save file", c, fileSaveProc.stdout.text, fileSaveProc.stderr.text) } }
   CliProcess { id: dangerProc;   onExited: function(c){ root.finish("Restore", c, dangerProc.stdout.text, dangerProc.stderr.text) } }
-  CliProcess { id: doctorProc;   onExited: function(c){ root.busyLabel = ""; root.lastOutput = (doctorProc.stdout.text + "\n" + doctorProc.stderr.text).replace(/\[[0-9;]*m/g, "").trim() } }
+  CliProcess { id: doctorProc;   onExited: function(c){ root.busyLabel = ""; root.lastOutput = (doctorProc.stdout.text + "\n" + doctorProc.stderr.text).replace(/\x1b\[[0-9;]*m/g, "").trim() } }
   Process { id: editProc }
+
+  Process {
+    id: shortcutsProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try { root.shortcuts = JSON.parse(text || "{}"); root.shortcutsLoaded = true } catch (e) { root.shortcutsLoaded = false }
+      }
+    }
+  }
 
   Process {
     id: diffProc
@@ -271,7 +400,7 @@ Panel {
   property var anchorItem
   property var hostWidget
   property bool opened: false
-  function open() { root.opened = true; root.refresh() }
+  function open() { root.opened = true; root.refresh(); if (!root.shortcutsLoaded) root.loadShortcuts() }
   function close() { root.opened = false; root.diffOpen = false; confirmDialog.opened = false }
   function toggle() { root.opened ? root.close() : root.open() }
 
@@ -300,12 +429,13 @@ Panel {
       onTextKey: function(t) {
         if (root.diffOpen || confirmDialog.opened) return
         if (t === "1") root.activeTab = "overview"
-        else if (t === "2") root.activeTab = "settings"
-        else if (t === "3") root.activeTab = "files"
+        else if (t === "2") root.activeTab = "configs"
+        else if (t === "3") root.activeTab = "settings"
         else if (t === "4") root.activeTab = "restore"
         else if (t === "r") root.refresh()
         else if (t === "s" && root.ready && !root.busy) root.doSavegame()
-        else if (t === "/") { root.activeTab = "files"; searchField.forceActiveFocus() }
+        else if (t === "c") root.closeAllCards()
+        else if (t === "/") { root.activeTab = "configs"; searchField.forceActiveFocus() }
       }
 
       // ─────────────────────────────── header (fixed) ────────────────────────
@@ -318,18 +448,18 @@ Panel {
 
         PanelHero {
           width: parent.width
-          title: "Omarchy Replicant"
-          meta: root.repoState.remote_name
-                ? (root.repoState.remote_name + " · " + root.summary)
+          title: root.repoState.remote_name ? root.repoState.remote_name : "Omarchy Replicant"
+          meta: root.ready
+                ? (root.summary + "  ·  " + (root.repoState.machine || ""))
                 : root.summary
           foreground: root.fg
           fontFamily: root.ff
           iconComponent: Component {
-            Text { text: "󰸞"; color: root.fg; font.family: root.ff; font.pixelSize: Style.font.display }
+            Text { text: root.icGithub; color: root.fg; font.family: root.ff; font.pixelSize: Style.font.display }
           }
           trailingControl: Component {
             Button {
-              iconText: "⟳"
+              iconText: root.icRefresh
               iconSpinning: root.busy
               bordered: false
               foreground: root.busy ? Color.accent : root.dim
@@ -426,13 +556,13 @@ Panel {
             Row {
               spacing: Style.space(8)
               Button {
-                text: "Create private repo"; iconText: "󰘐"; bordered: true
+                text: "Create private repo"; iconText: root.icPlus; bordered: true
                 foreground: root.fg; accent: Color.accent; fontFamily: root.ff
                 tooltipText: "Creates <hostname>-replicant on your GitHub account, private, and pushes this machine into it"
                 onClicked: root.doCreate()
               }
               Button {
-                text: "Clone existing…"; iconText: "󰓹"; bordered: true
+                text: "Clone existing…"; iconText: root.icBranch; bordered: true
                 foreground: root.fg; fontFamily: root.ff
                 tooltipText: "Point this machine at a repo you already have"
                 onClicked: root.doClone()
@@ -449,17 +579,17 @@ Panel {
             Row {
               width: parent.width
               spacing: Style.space(8)
-              StatCard { label: "tracked files"; value: String((root.repoState.configs || []).length) }
-              StatCard { label: "changed here";  value: String(root.countChanged); highlight: root.countChanged > 0 }
-              StatCard { label: "to pull";       value: String(root.nBehind);      highlight: root.nBehind > 0 }
-              StatCard { label: "settings";      value: String((root.repoState.settings || []).length) }
+              StatCard { label: "tracked";  value: String((root.repoState.configs || []).length) }
+              StatCard { label: "unsaved";  value: String(root.nDirty); highlight: root.nDirty > 0 }
+              StatCard { label: "to pull";  value: String(root.nBehind);      highlight: root.nBehind > 0 }
+              StatCard { label: "not synced"; value: String(root.countOff) }
             }
 
             Row {
               width: parent.width
               spacing: Style.space(8)
               Button {
-                text: "Save to GitHub"; iconText: "󰆓"; bordered: true
+                text: "Save to GitHub"; iconText: root.icPush; bordered: true
                 foreground: root.fg; accent: Color.accent; fontFamily: root.ff
                 iconSpinning: saveProc.running
                 enabled: root.ready && !root.busy
@@ -467,7 +597,7 @@ Panel {
                 onClicked: root.doSavegame()
               }
               Button {
-                text: "Pull"; iconText: "↓"; bordered: root.nBehind > 0
+                text: "Pull"; iconText: root.icPull; bordered: root.nBehind > 0
                 foreground: root.nBehind > 0 ? Color.accent : root.fg; accent: Color.accent; fontFamily: root.ff
                 iconSpinning: pullProc.running
                 enabled: root.ready && !root.busy
@@ -475,11 +605,75 @@ Panel {
                 onClicked: root.doPull()
               }
               Button {
-                text: "Copy files only"; bordered: false
+                text: "Copy only"; iconText: root.icCopy; bordered: false
                 foreground: root.fg; fontFamily: root.ff
                 enabled: !root.busy
                 tooltipText: "Refresh the local copy without committing or pushing"
                 onClicked: root.doBackup()
+              }
+            }
+
+            // The facts you would otherwise go and look up, in the units a
+            // person thinks in: "10 min", not "600".
+            BorderSurface {
+              width: parent.width
+              implicitHeight: factsCol.implicitHeight + Style.spacing.controlPaddingY * 2
+              radius: Style.cornerRadius
+              color: Style.controlFill(false, false, root.fg, Color.accent)
+              borderSpec: Border.controlSpec("normal", root.fg, Color.accent)
+              Column {
+                id: factsCol
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.topMargin: Style.spacing.controlPaddingY
+                anchors.leftMargin: Style.spacing.rowPaddingX
+                anchors.rightMargin: Style.spacing.rowPaddingX
+                spacing: Style.space(3)
+                FactRow { label: "Remote";      value: root.repoState.remote_name || "—" }
+                FactRow { label: "Branch";      value: (root.repoState.branch || "main") + (root.nAhead || root.nBehind ? "   ↑" + root.nAhead + " ↓" + root.nBehind : "") }
+                FactRow { label: "This machine"; value: root.repoState.machine || "—" }
+                FactRow { label: "Last save";   value: (root.repoState.last_save || "never") + (root.repoState.last_subject ? "   " + root.repoState.last_subject : "") }
+                FactRow { label: "Theme";       value: root.settingText("theme.current") }
+                FactRow { label: "Bar position"; value: root.settingText("bar.position") }
+                FactRow { label: "Lock screen"; value: root.settingText("idle.lock") }
+                FactRow { label: "Plugin";      value: "omarchy-replicant " + (root.repoState.plugin_version || "?") }
+              }
+            }
+
+            // Only worth the space once a second machine exists — and then it
+            // is the first thing you want to know.
+            Column {
+              width: parent.width
+              spacing: Style.space(4)
+              visible: (root.repoState.machines || []).length > 1
+              PanelSectionHeader { width: parent.width; text: "Machines sharing this repo"; foreground: root.fg; fontFamily: root.ff }
+              Repeater {
+                model: root.repoState.machines || []
+                delegate: Item {
+                  id: machineRow
+                  required property var modelData
+                  width: content.width
+                  implicitHeight: Style.space(20)
+                  Row {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(8)
+                    Text {
+                      text: root.icMachine
+                      color: machineRow.modelData.current ? Color.accent : root.dim
+                      font.family: root.ff; font.pixelSize: Style.font.caption
+                    }
+                    Text {
+                      text: machineRow.modelData.name + (machineRow.modelData.current ? "  (this one)" : "")
+                      color: root.fg; font.family: root.ff; font.pixelSize: Style.font.caption
+                    }
+                    Text {
+                      text: machineRow.modelData.last_save ? "last saved " + machineRow.modelData.last_save : "no saves yet"
+                      color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
+                    }
+                  }
+                }
               }
             }
 
@@ -500,19 +694,19 @@ Panel {
                   id: recentRow
                   required property var modelData
                   width: content.width
-                  implicitHeight: Style.space(22)
+                  implicitHeight: Style.space(20)
                   Row {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: Style.space(10)
                     Text {
-                      width: Style.space(96)
+                      width: Style.space(92)
                       text: recentRow.modelData.date
                       color: root.dim; font.family: root.mono; font.pixelSize: Style.font.caption
                     }
                     Text {
-                      width: parent.width - Style.space(106)
+                      width: parent.width - Style.space(102)
                       text: recentRow.modelData.subject
                       color: root.fg; font.family: root.ff; font.pixelSize: Style.font.caption
                       elide: Text.ElideRight
@@ -526,14 +720,14 @@ Panel {
             Row {
               spacing: Style.space(8)
               Button {
-                text: "Health check"; iconText: "󰸞"; bordered: false
+                text: "Health check"; iconText: root.icShield; bordered: false
                 foreground: root.fg; fontFamily: root.ff
                 enabled: !doctorProc.running
                 tooltipText: "Verify login, that the repo is private, hooks and permissions"
                 onClicked: root.doDoctor()
               }
               Button {
-                text: "Open repo folder"; iconText: "󰉋"; bordered: false
+                text: "Open repo folder"; iconText: root.icFolder; bordered: false
                 foreground: root.fg; fontFamily: root.ff
                 tooltipText: root.repoState.repo_dir || ""
                 onClicked: { root.run("xdg-open " + root.shellQuote(root.repoState.repo_dir || "")); root.close() }
@@ -541,57 +735,24 @@ Panel {
             }
           }
 
-          // ══════════════ Settings ══════════════
-          Column {
-            width: parent.width
-            spacing: Style.space(10)
-            visible: root.ready && root.activeTab === "settings"
-
-            Text {
-              width: parent.width
-              text: "Change a value here and Replicant writes it to the real config file, applies it, and commits it to your repo."
-              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
-            }
-
-            Repeater {
-              model: root.settingGroups
-              delegate: Column {
-                id: settingGroup
-                required property var modelData
-                width: content.width
-                spacing: Style.space(6)
-
-                PanelSectionHeader {
-                  width: parent.width
-                  text: settingGroup.modelData.name
-                  foreground: root.fg
-                  fontFamily: root.ff
-                }
-
-                Repeater {
-                  model: settingGroup.modelData.items
-                  delegate: SettingRow {
-                    required property var modelData
-                    setting: modelData
-                    width: settingGroup.width
-                  }
-                }
-              }
-            }
-          }
-
-          // ══════════════ Files ══════════════
+          // ══════════════ Configs ══════════════
           Column {
             width: parent.width
             spacing: Style.space(8)
-            visible: root.ready && root.activeTab === "files"
+            visible: root.ready && root.activeTab === "configs"
+
+            Text {
+              width: parent.width
+              text: "Everything this repo tracks, grouped by what it does. Press an area to open it."
+              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
+            }
 
             Row {
               width: parent.width
               spacing: Style.space(8)
               TextField {
                 id: searchField
-                width: parent.width - filterChips.width - Style.space(8)
+                width: parent.width - collapseBtn.width - Style.space(8)
                 placeholderText: "Filter by name or path…   (/)"
                 foreground: root.fg
                 accent: Color.accent
@@ -599,60 +760,56 @@ Panel {
                 onTextChanged: root.fileSearch = text
                 Keys.onEscapePressed: { text = ""; keyCatcher.forceActiveFocus() }
               }
-              ButtonGroup {
-                id: filterChips
-                options: [
-                  { value: "all",     label: "All" },
-                  { value: "changed", label: "Changed" },
-                  { value: "saved",   label: "Saved" },
-                  { value: "default", label: "Default" }
-                ]
-                value: root.fileFilter
-                foreground: root.fg
-                accent: Color.accent
-                fontFamily: root.ff
-                focusable: false
-                onChanged: function(v) { root.fileFilter = v }
+              Button {
+                id: collapseBtn
+                text: "Collapse all"; bordered: false
+                foreground: root.dim; fontFamily: root.ff
+                tooltipText: "Close every open area  (c)"
+                onClicked: root.closeAllCards()
               }
             }
 
             Text {
               width: parent.width
-              text: "○ untouched Omarchy default   ●  changed here, not saved yet   ◆ saved on GitHub"
+              text: "○ Omarchy default   ● changed here   ◆ saved on GitHub   ⊘ not synced"
               color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
             }
 
             Text {
               width: parent.width
-              visible: root.visibleConfigs.length === 0
+              visible: root.categoryCards.length === 0
               text: "Nothing matches that filter."
               color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
             }
 
-            // A ListView (not Column + nested Repeaters) — that nesting caused a
-            // real QQuickItem::polish() loop here; section.property gives the
-            // per-group headers without a second Repeater level. Non-interactive
-            // so it never fights the panel's own scroll for the wheel.
-            ListView {
-              width: parent.width
-              height: contentHeight
-              interactive: false
-              clip: false
-              spacing: Style.space(6)
-              model: root.visibleConfigs
-              section.property: "group"
-              section.criteria: ViewSection.FullString
-              section.delegate: PanelSectionHeader {
-                required property string section
-                width: ListView.view.width
-                text: section
-                foreground: root.fg
-                fontFamily: root.ff
-              }
-              delegate: FileRow {
+            Repeater {
+              model: root.categoryCards
+              delegate: CategoryCard {
                 required property var modelData
-                config: modelData
-                width: ListView.view.width
+                card: modelData
+                width: content.width
+              }
+            }
+          }
+
+          // ══════════════ Settings ══════════════
+          Column {
+            width: parent.width
+            spacing: Style.space(8)
+            visible: root.ready && root.activeTab === "settings"
+
+            Text {
+              width: parent.width
+              text: "Change a value here and Replicant writes it to the real config file, applies it, and commits it to your repo. The two small buttons on the right put it back — to Omarchy's default, or to what your repo has."
+              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
+            }
+
+            Repeater {
+              model: root.settingGroups
+              delegate: SettingCard {
+                required property var modelData
+                group: modelData
+                width: content.width
               }
             }
           }
@@ -677,7 +834,7 @@ Panel {
             RestoreCard {
               width: parent.width
               title: "Restore from GitHub"
-              body: "Brings every config, secret and setting saved in your repo down onto this machine. This is how you set up a second machine, or undo a bad day."
+              body: "Brings every config, secret and setting saved in your repo down onto this machine — and then runs whatever Omarchy needs to make it take effect: the theme is re-applied with omarchy theme set, Hyprland is reloaded, missing plugins are reinstalled with omarchy plugin add."
               actionText: "Restore everything"
               actionAccent: true
               onPreview: {
@@ -694,7 +851,7 @@ Panel {
             RestoreCard {
               width: parent.width
               title: "Reset to Omarchy defaults"
-              body: "Throws away your changes to every file Omarchy ships a default for and puts the factory version back. Your repo is not touched, so you can restore from it afterwards."
+              body: "Throws away your changes to every file Omarchy ships a default for and puts the factory version back, through omarchy refresh config. Your repo is not touched, so you can restore from it afterwards."
               actionText: "Reset to factory"
               actionAccent: false
               onPreview: {
@@ -706,6 +863,53 @@ Panel {
               onAct: root.ask("reset-all", "",
                 "Reset every customised file back to the Omarchy default?\n\nYour repo keeps its copy, and each file is backed up as .bak.<epoch> first.",
                 "Reset")
+            }
+
+            PanelSeparator { width: parent.width }
+            PanelSectionHeader { width: parent.width; text: "Or just one area"; foreground: root.fg; fontFamily: root.ff }
+            Text {
+              width: parent.width
+              text: "Restores one area from your repo and applies it the way Omarchy expects."
+              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
+            }
+            Repeater {
+              model: root.categoryCards
+              delegate: Item {
+                id: areaRow
+                required property var modelData
+                width: content.width
+                implicitHeight: Style.space(30)
+                Row {
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(8)
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(18)
+                    text: areaRow.modelData.icon
+                    color: root.dim; font.family: root.ff; font.pixelSize: Style.font.body
+                  }
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - Style.space(18) - areaBtn.width - parent.spacing * 2
+                    text: areaRow.modelData.label + "   " + areaRow.modelData.count + " file(s)"
+                    color: root.fg; font.family: root.ff; font.pixelSize: Style.font.caption
+                    elide: Text.ElideRight
+                  }
+                  Button {
+                    id: areaBtn
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Restore"; iconText: root.icFromRepo; bordered: false
+                    foreground: root.fg; fontFamily: root.ff
+                    enabled: !root.busy
+                    tooltipText: areaRow.modelData.method
+                    onClicked: root.ask("restore-cat", areaRow.modelData.id,
+                      "Restore " + areaRow.modelData.label + " from your repo?\n\n" + areaRow.modelData.method + "\n\nEvery file it overwrites is backed up as .bak.<epoch> first.",
+                      "Restore")
+                  }
+                }
+              }
             }
           }
         }
@@ -736,7 +940,7 @@ Panel {
           }
           Button {
             id: clearBtn
-            iconText: "󰅖"; bordered: false; foreground: root.dim; fontFamily: root.ff
+            iconText: root.icClose; bordered: false; foreground: root.dim; fontFamily: root.ff
             tooltipText: "Dismiss"
             onClicked: root.lastOutput = ""
           }
@@ -818,6 +1022,31 @@ Panel {
 
   // ══════════════════════════ reusable pieces ══════════════════════════════
 
+  component FactRow: Item {
+    id: fact
+    property string label: ""
+    property string value: ""
+    width: parent ? parent.width : 0
+    implicitHeight: Style.space(18)
+    Row {
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(10)
+      Text {
+        width: Style.space(96)
+        text: fact.label
+        color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
+      }
+      Text {
+        width: parent.width - Style.space(106)
+        text: fact.value
+        color: root.fg; font.family: root.ff; font.pixelSize: Style.font.caption
+        elide: Text.ElideRight
+      }
+    }
+  }
+
   component StatCard: BorderSurface {
     id: statCard
     property string label: ""
@@ -843,6 +1072,308 @@ Panel {
         anchors.horizontalCenter: parent.horizontalCenter
         text: statCard.label
         color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
+      }
+    }
+  }
+
+  // An accordion header. Fixed height on purpose: it holds a Row anchored to
+  // its vertical centre, and deriving the height from that Row at the same time
+  // is a parent-height <-> child-position feedback loop (Qt logs "polish()
+  // loop" and the row collapses to nothing).
+  component CardHeader: Item {
+    id: ch
+    property string icon: ""
+    property string title: ""
+    property string subtitle: ""
+    property string statusText: ""
+    property bool statusHighlight: false
+    property string countText: ""
+    property bool expanded: false
+    signal toggled()
+
+    implicitHeight: Style.space(46)
+
+    MouseArea {
+      id: hitbox
+      anchors.fill: parent
+      hoverEnabled: true
+      onClicked: ch.toggled()
+    }
+
+    Row {
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      anchors.leftMargin: Style.spacing.rowPaddingX
+      anchors.rightMargin: Style.spacing.rowPaddingX
+      spacing: Style.space(10)
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(14)
+        text: ch.expanded ? root.icDown : root.icRight
+        color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
+      }
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(20)
+        text: ch.icon
+        color: hitbox.containsMouse || ch.expanded ? Color.accent : root.fg
+        font.family: root.ff; font.pixelSize: Style.font.iconLarge
+      }
+      Column {
+        anchors.verticalCenter: parent.verticalCenter
+        width: parent.width - Style.space(34) - statusCol.width - parent.spacing * 3
+        spacing: Style.spacing.xs
+        Text {
+          width: parent.width
+          text: ch.title
+          color: root.fg; font.family: root.ff; font.pixelSize: Style.font.subtitle; font.bold: true
+          elide: Text.ElideRight
+        }
+        Text {
+          width: parent.width
+          text: ch.subtitle
+          color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
+          elide: Text.ElideRight
+        }
+      }
+      Column {
+        id: statusCol
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(84)
+        spacing: Style.spacing.xs
+        Text {
+          width: parent.width
+          horizontalAlignment: Text.AlignRight
+          text: ch.countText
+          color: root.fg; font.family: root.ff; font.pixelSize: Style.font.subtitle
+        }
+        Text {
+          width: parent.width
+          horizontalAlignment: Text.AlignRight
+          text: ch.statusText
+          color: ch.statusHighlight ? Color.accent : root.dim
+          font.family: root.ff; font.pixelSize: Style.font.caption
+        }
+      }
+    }
+  }
+
+  component CategoryCard: BorderSurface {
+    id: cc
+    property var card: ({})
+    readonly property bool expanded: root.isOpen(cc.card.id)
+
+    // Height derives from the column, so the column is anchored to the TOP and
+    // never centred — centring inside a parent sized by that same child is the
+    // feedback loop described on CardHeader.
+    implicitHeight: ccCol.implicitHeight
+    radius: Style.cornerRadius
+    color: cc.card.changed > 0 ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.07)
+                               : Style.controlFill(false, false, root.fg, Color.accent)
+    borderSpec: Border.controlSpec(cc.expanded ? "focus" : "normal", root.fg, Color.accent)
+
+    Column {
+      id: ccCol
+      anchors.top: parent.top
+      anchors.left: parent.left
+      anchors.right: parent.right
+      spacing: 0
+
+      CardHeader {
+        width: parent.width
+        icon: cc.card.icon
+        title: cc.card.label
+        subtitle: cc.card.description
+        countText: String(cc.card.count)
+        statusText: cc.card.changed > 0 ? cc.card.changed + " changed"
+                  : cc.card.off > 0 ? cc.card.off + " off" : "in sync"
+        statusHighlight: cc.card.changed > 0
+        expanded: cc.expanded
+        onToggled: root.toggleCard(cc.card.id)
+      }
+
+      Column {
+        width: parent.width
+        visible: cc.expanded
+        spacing: Style.space(2)
+
+        PanelSeparator { width: parent.width - Style.spacing.rowPaddingX * 2; x: Style.spacing.rowPaddingX }
+
+        // Shortcuts is the one area where the files are not the point: what you
+        // want to see is the keyboard. The file row is still there below.
+        Column {
+          width: parent.width
+          visible: cc.card.id === "shortcuts"
+          spacing: Style.space(2)
+          ShortcutsView { width: parent.width }
+        }
+
+        Repeater {
+          model: cc.expanded ? cc.card.rows : []
+          delegate: FileRow {
+            required property var modelData
+            config: modelData
+            width: ccCol.width
+          }
+        }
+
+        // The selling point, said out loud where it matters: not "we copied
+        // your files back" but "here is the Omarchy command that puts this
+        // back properly".
+        Item {
+          width: parent.width
+          implicitHeight: Style.space(28)
+          Row {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.leftMargin: Style.spacing.rowPaddingX
+            anchors.rightMargin: Style.spacing.rowPaddingX
+            spacing: Style.space(6)
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.icInfo
+              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
+            }
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              width: parent.width - Style.space(20)
+              text: cc.card.method
+              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
+            }
+          }
+        }
+      }
+    }
+  }
+
+  component ShortcutsView: Column {
+    id: sv
+    spacing: Style.space(2)
+
+    Item {
+      width: parent.width
+      implicitHeight: Style.space(26)
+      Row {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        anchors.leftMargin: Style.spacing.rowPaddingX
+        anchors.rightMargin: Style.spacing.rowPaddingX
+        spacing: Style.space(8)
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          width: parent.width - allBtn.width - Style.space(8)
+          text: root.shortcutsLoaded
+                ? (root.shortcuts.own_count + " of your own · " + root.shortcuts.active_count + " bound in total")
+                : "reading your keybindings…"
+          color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
+          elide: Text.ElideRight
+        }
+        Button {
+          id: allBtn
+          anchors.verticalCenter: parent.verticalCenter
+          text: root.showAllShortcuts ? "Show mine" : "Show all"
+          bordered: false; foreground: root.dim; fontFamily: root.ff
+          tooltipText: "Omarchy's defaults are not backed up — they come with the distro. Only your overrides are."
+          onClicked: root.showAllShortcuts = !root.showAllShortcuts
+        }
+      }
+    }
+
+    Text {
+      width: parent.width - Style.spacing.rowPaddingX * 2
+      x: Style.spacing.rowPaddingX
+      visible: root.shortcutsLoaded && !root.showAllShortcuts && root.shortcuts.own_count === 0
+      text: "You have not overridden any binding — this machine runs Omarchy's defaults. Edit hypr/bindings.lua below to add one."
+      color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
+    }
+
+    Repeater {
+      model: root.shortcutsLoaded
+             ? (root.showAllShortcuts ? root.shortcuts.active : root.shortcuts.own)
+             : []
+      delegate: Item {
+        id: keyRow
+        required property var modelData
+        width: sv.width
+        implicitHeight: Style.space(20)
+        Row {
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          anchors.leftMargin: Style.spacing.rowPaddingX + Style.space(6)
+          anchors.rightMargin: Style.spacing.rowPaddingX
+          spacing: Style.space(10)
+          Text {
+            width: Style.space(150)
+            text: keyRow.modelData.key
+            color: root.fg; font.family: root.mono; font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
+          }
+          Text {
+            width: parent.width - Style.space(160)
+            text: keyRow.modelData.kind === "unbind"
+                  ? "(unbound)"
+                  : (keyRow.modelData.description && keyRow.modelData.description !== ""
+                     ? keyRow.modelData.description
+                     : (keyRow.modelData.command || ""))
+            color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
+          }
+        }
+      }
+    }
+
+    PanelSeparator { width: parent.width - Style.spacing.rowPaddingX * 2; x: Style.spacing.rowPaddingX }
+  }
+
+  component SettingCard: BorderSurface {
+    id: sc
+    property var group: ({})
+    readonly property bool expanded: root.isOpen(sc.group.id)
+
+    implicitHeight: scCol.implicitHeight
+    radius: Style.cornerRadius
+    color: Style.controlFill(false, false, root.fg, Color.accent)
+    borderSpec: Border.controlSpec(sc.expanded ? "focus" : "normal", root.fg, Color.accent)
+
+    Column {
+      id: scCol
+      anchors.top: parent.top
+      anchors.left: parent.left
+      anchors.right: parent.right
+      spacing: 0
+
+      CardHeader {
+        width: parent.width
+        icon: sc.group.icon
+        title: sc.group.name
+        subtitle: sc.group.description
+        countText: String((sc.group.items || []).length)
+        statusText: sc.group.changed > 0 ? sc.group.changed + " changed" : "as Omarchy ships"
+        statusHighlight: sc.group.changed > 0
+        expanded: sc.expanded
+        onToggled: root.toggleCard(sc.group.id)
+      }
+
+      Column {
+        width: parent.width
+        visible: sc.expanded
+        spacing: Style.space(2)
+        PanelSeparator { width: parent.width - Style.spacing.rowPaddingX * 2; x: Style.spacing.rowPaddingX }
+        Repeater {
+          model: sc.expanded ? (sc.group.items || []) : []
+          delegate: SettingRow {
+            required property var modelData
+            setting: modelData
+            width: scCol.width
+          }
+        }
+        Item { width: 1; height: Style.space(4) }
       }
     }
   }
@@ -888,14 +1419,14 @@ Panel {
       Row {
         spacing: Style.space(8)
         Button {
-          text: "Preview"; iconText: "≠"; bordered: false
+          text: "Preview"; iconText: root.icDiff; bordered: false
           foreground: root.fg; fontFamily: root.ff
           enabled: !root.busy
           tooltipText: "Shows what would change and writes nothing"
           onClicked: card.preview()
         }
         Button {
-          text: card.actionText; iconText: "󰦛"; bordered: true
+          text: card.actionText; iconText: root.icDefault; bordered: true
           foreground: root.fg; accent: card.actionAccent ? Color.accent : Color.urgent; fontFamily: root.ff
           enabled: !root.busy
           onClicked: card.act()
@@ -904,7 +1435,7 @@ Panel {
     }
   }
 
-  component SettingRow: BorderSurface {
+  component SettingRow: Item {
     id: srow
     property var setting: ({})
     readonly property bool isNumber: setting.type === "number" || setting.type === "toml-int" || setting.type === "lua-int"
@@ -918,10 +1449,7 @@ Panel {
     // Fixed height on purpose. Deriving it from the children while the inner
     // Row is verticalCenter-anchored to this same item is a parent-height <->
     // child-position feedback loop; the row then renders at zero height.
-    implicitHeight: Style.space(56)
-    radius: Style.cornerRadius
-    color: Style.controlFill(false, false, root.fg, Color.accent)
-    borderSpec: Border.controlSpec("normal", root.fg, Color.accent)
+    implicitHeight: Style.space(50)
     opacity: srow.setting.available === true ? 1.0 : 0.45
 
     Row {
@@ -930,22 +1458,27 @@ Panel {
       anchors.verticalCenter: parent.verticalCenter
       anchors.leftMargin: Style.spacing.rowPaddingX
       anchors.rightMargin: Style.spacing.rowPaddingX
-      spacing: Style.spacing.rowPaddingX
+      spacing: Style.space(8)
 
       Column {
-        width: parent.width - controlSlot.width - parent.spacing
+        width: parent.width - controlSlot.width - revertRow.width - parent.spacing * 2
         anchors.verticalCenter: parent.verticalCenter
         spacing: Style.spacing.xs
         Text {
           width: parent.width
-          text: srow.setting.label + (srow.setting.implicit === true ? "   (default)" : "")
+          text: srow.setting.label
           color: root.fg; font.family: root.ff; font.pixelSize: Style.font.subtitle
           elide: Text.ElideRight
         }
         Text {
           width: parent.width
+          // The exact current value first — the control may round it (150
+          // seconds shows as 3 minutes in a whole-minute stepper) and the row
+          // should never leave you guessing which one is true.
           text: srow.setting.available === true
-                ? String(srow.setting.hint || "")
+                ? (srow.setting.value_text
+                   + (srow.setting.implicit === true ? "  (inherited)" : "")
+                   + "  ·  " + String(srow.setting.hint || ""))
                 : "not present in this machine's config"
           color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
           elide: Text.ElideRight
@@ -958,21 +1491,39 @@ Panel {
       Item {
         id: controlSlot
         anchors.verticalCenter: parent.verticalCenter
-        width: Style.space(170)
+        width: Style.space(160)
         height: Style.space(32)
 
-        NumberField {
+        // Numbers are edited in the unit a person uses: idle timers in minutes,
+        // never in seconds. The registry's `scale` does the conversion, and the
+        // CLI still speaks the stored unit.
+        Row {
           visible: srow.isNumber
-          enabled: srow.usable
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
-          foreground: root.fg
-          fontFamily: root.ff
-          from: srow.isNumber && typeof srow.setting.min === "number" ? srow.setting.min : 0
-          to: srow.isNumber && typeof srow.setting.max === "number" ? srow.setting.max : 999999
-          stepSize: srow.setting.unit === "s" ? 30 : 1
-          value: srow.isNumber && typeof srow.setting.value === "number" ? srow.setting.value : 0
-          onModified: function(v) { if (srow.usable) root.queueSetting(srow.setting.id, v) }
+          spacing: Style.space(5)
+          NumberField {
+            anchors.verticalCenter: parent.verticalCenter
+            enabled: srow.usable
+            foreground: root.fg
+            fontFamily: root.ff
+            fieldWidth: Style.space(96)
+            from: srow.isNumber && typeof srow.setting.display_min === "number" ? srow.setting.display_min : 0
+            to: srow.isNumber && typeof srow.setting.display_max === "number" ? srow.setting.display_max : 999999
+            stepSize: srow.isNumber && typeof srow.setting.display_step === "number" ? srow.setting.display_step : 1
+            value: srow.isNumber && typeof srow.setting.display_value === "number" ? srow.setting.display_value : 0
+            onModified: function(v) {
+              if (!srow.usable) return
+              var scale = typeof srow.setting.scale === "number" && srow.setting.scale > 0 ? srow.setting.scale : 1
+              root.queueSetting(srow.setting.id, Math.round(v * scale))
+            }
+          }
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            width: Style.space(26)
+            text: srow.setting.display_unit || ""
+            color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
+          }
         }
 
         // Floats get a slider: a stepper over 0.5–2.0 in 0.05 steps would be
@@ -990,7 +1541,7 @@ Panel {
           }
           PanelSlider {
             anchors.verticalCenter: parent.verticalCenter
-            width: Style.space(120)
+            width: Style.space(112)
             bar: root.bar
             minimum: srow.isFloat && typeof srow.setting.min === "number" ? srow.setting.min : 0
             maximum: srow.isFloat && typeof srow.setting.max === "number" ? srow.setting.max : 1
@@ -1040,22 +1591,46 @@ Panel {
           onChanged: function(v) { if (srow.usable && v !== srow.setting.value) root.doSetSetting(srow.setting.id, v) }
         }
       }
+
+      // Two ways back for one value, without touching the rest of the file it
+      // lives in. Shown only when they would actually change something.
+      Row {
+        id: revertRow
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: 0
+        Button {
+          iconText: root.icDefault; bordered: false; foreground: root.dim; fontFamily: root.ff
+          enabled: srow.setting.can_revert_default === true && !root.busy
+          opacity: srow.setting.can_revert_default === true ? 1.0 : 0.25
+          tooltipText: srow.setting.can_revert_default === true
+                       ? "Back to Omarchy's default: " + srow.setting.default_text
+                       : "Already the Omarchy default"
+          onClicked: root.doRevert(srow.setting.id, "default")
+        }
+        Button {
+          iconText: root.icFromRepo; bordered: false; foreground: root.dim; fontFamily: root.ff
+          enabled: srow.setting.can_revert_repo === true && !root.busy
+          opacity: srow.setting.can_revert_repo === true ? 1.0 : 0.25
+          tooltipText: srow.setting.can_revert_repo === true
+                       ? "Back to what your repo has: " + srow.setting.repo_text
+                       : "Already matches your repo"
+          onClicked: root.doRevert(srow.setting.id, "repo")
+        }
+      }
     }
   }
 
-  component FileRow: BorderSurface {
+  component FileRow: Item {
     id: frow
     property var config: ({})
     readonly property string syncState: frow.config.sync_state || "modified"
     readonly property bool isDefault: frow.syncState === "default"
     readonly property bool isModified: frow.syncState === "modified"
+    readonly property bool isOff: frow.config.synced === false
     readonly property bool missing: frow.config.exists === false
+    readonly property bool isSecret: frow.config.secret === true
 
-    implicitHeight: Style.space(56)
-    radius: Style.cornerRadius
-    color: frow.isModified ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.08)
-                           : Style.controlFill(false, false, root.fg, Color.accent)
-    borderSpec: Border.controlSpec(frow.isModified ? "focus" : "normal", root.fg, Color.accent)
+    implicitHeight: Style.space(50)
 
     Row {
       anchors.left: parent.left
@@ -1068,8 +1643,9 @@ Panel {
       Text {
         anchors.verticalCenter: parent.verticalCenter
         width: Style.space(14)
-        text: frow.missing ? "·" : frow.isDefault ? "○" : frow.isModified ? "●" : "◆"
-        color: frow.missing ? root.dim
+        text: frow.isOff ? "⊘" : frow.missing ? "·" : frow.isDefault ? "○" : frow.isModified ? "●" : "◆"
+        color: frow.isOff ? root.dim
+             : frow.missing ? root.dim
              : frow.isDefault ? root.dim
              : frow.isModified ? Color.accent : root.okColor
         font.family: root.ff; font.pixelSize: Style.font.body
@@ -1077,51 +1653,83 @@ Panel {
       }
 
       Column {
-        width: parent.width - Style.space(14) - actions.width - parent.spacing * 2
+        width: parent.width - Style.space(14) - syncSwitch.width - actions.width - parent.spacing * 3
         anchors.verticalCenter: parent.verticalCenter
         spacing: Style.spacing.xs
         Text {
           width: parent.width
           text: frow.config.label
-          color: frow.missing ? root.dim : root.fg
+          color: frow.missing || frow.isOff ? root.dim : root.fg
           font.family: root.ff; font.pixelSize: Style.font.subtitle; font.bold: frow.isModified
-          elide: Text.ElideRight
+          elide: Text.ElideMiddle
         }
         Text {
           width: parent.width
-          text: frow.missing ? (frow.config.src + "  — not on this machine") : frow.config.src
-          color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
-          elide: Text.ElideMiddle
+          // Secrets describe themselves by what they ARE, never by what they
+          // contain: a kind, a mode, and for env files the names of the
+          // variables. No value ever reaches the screen.
+          text: frow.missing ? (frow.config.src + "  — not on this machine")
+              : frow.isSecret
+                ? (frow.config.kind + "  ·  mode " + (frow.config.mode || "?")
+                   + (frow.config.var_count > 0 ? "  ·  " + frow.config.var_count + " variables" : ""))
+                : frow.config.src
+          color: frow.isSecret && frow.config.kind === "private key" && frow.config.mode !== "600" ? Color.urgent : root.dim
+          font.family: root.ff; font.pixelSize: Style.font.caption
+          elide: Text.ElideRight
         }
+      }
+
+      // The per-file sync switch. Some files are about the machine, not about
+      // the user — hypr/monitors.lua describes the screens physically plugged
+      // into THIS box — and copying them between a desktop and a laptop is
+      // actively wrong. Off means: not saved from here, not restored onto here,
+      // and whatever the repo already holds is left alone.
+      ToggleSwitch {
+        id: syncSwitch
+        anchors.verticalCenter: parent.verticalCenter
+        enabled: !root.busy
+        checked: frow.config.synced !== false
+        foreground: root.fg
+        accent: Color.accent
+        onToggled: root.doSync(frow.config.id, frow.config.synced === false)
       }
 
       Row {
         id: actions
         anchors.verticalCenter: parent.verticalCenter
-        spacing: Style.space(2)
+        spacing: 0
         Button {
-          iconText: "󰏫"; bordered: false; foreground: root.fg; fontFamily: root.ff
+          iconText: root.icEdit; bordered: false; foreground: root.fg; fontFamily: root.ff
           enabled: !frow.missing
           tooltipText: "Open in your editor"
           onClicked: root.doEdit(frow.config.id)
         }
         Button {
-          iconText: "≠"; bordered: false; foreground: root.fg; fontFamily: root.ff
+          iconText: root.icDiff; bordered: false; foreground: root.fg; fontFamily: root.ff
           enabled: !frow.missing
-          tooltipText: "Show what changed"
+          tooltipText: frow.isSecret ? "Say whether it changed (contents are never shown)" : "Show what changed"
           onClicked: root.doDiff(frow.config.id)
         }
         Button {
-          iconText: "󰆓"; bordered: false
+          iconText: root.icSave; bordered: false
           foreground: frow.isModified ? Color.accent : root.dim; fontFamily: root.ff
           enabled: !frow.missing && frow.isModified && !root.busy
           tooltipText: frow.isModified ? "Commit and push just this file" : "Already saved"
           onClicked: root.doSaveFile(frow.config.id)
         }
         Button {
-          iconText: "󰦛"; bordered: false; foreground: root.dim; fontFamily: root.ff
+          iconText: root.icFromRepo; bordered: false; foreground: root.dim; fontFamily: root.ff
+          enabled: !root.busy && frow.syncState !== "off"
+          tooltipText: "Put back the copy saved in your repo (keeps a .bak copy)"
+          onClicked: root.ask("restore-file", frow.config.id,
+                              "Replace " + frow.config.label + " with the copy saved in your repo?\n\nYour current version is kept as .bak.<epoch>.",
+                              "Restore")
+        }
+        Button {
+          iconText: root.icDefault; bordered: false; foreground: root.dim; fontFamily: root.ff
           // Only offered where there is a factory version to go back to.
           enabled: !frow.missing && frow.config.has_default === true && !frow.isDefault && !root.busy
+          opacity: frow.config.has_default === true ? 1.0 : 0.25
           tooltipText: frow.config.has_default === true
                        ? "Put Omarchy's default back (keeps a .bak copy)"
                        : "Omarchy ships no default for this file"

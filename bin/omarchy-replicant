@@ -274,41 +274,36 @@ cmd_clone() {
 
 # restore — ported bootstrap+restore-desktop, by group, with .bak.<epoch> (install_file())
 cmd_restore() {
-  local DRY=1 ALL_GROUPS=0 YES=0
-  while (( $# )); do case "$1" in --apply) DRY=0; shift;; --all) ALL_GROUPS=1; shift;; --dry-run) DRY=1; shift;; --yes|-y) YES=1; shift;; *) shift;; esac; done
+  local DRY=1 ALL_GROUPS=0 YES=0 ONLY=""
+  while (( $# )); do case "$1" in
+    --apply) DRY=0; shift;;
+    --all) ALL_GROUPS=1; shift;;
+    --dry-run) DRY=1; shift;;
+    --yes|-y) YES=1; shift;;
+    --only) ONLY="${2:-}"; shift 2;;
+    *) shift;;
+  esac; done
   [[ -d "$REPO_DIR/.git" ]] || fail "no repo"
   if (( ALL_GROUPS && !DRY && !YES )); then
-    warn "restore --apply --all: this will apply ALL groups with pending changes without asking group by group."
+    warn "restore --apply --all: this will apply every category with pending changes without asking one by one."
     read -rp "Continue and restore EVERYTHING from the repo/GitHub onto this system? .bak.<epoch> backups will be made [y/N] " resp </dev/tty 2>&1 || resp=""
     [[ $resp == [yY] ]] || fail "restore --apply --all cancelled"
   fi
   # shellcheck source=/dev/null
   source "$PLUGIN_DIR/bin/replicant-core.sh" 2>/dev/null || true
-  # groups, same as restore-desktop.sh.
-  # NOT named GROUPS: that is a bash special variable (the caller's group ids)
-  # and `local GROUPS=(...)` aborts the function with "variable may not be
-  # assigned value" — which meant restore did nothing at all, silently, on
-  # bash 5.3.
-  local RESTORE_GROUPS=(
-    "ssh:SSH (config + keys) — ~/.ssh"
-    "git:Git config and PAT keyring"
-    "env:Secret env vars — ~/.config/environment.d"
-    "shell:bashrc/XCompose"
-    "claude:Claude Code hooks and mcp"
-    "hypr:Hyprland Lua — input/monitors/autostart"
-    "shell_omarchy:Omarchy shell.json + hooks/audit"
-    "uwsm:uwsm env.d + xdg-terminals"
-    "terminal:alacritty/foot"
-    "branding:Omarchy branding screensaver"
-    "appearance:Interface size, density and default editor"
-    "theme:The active Omarchy theme"
-  )
+
+  # The plan comes from MANIFEST via plan_for_category(). It used to be a second
+  # hand-written list right here, which meant adding a file to the manifest
+  # backed it up but never restored it — a bug you only find on the day you need
+  # the backup.
   restore_theme() {
     local dry="$1" want current
     want=$(head -n1 "$REPO_DIR/config/omarchy/theme.name" 2>/dev/null | tr -d '\r' || true)
     if [[ -z "$want" ]]; then skip "no theme recorded in the repo" >&2; return 0; fi
     current=$(omarchy-theme-current 2>/dev/null || echo "")
-    if [[ "$want" == "$current" ]]; then ok "$want (already applied)" >&2; return 0; fi
+    # omarchy-theme-current answers "Everforest"; the file records "everforest".
+    # Comparing them raw made every restore claim the theme needed re-applying.
+    if [[ "${want,,}" == "${current,,}" ]]; then ok "$want (already applied)" >&2; return 0; fi
     if (( dry )); then skip "dry-run: would apply theme '$want' (currently '${current:-unknown}')" >&2; return 0; fi
     if command -v omarchy-theme-set >/dev/null 2>&1; then
       omarchy-theme-set "$want" >/dev/null 2>&1 && ok "theme -> $want" >&2 || warn "could not apply theme '$want' — is it installed?" >&2
@@ -317,47 +312,107 @@ cmd_restore() {
     fi
   }
 
-  # mapping: replicant repo layout -> destination
-  files_for() {
-    case $1 in
-      ssh) echo "secrets/ssh/id_ed25519|$HOME/.ssh/id_ed25519|600"; echo "secrets/ssh/id_ed25519.pub|$HOME/.ssh/id_ed25519.pub|644"; echo "config/ssh/config|$HOME/.ssh/config|600" ;;
-      git) echo "config/git/config|$HOME/.config/git/config|644" ;;
-      env) echo "secrets/env/60-secrets.conf|$HOME/.config/environment.d/60-secrets.conf|600" ;;
-      shell) echo "config/home/bashrc|$HOME/.bashrc|644"; echo "config/home/XCompose|$HOME/.XCompose|644" ;;
-      claude) echo "config/claude/settings.json|$HOME/.claude/settings.json|644"; echo "config/claude/settings.local.json|$HOME/.claude/settings.local.json|644"; echo "config/claude/mcp.json|$HOME/.claude/.mcp.json|644"; for h in cbm-code-discovery-gate cbm-session-reminder cbm-subagent-reminder; do echo "config/claude/hooks/$h|$HOME/.claude/hooks/$h|755"; done ;;
-      hypr) for f in "$REPO_DIR/config/hypr/"*.lua; do [[ -f $f ]] || continue; echo "$f|$HOME/.config/hypr/$(basename "$f")|644"; done ;;
-      shell_omarchy) echo "config/omarchy/shell.json|$HOME/.config/omarchy/shell.json|644"; echo "config/omarchy/hooks/post-update.d/audit-config.hook|$HOME/.config/omarchy/hooks/post-update.d/audit-config.hook|644"; echo "config/omarchy-audit-ignore|$HOME/.config/omarchy-audit-ignore|644"; echo "config/bin/omarchy-audit|$HOME/.local/bin/omarchy-audit|755" ;;
-      uwsm) for f in "$REPO_DIR"/config/uwsm/env.d/*; do [[ -f $f ]] || continue; echo "$f|$HOME/.config/uwsm/env.d/$(basename "$f")|644"; done; echo "config/xdg-terminals.list|$HOME/.config/xdg-terminals.list|644" ;;
-      terminal) echo "config/alacritty/alacritty.toml|$HOME/.config/alacritty/alacritty.toml|644"; echo "config/foot/foot.ini|$HOME/.config/foot/foot.ini|644" ;;
-      branding) echo "config/branding/screensaver.txt|$HOME/.config/omarchy/branding/screensaver.txt|644" ;;
-      appearance) echo "config/omarchy/shell.toml|$HOME/.config/omarchy/shell.toml|644"; echo "config/omarchy/defaults/editor|$HOME/.local/state/omarchy/defaults/editor|644" ;;
-      theme) : ;;  # handled separately below — a theme is applied, not copied
-    esac
+  # Plugins are reinstalled, not copied. `omarchy plugin add <origin>` is the
+  # only thing that leaves a plugin in a state Omarchy itself will maintain.
+  restore_plugins() {
+    local dry="$1" pid porigin n=0
+    while IFS=$'\t' read -r pid porigin; do
+      [[ -n "$pid" ]] || continue
+      n=$((n + 1))
+      if (( dry )); then
+        skip "dry-run: would run omarchy plugin add $porigin  ($pid)" >&2
+      else
+        echo "  → omarchy plugin add $porigin" >&2
+        omarchy plugin add "$porigin" --enable --yes >/dev/null 2>&1 \
+          && ok "$pid installed" >&2 || warn "$pid — omarchy plugin add failed" >&2
+      fi
+    done < <(missing_plugins)
+    (( n == 0 )) && skip "every plugin in the inventory is already installed" >&2
+    return 0
   }
+
   export DRY
-  for group in "${RESTORE_GROUPS[@]}"; do
-    name=${group%%:*}; echo; echo "== $name · ${group#*:}" >&2
-    if [[ "$name" == "theme" ]]; then
-      # A theme is not a file you copy into place: omarchy-theme-set rewrites
-      # every app's colours (terminals, editor, gtk, plymouth). Restoring
-      # ~/.local/state/.../theme.name on its own would record a theme that was
-      # never applied, so the saved *name* is replayed through the real command.
+  local cat entry src dst mode pending changed apply
+  local total_changed=0
+  for cat in "${CATEGORY_ORDER[@]}"; do
+    [[ -n "$ONLY" && "$ONLY" != "$cat" ]] && continue
+    local centry label
+    centry=$(find_category "$cat") || continue
+    label=$(category_field "$centry" 3)
+    echo; echo "== $cat · $label" >&2
+
+    if [[ "$cat" == "appearance" ]]; then
+      # The theme rides with appearance, because that is where a user looks for
+      # it — but it is applied, never copied (see restore_theme).
       restore_theme "$DRY"
-      continue
     fi
+    if [[ "$cat" == "plugins" ]]; then
+      restore_plugins "$DRY"
+    fi
+
     pending=()
-    while IFS='|' read -r src dst mode; do [[ -f $src ]] || continue; if [[ -f $dst ]] && cmp -s "$src" "$dst" 2>/dev/null; then ok "${dst/#$HOME/\~} (already matches)" >&2; else pending+=("$src|$dst|$mode"); fi; done < <(files_for "$name")
+    while IFS='|' read -r src dst mode; do
+      [[ -f "$src" ]] || continue
+      if [[ "$dst" != "$HOME"/* ]]; then
+        # Anything outside $HOME needs root, and a backup tool silently asking
+        # for a password is worse than a backup tool telling you the command.
+        if [[ -f "$dst" ]] && cmp -s "$src" "$dst" 2>/dev/null; then
+          ok "$dst (already matches)" >&2
+        else
+          warn "$dst needs root — run: sudo install -m $mode $src $dst" >&2
+        fi
+        continue
+      fi
+      if [[ -f "$dst" ]] && cmp -s "$src" "$dst" 2>/dev/null; then
+        ok "${dst/#$HOME/\~} (already matches)" >&2
+      else
+        pending+=("$src|$dst|$mode")
+      fi
+    done < <(plan_for_category "$cat")
+
     if (( ${#pending[@]} == 0 )); then skip "nothing to change" >&2; continue; fi
-    for e in "${pending[@]}"; do IFS='|' read -r src dst mode <<<"$e"; echo "  ── ${dst/#$HOME/\~}" >&2; if [[ -f $dst ]]; then diff -u --label system --label repo "$dst" "$src" 2>/dev/null | sed -n '3,40p' | sed 's/^/      /' >&2 || true; else echo "      (doesn't exist: would be created)" >&2; fi; done
+    for e in "${pending[@]}"; do
+      IFS='|' read -r src dst mode <<<"$e"
+      echo "  ── ${dst/#$HOME/\~}" >&2
+      if [[ -f $dst ]]; then
+        diff -u --label system --label repo "$dst" "$src" 2>/dev/null | sed -n '3,40p' | sed 's/^/      /' >&2 || true
+      else
+        echo "      (doesn't exist: would be created)" >&2
+      fi
+    done
     if (( DRY )); then skip "dry-run: ${#pending[@]} file(s) untouched. Repeat with --apply" >&2; continue; fi
-    if (( ! ALL_GROUPS )); then read -rp "  apply $name? [y/N] " resp </dev/tty 2>&1 || resp=""; [[ $resp == [yY] ]] || { skip "$name skipped" >&2; continue; }; fi
-    for e in "${pending[@]}"; do IFS='|' read -r src dst mode <<<"$e"; install_file "$src" "$dst" "$mode" 2>&1; done
+    if (( ! ALL_GROUPS )); then
+      read -rp "  apply $cat? [y/N] " resp </dev/tty 2>&1 || resp=""
+      [[ $resp == [yY] ]] || { skip "$cat skipped" >&2; continue; }
+    fi
+    changed=0
+    for e in "${pending[@]}"; do
+      IFS='|' read -r src dst mode <<<"$e"
+      install_file "$src" "$dst" "$mode" 2>&1
+      changed=$((changed + 1))
+    done
+    total_changed=$((total_changed + changed))
+    # Make it take effect. This is the difference between a backup tool and a
+    # restore tool: Hyprland does not re-read its Lua on its own, and a restored
+    # terminal config is invisible until the terminal is told about it.
+    apply=$(apply_for_category "$cat")
+    if (( changed > 0 )) && [[ -n "$apply" ]]; then
+      echo "  → $apply" >&2
+      bash -c "$apply" >/dev/null 2>&1 || warn "'$apply' failed — you may need to run it yourself" >&2
+      if [[ "$apply" == "hyprctl reload" ]]; then
+        local errs; errs=$(hyprctl configerrors 2>/dev/null | grep -v '^no errors' || true)
+        [[ -n "$errs" ]] && warn "Hyprland reported config errors after the reload:" >&2 && echo "$errs" >&2
+      fi
+    fi
   done
-  echo; if (( DRY )); then echo "Dry-run — to write: omarchy-replicant restore --apply" >&2; else ok "group restore complete — check .bak.<epoch>" >&2; fi
+  echo
+  if (( DRY )); then
+    echo "Dry-run — nothing was written. To apply: omarchy-replicant restore --apply" >&2
+  else
+    ok "restore complete — $total_changed file(s) written, previous versions kept as .bak.<epoch>" >&2
+  fi
 }
 
-# reset-all — resets EVERYTHING with a known Omarchy default back to factory
-# (distinct from restore --apply --all, which brings EVERYTHING down from the repo/GitHub)
 cmd_reset_all() {
   local DRY=1 YES=0
   while (( $# )); do case "$1" in
@@ -471,28 +526,94 @@ cmd_settings() {
   # shellcheck disable=SC1090
   source "$CORE" 2>/dev/null || true
   if [[ "${1:-}" == "--json" ]]; then build_settings_json; return 0; fi
-  local entry id label value unit group last="" fb
-  for entry in "${SETTINGS[@]}"; do
-    id=$(setting_field "$entry" 1);    group=$(setting_field "$entry" 2)
-    label=$(setting_field "$entry" 6); unit=$(setting_field "$entry" 7)
-    value=$(get_setting_value "$id" 2>/dev/null) || value=""
-    # An absent key is not the same as an unreadable one: most shell.toml keys
-    # simply aren't written down until you change them, and the value in force
-    # is the shell's own default (field 13). Show that, marked, rather than a dash.
-    if [[ -z "$value" ]]; then
-      local fb; fb=$(setting_field "$entry" 13)
-      if [[ -n "$fb" ]]; then value="$fb$unit (default)"; else value="— not on this machine"; fi
-    else
-      value="$value$unit"
-    fi
-    [[ "$group" != "$last" ]] && { printf '\n\033[1m%s\033[0m\n' "$group"; last="$group"; }
-    printf '  %-26s %-30s %s\n' "$id" "$label" "$value"
-  done
-  echo
+  # Values are printed the way the panel shows them — "10 min", not "600" —
+  # because a list you read should not need arithmetic. `get` still answers in
+  # the stored unit, which is what scripts want.
+  local order; order=$(printf '%s\n' "${SETTING_GROUPS[@]}" | cut -d'|' -f1 | jq -Rsc 'split("\n") | map(select(length > 0))')
+  build_settings_json | jq -r --argjson order "$order" '
+    def pad($n): . + ("                                  "[0:($n - length)] // "");
+    def bold: "\u001b[1m" + . + "\u001b[0m";
+    group_by(.group) | sort_by(. as $g | ($order | index($g[0].group)) // 99) | .[] |
+    (.[0].group | bold),
+    (.[] | "  " + (.id | pad(26)) + " " + (.label | pad(30)) + " "
+         + (if .available then .value_text + (if .implicit then "  (inherited)" else "" end)
+            else "— not on this machine" end)
+         + (if .can_revert_default then "   [omarchy: " + .default_text + "]" else "" end)),
+    ""'
 }
 
-# doctor — the questions a user actually asks when something looks wrong,
-# answered in one screen. Read-only: it never changes anything.
+cmd_sync() {
+  local id="${1:-}" want="${2:-}"
+  [[ -n "$id" && -n "$want" ]] || fail "usage: omarchy-replicant sync <id> on|off"
+  ensure_core
+  # shellcheck disable=SC1090
+  source "$CORE" 2>/dev/null || true
+  core_sync "$id" "$want" || exit 1
+  # The switch is part of the repo's shape, so it is committed like any other
+  # decision — otherwise the other machine never learns about it.
+  if [[ -d "$REPO_DIR/.git" ]]; then
+    git_repo add .replicant-exclude >/dev/null 2>&1 || true
+    if ! git_repo diff --cached --quiet -- .replicant-exclude 2>/dev/null; then
+      git_repo commit -q -m "sync: turn $id $want" -- .replicant-exclude >/dev/null 2>&1 || true
+      git_repo push -q 2>/dev/null || warn "committed locally; push failed (offline?)"
+    fi
+  fi
+}
+
+# cmd_revert <setting-id> [--to default|repo] — put ONE setting back without
+# touching the rest of the file it lives in. `reset` and `restore` are the
+# whole-file hammers; this is the everyday one, and it is what the two small
+# arrows next to every control in the panel call.
+cmd_revert() {
+  local id="${1:-}" to="default"
+  shift || true
+  while (( $# )); do case "$1" in --to) to="${2:-default}"; shift 2;; default|repo) to="$1"; shift;; *) shift;; esac; done
+  [[ -n "$id" ]] || fail "usage: omarchy-replicant revert <setting-id> [--to default|repo]"
+  ensure_core
+  # shellcheck disable=SC1090
+  source "$CORE" 2>/dev/null || true
+  core_revert "$id" "$to" || exit 1
+  # Same as `set`: a value that changed on this machine is worth a commit.
+  if [[ -d "$REPO_DIR/.git" ]]; then
+    bash "$CORE" backup >/dev/null 2>&1 || true
+    git_repo add -A config/ >/dev/null 2>&1 || true
+    if ! git_repo diff --cached --quiet 2>/dev/null; then
+      git_repo commit -q -m "revert: $id -> $to" >/dev/null 2>&1 || true
+      git_repo push -q 2>/dev/null || warn "committed locally; push failed (offline?)"
+    fi
+  fi
+}
+
+# cmd_restore_file <id> — bring one tracked file back from the repo, backed up
+# first. `reset <id>` is its twin, going to Omarchy's default instead.
+cmd_restore_file() {
+  local id="${1:-}"
+  [[ -n "$id" ]] || fail "usage: omarchy-replicant restore-file <id>"
+  ensure_core
+  # shellcheck disable=SC1090
+  source "$CORE" 2>/dev/null || true
+  core_restore_file "$id" || exit 1
+}
+
+# cmd_shortcuts — what you changed about the keyboard, and what is actually
+# bound right now. Omarchy's model is defaults + your overrides, so only the
+# overrides are backed up; a snapshot of all 227 active bindings would be stale
+# the next time Omarchy updates.
+cmd_shortcuts() {
+  ensure_core
+  if [[ "${1:-}" == "--json" ]]; then bash "$CORE" shortcuts; return 0; fi
+  local json; json=$(bash "$CORE" shortcuts)
+  printf '\033[1mYour own bindings\033[0m  (%s)\n' "$(jq -r '.file' <<<"$json")"
+  local n; n=$(jq -r '.own_count' <<<"$json")
+  if [[ "$n" == "0" ]]; then
+    echo "  none — you are running Omarchy's defaults unchanged"
+  else
+    jq -r '.own[] | "  \(.key)\t\(if .kind == "unbind" then "(unbound)" else (if .description == "" then .command else .description end) end)"' <<<"$json" | expand -t 34
+  fi
+  printf '\n\033[1mActive right now\033[0m  (%s bindings, defaults included)\n' "$(jq -r '.active_count' <<<"$json")"
+  jq -r '.active[] | "  \(.key)\t\(.description)"' <<<"$json" | expand -t 34
+}
+
 cmd_doctor() {
   ensure_core
   # shellcheck disable=SC1090
@@ -691,6 +812,9 @@ Usage:
   omarchy-replicant diff [id] [--against repo|default] [--terminal]
                                           plain-text diff (the panel renders it inline)
   omarchy-replicant settings [--json]     list every editable setting and its value
+  omarchy-replicant revert <id> [--to default|repo]   put ONE setting back
+  omarchy-replicant sync <id> on|off      stop / resume syncing one file
+  omarchy-replicant shortcuts [--json]    your keybinding overrides, and what is bound now
   omarchy-replicant edit <id>             open id in your editor (e.g. hypr/input.lua)
   omarchy-replicant path <id>             print the real path an id refers to
   omarchy-replicant save-file <id> [-m]   commit + push just that one file
@@ -699,6 +823,7 @@ Usage:
   omarchy-replicant link | unlink         add/remove omarchy-replicant on your PATH
   omarchy-replicant purge [--apply] [--repo]  remove everything this plugin left on the machine
   omarchy-replicant reset <id>            restore the default via omarchy refresh (1 file)
+  omarchy-replicant restore-file <id>     bring 1 file back from the repo (.bak.<epoch> kept)
   omarchy-replicant reset-all [--dry-run|--apply] [--yes]   Restore EVERYTHING with a known Omarchy default back to factory
   omarchy-replicant push [msg]             Direct push (not the savegame flow)
   omarchy-replicant pull
@@ -723,7 +848,7 @@ main() {
   # Anything that writes to the repo takes the lock first; read-only commands
   # (status/get/diff/edit) stay lock-free so the panel's polling never blocks.
   case "$cmd" in
-    init|create|backup|savegame|set|save-file|reset|reset-all|push|pull|clone|restore) acquire_repo_lock ;;
+    init|create|backup|savegame|set|save-file|reset|reset-all|push|pull|clone|restore|sync|revert|restore-file) acquire_repo_lock ;;
   esac
   case "$cmd" in
     -h|--help|help) usage; exit 0;;
@@ -744,6 +869,10 @@ main() {
     log) shift; cmd_log "$@";;
     settings) shift; cmd_settings "$@";;
     doctor) shift; cmd_doctor "$@";;
+    sync) shift; cmd_sync "$@";;
+    revert) shift; cmd_revert "$@";;
+    restore-file) shift; cmd_restore_file "$@";;
+    shortcuts) shift; cmd_shortcuts "$@";;
     link) shift; cmd_link "$@";;
     unlink) shift; cmd_unlink "$@";;
     purge) shift; cmd_purge "$@";;

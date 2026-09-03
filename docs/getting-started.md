@@ -20,7 +20,7 @@ credentials.
 omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --enable --yes
 ```
 
-An **R** appears in the bar. Click it — it will say there is no repo yet.
+A **+** appears in the bar. Click it — it will say there is no repo yet.
 
 ## 2. Create your repo
 
@@ -39,18 +39,40 @@ Open the panel again and it shows the repo name and every tracked file.
 
 ## 3. Day to day
 
-- **Changed something?** Panel → **Save to GitHub**. Or, in **Files**, save just the one file you
-  touched.
-- **Want to change a setting?** Panel → **Settings**. Change the value; it is written to the real
-  config, applied, and committed in one step.
-- **Another machine saved something?** The bar icon shows ↓ — panel → **Pull**.
-- **What did I change in this file?** **Files** → the ≠ button. The diff opens in the panel.
+- **Changed something?** Panel → **Save to GitHub**. Or, in **Configs**, open the area and save
+  just the one file you touched.
+- **Want to change a setting?** Panel → **Settings**. Open a group, change the value; it is
+  written to the real config, applied, and committed in one step. Timers are in minutes — the
+  panel converts, the CLI still speaks seconds.
+- **Changed your mind?** The two small buttons at the end of every setting row put it back: ↺ to
+  Omarchy's default, ⭳ to what your repo has. Neither touches the rest of the file.
+- **Another machine saved something?** The bar icon turns into a download cloud — panel → **Pull**.
+- **What did I change in this file?** **Configs** → the file's compare button. The diff opens in
+  the panel.
 
-The bar icon tells you the state at a glance: **R** in sync, **●** local changes, **↑** to push,
-**↓** to pull, **＋** not set up yet.
+The bar icon tells you the state at a glance: the GitHub mark when everything is saved, a floppy
+disk when this machine has unsaved changes, a cloud with an up arrow when there is something to
+push, a cloud with a down arrow when another machine saved something, a warning when the two have
+diverged, and a plus before you have set anything up.
 
-The panel takes the keyboard too: `1`–`4` for the tabs, `/` to filter files, `r` to refresh, `s`
-to save, `Esc` to back out.
+The panel takes the keyboard too: `1`–`4` for the tabs, `/` to filter, `r` to refresh, `s` to
+save, `c` to collapse every open area, `Esc` to back out. To open it from a keybinding, bind
+`omarchy shell replicant toggle`.
+
+## 3b. Two machines, one repo
+
+This is the case the per-file switch exists for. Some files describe the *machine*, not you —
+`hypr/monitors.lua` lists the screens physically plugged into this box, and copying the laptop's
+version onto the desktop is actively wrong.
+
+Every row in **Configs** has a switch. Off means: not saved from here, not restored onto here, and
+whatever the repo already holds is left exactly as it is. `hypr/monitors.lua` starts off for
+exactly this reason. The list lives in `.replicant-exclude` **inside the repo**, so the decision
+travels — make it once, both machines honour it.
+
+Everything else is already per-machine where it needs to be: the package/service/plugin inventory
+is written to `state/<hostname>/`, so the desktop and the laptop add to the repo instead of
+overwriting each other. Overview lists every machine that has saved into the repo and when.
 
 If anything looks off, **Overview → Health check** answers the questions you would otherwise go
 and check by hand: am I logged in, is my repo actually private, is the secret-scanning hook on,
@@ -64,8 +86,15 @@ P=~/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant
 $P/bin/omarchy-replicant clone https://github.com/<you>/<hostname>-replicant
 ```
 
-Then open the panel → **Restore** → **Preview**. It prints, group by group, exactly what would
-change, and touches nothing. When it looks right, **Restore everything**.
+Then open the panel → **Restore** → **Preview**. It prints, area by area, exactly what would
+change, and touches nothing. When it looks right, **Restore everything** — or restore one area at
+a time from the list underneath.
+
+Restoring is not just copying. Each area is put back the way Omarchy expects it: the theme is
+re-applied with `omarchy theme set` (which rewrites every terminal, editor and GTK colour, not
+just a file), Hyprland is reloaded and then checked with `hyprctl configerrors`, terminals are
+restarted, and plugins recorded in the inventory are reinstalled with `omarchy plugin add`.
+Anything outside `$HOME` is never written behind your back — you get the exact `sudo` command.
 
 Everything it overwrites is kept as `<file>.bak.<epoch>` first.
 

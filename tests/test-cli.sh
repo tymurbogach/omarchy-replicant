@@ -32,6 +32,9 @@ run() { "$CLI" "$@" 2>&1; }
 section "the command surface"
 check_contains "help lists the commands" "omarchy-replicant savegame" "$(run --help)"
 check_contains "help mentions the new ones" "doctor" "$(run --help)"
+for c in "sync <id>" "revert <id>" "restore-file <id>" "shortcuts"; do
+  check_contains "help documents $c" "$c" "$(run --help)"
+done
 check_true  "--help exits 0"      "$CLI" --help
 check_false "an unknown command fails" "$CLI" definitely-not-a-command
 check_contains "…and says so" "unknown command" "$(run definitely-not-a-command)"
@@ -107,6 +110,52 @@ section "diff renders as plain text for the panel"
 check_contains "against the repo by default" "this machine" "$(run diff hypr/input.lua)"
 check_contains "--against default works"     "omarchy default" "$(run diff hypr/input.lua --against default)"
 check_false "diff with no id fails" "$CLI" diff nope/nope
+
+section "the per-file sync switch, from the command line"
+check_false "sync needs both arguments" "$CLI" sync hypr/input.lua
+check_false "…and a real id"            "$CLI" sync nope/nope off
+check_false "…and a real state"         "$CLI" sync hypr/input.lua sideways
+run sync hypr/input.lua off >/dev/null 2>&1
+check "switching off is recorded in the repo" "1" \
+  "$(grep -cx 'hypr/input.lua' "$REPO/.replicant-exclude" 2>/dev/null || true)"
+check "…and the panel reads it back as off" "off" \
+  "$(run status --json --no-fetch | jq -r '[.configs[] | select(.id=="hypr/input.lua")][0].sync_state')"
+# The decision is a fact about the setup, so it travels with the repo.
+check "…committed, not left dangling" "0" \
+  "$(git -C "$REPO" status --porcelain -- .replicant-exclude | grep -c . || true)"
+run sync hypr/input.lua on >/dev/null 2>&1
+check "switching back on clears it" "0" \
+  "$(grep -cx 'hypr/input.lua' "$REPO/.replicant-exclude" 2>/dev/null || true)"
+
+section "reverting one setting"
+check_false "revert needs an id"       "$CLI" revert
+check_false "…a known one"             "$CLI" revert not.a.setting
+check_false "…and a known target"      "$CLI" revert idle.lock --to sideways
+mkdir -p "$OMARCHY_PATH/config/omarchy"
+printf '{"idle":{"lock":300}}\n' > "$OMARCHY_PATH/config/omarchy/shell.json"
+run set idle.lock 900 >/dev/null 2>&1
+check "the value moved"        "900" "$(run get idle.lock)"
+run revert idle.lock --to default >/dev/null 2>&1
+check "reverting to Omarchy's default puts it back" "300" "$(run get idle.lock)"
+check "…in the stored unit, not the panel's"        "300" \
+  "$(jq -r '.idle.lock' "$HOME/.config/omarchy/shell.json")"
+
+section "restoring one file from the repo"
+check_false "restore-file needs an id" "$CLI" restore-file
+check_false "…a known one"             "$CLI" restore-file nope/nope
+printf 'edited after the last save\n' > "$HOME/.config/hypr/input.lua"
+run restore-file hypr/input.lua >/dev/null 2>&1
+check "the file came back from the repo" "0" \
+  "$(cmp -s "$HOME/.config/hypr/input.lua" "$REPO/config/hypr/input.lua"; echo $?)"
+check "…and the version it replaced is on disk" "1" \
+  "$(ls "$HOME/.config/hypr/input.lua".bak.* 2>/dev/null | wc -l)"
+
+section "shortcuts"
+mkdir -p "$HOME/.config/hypr"
+printf 'o.bind("SUPER + J", "Journal", "obsidian")\n' > "$HOME/.config/hypr/bindings.lua"
+check "shortcuts --json is valid JSON" "0" "$(run shortcuts --json | jq empty >/dev/null 2>&1; echo $?)"
+check "…and finds your own binding"    "1" "$(run shortcuts --json | jq '.own | length')"
+check_contains "the plain listing names it" "Journal" "$(run shortcuts)"
 
 section "doctor is read-only"
 before_home=$(hash_tree "$HOME/.config")

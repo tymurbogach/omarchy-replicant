@@ -167,19 +167,106 @@ check "enums carry their options"     "4"  "$(printf '%s' "$settings_json" | jq 
 check "a missing value is unavailable" "false" "$(printf '%s' "$settings_json" | jq -r '[.[] | select(.id=="input.repeatRate")][0].available')"
 check "…and is reported as null"       "null"  "$(printf '%s' "$settings_json" | jq -r '[.[] | select(.id=="input.repeatRate")][0].value')"
 check "every group is one of the declared ones" "0" \
-  "$(printf '%s' "$settings_json" | jq --argjson g "$(printf '%s\n' "${SETTING_GROUP_ORDER[@]}" | jq -Rsc 'split("\n") | map(select(length>0))')" \
+  "$(printf '%s' "$settings_json" | jq --argjson g "$(printf '%s\n' "${SETTING_GROUPS[@]}" | cut -d'|' -f1 | jq -Rsc 'split("\n") | map(select(length>0))')" \
      '[.[] | select(.group as $x | $g | index($x) | not)] | length')"
+
+section "values a person can read"
+check "zero is never, not 0 s"       "never"        "$(human_duration 0)"
+check "under a minute stays seconds" "45 s"         "$(human_duration 45)"
+check "a round minute"               "10 min"       "$(human_duration 600)"
+check "…and a ragged one keeps both" "2 min 30 s"   "$(human_duration 150)"
+check "an hour"                      "1 h"          "$(human_duration 3600)"
+check "…and change"                  "1 h 30 min"   "$(human_duration 5400)"
+check "booleans read as on/off"      "on"           "$(human_value bool "" 1 "" true)"
+check "…and off"                     "off"          "$(human_value lua-bool "" 1 "" false)"
+check "a unit is spaced from its number" "26 px"    "$(human_value toml-int px 1 px 26)"
+check "a multiplier is not"          "1.4×"         "$(human_value toml-float "×" 1 "×" 1.4)"
+check "a rate is not"                "40/s"         "$(human_value lua-int "/s" 1 "/s" 40)"
+check "an absent value is a dash"    "—"            "$(human_value number s 60 min "")"
+# "1" and "1.0" are the same density; printing them differently made the panel
+# offer a revert button that would have changed nothing.
+check "trailing zeros are dropped"   "1"            "$(canon_number 1.0)"
+check "…without eating real digits"  "1.4"          "$(canon_number 1.40)"
+check "…and integers are left alone" "26"           "$(canon_number 26)"
+
+section "the panel edits minutes, the CLI still speaks seconds"
+# Earlier sections have been writing to these files; start from a known state.
+cat > "$TMP/.config/omarchy/shell.json" <<'JSON'
+{
+  "idle": { "lock": 600, "screensaver": 150, "lazyDpms": 120, "lazySuspendAc": 0, "lazySuspendBatt": 300 },
+  "bar": { "position": "top", "transparent": false }
+}
+JSON
+sj=$(build_settings_json)
+lock=$(printf '%s' "$sj" | jq '[.[] | select(.id=="idle.lock")][0]')
+check "the stored value is seconds"        "600"    "$(printf '%s' "$lock" | jq -r '.value')"
+check "the shown value is minutes"         "10"     "$(printf '%s' "$lock" | jq -r '.display_value')"
+check "…labelled as such"                  "min"    "$(printf '%s' "$lock" | jq -r '.display_unit')"
+check "…with the bounds converted too"     "1"      "$(printf '%s' "$lock" | jq -r '.display_min')"
+check "…both of them"                      "120"    "$(printf '%s' "$lock" | jq -r '.display_max')"
+check "a long range steps in fives"        "5"      "$(printf '%s' "$lock" | jq -r '.display_step')"
+check "and the exact value is spelled out" "10 min" "$(printf '%s' "$lock" | jq -r '.value_text')"
+# The rounding the stepper does must never be mistaken for the real value.
+ss=$(printf '%s' "$sj" | jq '[.[] | select(.id=="idle.screensaver")][0]')
+check "an odd number of seconds rounds in the stepper" "3" "$(printf '%s' "$ss" | jq -r '.display_value')"
+check "…but the row still states the truth" "2 min 30 s" "$(printf '%s' "$ss" | jq -r '.value_text')"
+check "zero reads as never, not 0 min"      "never" \
+  "$(printf '%s' "$sj" | jq -r '[.[] | select(.id=="idle.lazySuspendAc")][0].value_text')"
+check "an unscaled setting shows its stored value" "true" \
+  "$(printf '%s' "$sj" | jq -r '[.[] | select(.id=="font.baseSize")][0] | .value == .display_value')"
+
+section "the two ways back, per setting"
+# Omarchy's own shipped file, so the "back to default" button has something to
+# read rather than guessing.
+export OMARCHY_PATH="$TMP/omarchy"
+mkdir -p "$OMARCHY_PATH/config/omarchy"
+# Earlier sections wrote appearance keys into shell.toml; start from the shape
+# Omarchy actually ships, where most of them are simply absent.
+printf '[font]\nbase-size = 14\n' > "$TMP/.config/omarchy/shell.toml"
+printf '{"idle":{"lock":300},"bar":{"position":"top"}}\n' > "$OMARCHY_PATH/config/omarchy/shell.json"
+check "the default comes from Omarchy's own file" "300" "$(setting_default_value idle.lock)"
+sj=$(build_settings_json)
+check "…and the panel is told so" "5 min" \
+  "$(printf '%s' "$sj" | jq -r '[.[] | select(.id=="idle.lock")][0].default_text')"
+check "a value that differs offers the button" "true" \
+  "$(printf '%s' "$sj" | jq -r '[.[] | select(.id=="idle.lock")][0].can_revert_default')"
+# A key Omarchy does not ship falls back to the registry's own fallback, which
+# is the value the shell uses when the key is absent.
+check "a key with no shipped default uses the fallback" "26" "$(setting_default_value bar.sizeHorizontal)"
+check "…and offers no button while it matches" "false" \
+  "$(printf '%s' "$sj" | jq -r '[.[] | select(.id=="bar.sizeHorizontal")][0].can_revert_default')"
+check_false "a setting with neither has no default" setting_default_value input.repeatRate
+
+# What the repo has, read out of the saved copy.
+mkdir -p "$CONFIG_DIR/omarchy"
+printf '{"idle":{"lock":900,"screensaver":150}}\n' > "$CONFIG_DIR/omarchy/shell.json"
+check "the repo value comes from the saved copy" "900" "$(setting_repo_value idle.lock)"
+sj=$(build_settings_json)
+check "…and the panel is told so"    "15 min" \
+  "$(printf '%s' "$sj" | jq -r '[.[] | select(.id=="idle.lock")][0].repo_text')"
+check "a value that differs offers the button" "true" \
+  "$(printf '%s' "$sj" | jq -r '[.[] | select(.id=="idle.lock")][0].can_revert_repo')"
+check "one that matches does not"              "false" \
+  "$(printf '%s' "$sj" | jq -r '[.[] | select(.id=="idle.screensaver")][0].can_revert_repo')"
+
+core_revert idle.lock default >/dev/null 2>&1
+check "reverting to the default writes it" "300" "$(get_setting_value idle.lock)"
+check "…and touches nothing else in the file" "top" "$(jq -r '.bar.position' "$HOME/.config/omarchy/shell.json")"
+core_revert idle.lock repo >/dev/null 2>&1
+check "reverting to the repo writes that"  "900" "$(get_setting_value idle.lock)"
+check_false "an unknown target is refused"  core_revert idle.lock sideways
+check_false "an unknown setting is refused" core_revert not.a.setting default
 
 section "the registry itself is well-formed"
 bad_fields=0; dupe=0; seen=""
 for entry in "${SETTINGS[@]}"; do
   n=$(printf '%s' "$entry" | awk -F'|' '{print NF}')
-  [[ "$n" == 13 ]] || { bad_fields=$((bad_fields+1)); echo "    13 fields expected, got $n: $(setting_field "$entry" 1)"; }
+  [[ "$n" == 15 ]] || { bad_fields=$((bad_fields+1)); echo "    15 fields expected, got $n: $(setting_field "$entry" 1)"; }
   id=$(setting_field "$entry" 1)
   [[ ",$seen," == *",$id,"* ]] && dupe=$((dupe+1))
   seen="$seen,$id"
 done
-check "every line has 13 fields" "0" "$bad_fields"
+check "every line has 15 fields" "0" "$bad_fields"
 check "no duplicate setting ids" "0" "$dupe"
 
 summary

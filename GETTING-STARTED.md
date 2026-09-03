@@ -45,13 +45,20 @@ commits, and pushes. Open the panel again: it now shows the repo name and every 
 
 ## 4. Day to day
 
-- Changed something? Open the panel → **Save to GitHub**.
-- Want to change a common setting? Open the panel → **Settings** → change the value. It is
-  written to the real config and saved to the repo in one step.
+- Changed something? Open the panel → **Save to GitHub**. Or, in **Files**, save just the one
+  file you touched.
+- Want to change a common setting? Open the panel → **Settings**. Change the value; it is written
+  to the real config, applied, and committed in one step.
 - Another machine saved something? The bar icon shows ↓ — open the panel → **Pull**.
+- Wondering what you changed in a file? **Files** → the ≠ button. The diff opens in the panel.
 
 The icon tells you the state at a glance: **R** in sync, **●** local changes, **↑** to push,
-**↓** to pull.
+**↓** to pull. The panel takes the keyboard too: `1`–`4` for the tabs, `/` to filter files, `r`
+to refresh, `s` to save, `Esc` to back out.
+
+If anything looks wrong, **Overview → Health check** (or `omarchy-replicant doctor`) answers the
+questions you would otherwise have to go and check by hand: am I logged in, is my repo actually
+private, is the secret-scanning hook on, are the permissions right.
 
 ## 5. Setting up a second machine
 
@@ -73,7 +80,7 @@ Everything it overwrites is backed up as `<file>.bak.<epoch>` first.
 ## If it goes wrong
 
 - **Undo a restore** — every overwritten file is next to the original as `.bak.<epoch>`.
-- **Back to Omarchy's defaults** — panel → Danger zone → *Reset to Omarchy (all)*, or
+- **Back to Omarchy's defaults** — panel → **Restore** → *Reset to factory*, or
   `omarchy-replicant reset-all --apply`.
 - **The repo got exposed** — rotate the SSH key in `secrets/ssh/`, revoke every token in
   `secrets/env/`, then check `git log -p -- secrets/` to see exactly what was in there.

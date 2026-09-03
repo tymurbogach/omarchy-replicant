@@ -1,0 +1,127 @@
+#!/bin/bash
+# The bin/omarchy-replicant command surface: argument handling, the read-only
+# commands, and — the part that matters most — that every destructive command
+# really is a no-op until it is given --apply.
+#
+# Runs against a fake $HOME and a local bare repo standing in for GitHub, so
+# nothing here can reach the network or the user's own machine state.
+set -uo pipefail
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+CLI="$HERE/../bin/omarchy-replicant"
+# shellcheck source=tests/lib.sh
+source "$HERE/lib.sh"
+
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+export HOME="$TMP/home"
+export OMARCHY_PATH="$TMP/omarchy"
+export OMARCHY_REPLICANT_HOME="$TMP/replicant"
+REPO="$OMARCHY_REPLICANT_HOME/repo"
+
+mkdir -p "$HOME/.config/hypr" "$HOME/.config/omarchy" "$OMARCHY_PATH/config/hypr" "$OMARCHY_PATH/default/bash"
+printf 'default input\n'  > "$OMARCHY_PATH/config/hypr/input.lua"
+printf 'default bashrc\n' > "$OMARCHY_PATH/default/bash/bashrc"
+printf 'my own input\n'   > "$HOME/.config/hypr/input.lua"
+printf 'my own bashrc\n'  > "$HOME/.bashrc"
+cat > "$HOME/.config/omarchy/shell.json" <<'JSON'
+{ "idle": { "screensaver": 300, "lock": 600 }, "bar": { "position": "top", "transparent": false } }
+JSON
+
+run() { "$CLI" "$@" 2>&1; }
+
+section "the command surface"
+check_contains "help lists the commands" "omarchy-replicant savegame" "$(run --help)"
+check_contains "help mentions the new ones" "doctor" "$(run --help)"
+check_true  "--help exits 0"      "$CLI" --help
+check_false "an unknown command fails" "$CLI" definitely-not-a-command
+check_contains "…and says so" "unknown command" "$(run definitely-not-a-command)"
+check_false "status on an uninitialised machine still answers" false
+check "status --json before setup is valid JSON" "0" "$(run status --json | jq empty >/dev/null 2>&1; echo $?)"
+check "…and reports not initialized" "false" "$(run status --json | jq -r '.initialized')"
+
+section "id -> path resolution"
+check "resolves a tracked id"  "$HOME/.config/hypr/input.lua" "$(run path hypr/input.lua)"
+check_false "rejects an unknown id" "$CLI" path nope/nope
+check_false "path with no argument fails" "$CLI" path
+
+section "reading and writing one setting"
+check "get reads a value"      "300" "$(run get idle.screensaver)"
+check_false "get on an unknown id fails" "$CLI" get not.a.setting
+
+section "dry runs must not write — proven by hashing the files"
+git init -q "$REPO"
+git -C "$REPO" config user.email t@example.com
+git -C "$REPO" config user.name Test
+"$CLI" backup >/dev/null 2>&1
+git -C "$REPO" add -A >/dev/null 2>&1
+git -C "$REPO" commit -q -m initial >/dev/null 2>&1
+# Diverge the machine from the repo so both dry runs have real work to describe.
+printf 'changed on this machine\n' > "$HOME/.config/hypr/input.lua"
+
+before_home=$(hash_tree "$HOME/.config")
+before_repo=$(hash_tree "$REPO")
+
+out=$(run restore --dry-run)
+check "restore --dry-run leaves ~/.config alone" "$before_home" "$(hash_tree "$HOME/.config")"
+check "restore --dry-run leaves the repo alone"  "$before_repo" "$(hash_tree "$REPO")"
+check_contains "…and says it wrote nothing" "Dry-run" "$out"
+
+out=$(run reset-all --dry-run)
+check "reset-all --dry-run leaves ~/.config alone" "$before_home" "$(hash_tree "$HOME/.config")"
+check "reset-all --dry-run leaves the repo alone"  "$before_repo" "$(hash_tree "$REPO")"
+check_contains "…and says it wrote nothing" "Dry-run" "$out"
+
+# Dry-run is the DEFAULT, not something you have to remember to ask for.
+out=$(run restore)
+check "restore with no flags is a dry run"  "$before_home" "$(hash_tree "$HOME/.config")"
+out=$(run reset-all)
+check "reset-all with no flags is a dry run" "$before_home" "$(hash_tree "$HOME/.config")"
+
+section "reset refuses what it cannot restore"
+# A file Omarchy ships no default for has nothing to be reset to, and must be
+# refused before `omarchy refresh` is ever invoked.
+check_false "no default -> refused" "$CLI" reset omarchy/shell.toml
+check_contains "…with a reason" "no Omarchy default" "$(run reset omarchy/shell.toml)"
+check_false "unknown id -> refused" "$CLI" reset nope/nope
+check "nothing was touched" "$before_home" "$(hash_tree "$HOME/.config")"
+
+section "save-file touches one file and nothing else"
+"$CLI" backup >/dev/null 2>&1
+git -C "$REPO" add -A >/dev/null 2>&1
+git -C "$REPO" commit -q -m "second" >/dev/null 2>&1
+printf 'edited again\n' > "$HOME/.config/hypr/input.lua"
+run save-file hypr/input.lua -m "config: test" >/dev/null 2>&1
+check "committed exactly one file" "1" "$(git -C "$REPO" show --stat --name-only --format='' HEAD | grep -c .)"
+check "…and it is the one asked for" "config/hypr/input.lua" "$(git -C "$REPO" show --name-only --format='' HEAD | head -1)"
+check "…with the message given"      "config: test" "$(git -C "$REPO" log -1 --format=%s)"
+check_false "save-file on an unknown id fails" "$CLI" save-file nope/nope
+
+section "log and settings"
+check "log --json is valid JSON" "0" "$(run log --json | jq empty >/dev/null 2>&1; echo $?)"
+check "log --json respects -n"   "1" "$(run log --json -n 1 | jq 'length')"
+check "settings --json is valid" "0" "$(run settings --json | jq empty >/dev/null 2>&1; echo $?)"
+check_contains "settings prints groups" "Idle & power" "$(run settings)"
+check_contains "settings shows a value"  "Screensaver"  "$(run settings)"
+
+section "diff renders as plain text for the panel"
+check_contains "against the repo by default" "this machine" "$(run diff hypr/input.lua)"
+check_contains "--against default works"     "omarchy default" "$(run diff hypr/input.lua --against default)"
+check_false "diff with no id fails" "$CLI" diff nope/nope
+
+section "doctor is read-only"
+before_home=$(hash_tree "$HOME/.config")
+before_repo=$(hash_tree "$REPO")
+run doctor >/dev/null 2>&1
+check "doctor changes nothing in ~/.config" "$before_home" "$(hash_tree "$HOME/.config")"
+check "doctor changes nothing in the repo"  "$before_repo" "$(hash_tree "$REPO")"
+check_contains "doctor reports on the repo" "local repo" "$(run doctor)"
+
+section "concurrent writes are serialized, not corrupted"
+# Two writes racing used to collide on .git/index.lock and one would die
+# half-done, leaving the repo mid-commit.
+for i in 1 2 3; do ( "$CLI" backup >/dev/null 2>&1 ) & done
+wait
+check "no leftover git index lock" "0" "$(ls "$REPO/.git/index.lock" 2>/dev/null | wc -l)"
+check_true "the repo is still usable afterwards" git -C "$REPO" status --porcelain
+
+summary

@@ -2,11 +2,14 @@
   "schemaVersion": 1,
   "id": "io.github.tymurbogach.omarchy-replicant",
   "name": "Omarchy Replicant",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": "tymurbogach",
   "license": "MIT",
-  "description": "Back up your Omarchy configs and secrets to your own private GitHub repo, restore them on another machine, and edit common settings straight from the bar.",
-  "kinds": ["bar-widget", "service"],
+  "description": "Back up your Omarchy configs and secrets to your own private GitHub repo, restore them on another machine, and edit the settings you actually change from the bar.",
+  "kinds": [
+    "bar-widget",
+    "service"
+  ],
   "keepLoaded": true,
   "entryPoints": {
     "barWidget": "BarWidget.qml",
@@ -14,7 +17,7 @@
   },
   "barWidget": {
     "displayName": "Replicant",
-    "description": "Config backup, restore and quick settings",
+    "description": "Config backup, restore and live settings",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right",
@@ -27,7 +30,8 @@
       "config-sync",
       "savegame",
       "git-backup",
-      "settings"
+      "settings",
+      "theme"
     ]
   }
 }

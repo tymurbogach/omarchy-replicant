@@ -49,7 +49,7 @@ acquire_repo_lock() {
 
 ensure_core() { [[ -x "$CORE" ]] || fail "replicant-core.sh not found at $CORE"; }
 
-cmd_status() { ensure_core; bash "$CORE" status "${1:-}"; }
+cmd_status() { ensure_core; bash "$CORE" status "$@"; }
 cmd_backup() { ensure_core; bash "$CORE" backup; }
 
 cmd_init() {
@@ -174,25 +174,19 @@ cmd_savegame() {
 
 cmd_diff() { ensure_core; git_repo status --short 2>/dev/null | head -n 100; echo "--- diff --cached ---" >&2; git_repo diff --cached --stat 2>/dev/null | head -n 100; }
 
-# edit/diff/reset by config id — used by the panel
+# edit/diff/reset by config id — used by the panel.
+# The id -> real path mapping lives in the core (resolve_manifest_src) so the
+# CLI, the panel's diff view and the core all resolve an id identically.
 resolve_src() {
-  local id="$1"
-  # id is a rel path like "hypr/input.lua" or "home/bashrc"
   # shellcheck disable=SC1090
   source "$CORE" 2>/dev/null || true
-  for entry in "${MANIFEST[@]}"; do
-    local rel="${entry##*:}"
-    if [[ "$rel" == "$id" ]]; then
-      echo "${entry%%:*}"
-      return 0
-    fi
-  done
-  # secrets too
-  for entry in "${SECRETS_MANIFEST[@]}"; do
-    local rel="${entry##*:}"
-    if [[ "$rel" == "$id" ]]; then echo "${entry%%:*}"; return 0; fi
-  done
-  return 1
+  resolve_manifest_src "$1"
+}
+
+cmd_path() {
+  local id="${1:-}"
+  [[ -n "$id" ]] || fail "usage: path <id>"
+  resolve_src "$id" || fail "unknown id: $id"
 }
 
 cmd_edit() {
@@ -205,60 +199,56 @@ cmd_edit() {
     mkdir -p "$(dirname "$src")"
     touch "$src"
   fi
-  # use Omarchy's default editor (uwsm/default or xdg-terminal)
-  if command -v omarchy-launch-config-editor >/dev/null 2>&1; then
-    omarchy-launch-config-editor "$src" 2>/dev/null || xdg-open "$src" 2>/dev/null || "${EDITOR:-nvim}" "$src"
-  elif command -v omarchy >/dev/null 2>&1 && omarchy launch --help 2>&1 | grep -q "editor"; then
-    omarchy launch editor "$src" 2>/dev/null || xdg-open "$src" 2>/dev/null || "${EDITOR:-nvim}" "$src"
+  # omarchy-launch-editor and nothing else. Not
+  # omarchy-launch-floating-terminal-with-presentation (that wraps the command
+  # in the Omarchy logo plus a "press a key to close" prompt — two extra
+  # interactions to read one file) and not omarchy-launch-config-editor (which
+  # adds a desktop notification per click). Editing a config should be: click,
+  # editor. It detaches via setsid, so this returns immediately.
+  if command -v omarchy-launch-editor >/dev/null 2>&1; then
+    omarchy-launch-editor "$src"
   else
     xdg-open "$src" 2>/dev/null || "${EDITOR:-nvim}" "$src"
   fi
 }
 
 cmd_open_diff() {
-  local id="${1:-}"
-  [[ -n "$id" ]] || fail "usage: diff <id>"
-  local src
-  src=$(resolve_src "$id") || fail "unknown id: $id"
-  local omarchy_path="${OMARCHY_PATH:-/usr/share/omarchy}"
-  local rel="$id"
-  # look for a default to diff against
-  local def=""
-  for base in "$omarchy_path/config" "/usr/share/omarchy/config" "$omarchy_path/default" "/usr/share/omarchy/default"; do
-    if [[ -f "$base/$rel" ]]; then def="$base/$rel"; break; fi
-  done
-  # home/bashrc special case
-  if [[ "$rel" == "home/bashrc" && -f "$omarchy_path/default/bash/bashrc" ]]; then def="$omarchy_path/default/bash/bashrc"; fi
-  if [[ -n "$def" && -f "$def" ]]; then
-    if command -v omarchy-launch-floating-terminal-with-presentation >/dev/null 2>&1; then
-      omarchy-launch-floating-terminal-with-presentation "diff -u --color=always '$def' '$src' | less -R; echo '---'; read -p 'Press Enter to close'"
-    else
-      diff -u "$def" "$src" | head -n 100
-    fi
-  else
-    echo "no default for $rel — it's personal configuration" >&2
-    ls -l "$src" 2>&1 | head
+  local id="" against="auto" in_terminal=0
+  while (( $# )); do case "$1" in
+    --against) against="${2:-auto}"; shift 2;;
+    --terminal) in_terminal=1; shift;;
+    --plain) in_terminal=0; shift;;
+    -*) fail "unknown option: $1";;
+    *) id="$1"; shift;;
+  esac; done
+  [[ -n "$id" ]] || fail "usage: diff <id> [--against repo|default] [--terminal]"
+  ensure_core
+  if (( in_terminal )) && command -v omarchy-launch-floating-terminal-with-presentation >/dev/null 2>&1; then
+    omarchy-launch-floating-terminal-with-presentation "omarchy-replicant diff '${id//\'/}' --against $against | less -R"
+    return 0
   fi
+  # plain text on stdout: the panel renders this inline
+  bash "$CORE" diff "$id" "$against"
 }
 
 cmd_reset() {
   local id="${1:-}"
   [[ -n "$id" ]] || fail "usage: reset <id>  (restores the default via omarchy refresh)"
+  ensure_core
+  # shellcheck disable=SC1090
+  source "$CORE" 2>/dev/null || true
   local src
-  src=$(resolve_src "$id") || fail "unknown id: $id"
-  local rel="$id"
-  # for hypr/omarchy/alacritty etc, use omarchy refresh
-  if [[ "$rel" == hypr/* || "$rel" == alacritty* || "$rel" == foot* || "$rel" == omarchy/* ]]; then
-    # omarchy refresh expects a path relative to ~/.config
-    if command -v omarchy >/dev/null 2>&1; then
-      omarchy refresh config "$rel" 2>&1 || omarchy refresh 2>&1 | head
-      ok "reset $rel → .bak.<epoch> created if it existed"
-    else
-      fail "omarchy not found"
-    fi
-  else
-    warn "reset only works for configs with a known Omarchy default; $rel has no direct default"
-  fi
+  src=$(resolve_manifest_src "$id") || fail "unknown id: $id"
+  # Only a file Omarchy actually ships a default for can be reset, and the
+  # refresh path is derived from the real file rather than from the repo
+  # layout — the two only coincide by accident (repo "home/bashrc" is
+  # ~/.bashrc, not ~/.config/home/bashrc).
+  default_for_src "$src" >/dev/null || fail "$id has no Omarchy default — it is entirely yours, nothing to reset to"
+  local rel
+  rel=$(config_rel_for_src "$src") || fail "$id lives outside ~/.config — reset only handles Omarchy's own config files"
+  command -v omarchy >/dev/null 2>&1 || fail "omarchy not found"
+  omarchy refresh config "$rel" 2>&1 || fail "omarchy refresh config $rel failed"
+  ok "reset $rel → previous version kept as .bak.<epoch>"
 }
 
 cmd_pull() {
@@ -293,8 +283,12 @@ cmd_restore() {
   fi
   # shellcheck source=/dev/null
   source "$PLUGIN_DIR/bin/replicant-core.sh" 2>/dev/null || true
-  # groups, same as restore-desktop.sh
-  local GROUPS=(
+  # groups, same as restore-desktop.sh.
+  # NOT named GROUPS: that is a bash special variable (the caller's group ids)
+  # and `local GROUPS=(...)` aborts the function with "variable may not be
+  # assigned value" — which meant restore did nothing at all, silently, on
+  # bash 5.3.
+  local RESTORE_GROUPS=(
     "ssh:SSH (config + keys) — ~/.ssh"
     "git:Git config and PAT keyring"
     "env:Secret env vars — ~/.config/environment.d"
@@ -305,7 +299,23 @@ cmd_restore() {
     "uwsm:uwsm env.d + xdg-terminals"
     "terminal:alacritty/foot"
     "branding:Omarchy branding screensaver"
+    "appearance:Interface size, density and default editor"
+    "theme:The active Omarchy theme"
   )
+  restore_theme() {
+    local dry="$1" want current
+    want=$(head -n1 "$REPO_DIR/config/omarchy/theme.name" 2>/dev/null | tr -d '\r' || true)
+    if [[ -z "$want" ]]; then skip "no theme recorded in the repo" >&2; return 0; fi
+    current=$(omarchy-theme-current 2>/dev/null || echo "")
+    if [[ "$want" == "$current" ]]; then ok "$want (already applied)" >&2; return 0; fi
+    if (( dry )); then skip "dry-run: would apply theme '$want' (currently '${current:-unknown}')" >&2; return 0; fi
+    if command -v omarchy-theme-set >/dev/null 2>&1; then
+      omarchy-theme-set "$want" >/dev/null 2>&1 && ok "theme -> $want" >&2 || warn "could not apply theme '$want' — is it installed?" >&2
+    else
+      warn "omarchy-theme-set not found" >&2
+    fi
+  }
+
   # mapping: replicant repo layout -> destination
   files_for() {
     case $1 in
@@ -319,11 +329,21 @@ cmd_restore() {
       uwsm) for f in "$REPO_DIR"/config/uwsm/env.d/*; do [[ -f $f ]] || continue; echo "$f|$HOME/.config/uwsm/env.d/$(basename "$f")|644"; done; echo "config/xdg-terminals.list|$HOME/.config/xdg-terminals.list|644" ;;
       terminal) echo "config/alacritty/alacritty.toml|$HOME/.config/alacritty/alacritty.toml|644"; echo "config/foot/foot.ini|$HOME/.config/foot/foot.ini|644" ;;
       branding) echo "config/branding/screensaver.txt|$HOME/.config/omarchy/branding/screensaver.txt|644" ;;
+      appearance) echo "config/omarchy/shell.toml|$HOME/.config/omarchy/shell.toml|644"; echo "config/omarchy/defaults/editor|$HOME/.local/state/omarchy/defaults/editor|644" ;;
+      theme) : ;;  # handled separately below — a theme is applied, not copied
     esac
   }
   export DRY
-  for group in "${GROUPS[@]}"; do
+  for group in "${RESTORE_GROUPS[@]}"; do
     name=${group%%:*}; echo; echo "== $name · ${group#*:}" >&2
+    if [[ "$name" == "theme" ]]; then
+      # A theme is not a file you copy into place: omarchy-theme-set rewrites
+      # every app's colours (terminals, editor, gtk, plymouth). Restoring
+      # ~/.local/state/.../theme.name on its own would record a theme that was
+      # never applied, so the saved *name* is replayed through the real command.
+      restore_theme "$DRY"
+      continue
+    fi
     pending=()
     while IFS='|' read -r src dst mode; do [[ -f $src ]] || continue; if [[ -f $dst ]] && cmp -s "$src" "$dst" 2>/dev/null; then ok "${dst/#$HOME/\~} (already matches)" >&2; else pending+=("$src|$dst|$mode"); fi; done < <(files_for "$name")
     if (( ${#pending[@]} == 0 )); then skip "nothing to change" >&2; continue; fi
@@ -349,14 +369,17 @@ cmd_reset_all() {
   ensure_core
   # shellcheck disable=SC1090
   source "$CORE" 2>/dev/null || true
-  local -a candidates=()
-  local entry src rel
+  local -a candidates=() rels=()
+  local entry src rel crel
   for entry in "${MANIFEST[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"
     [[ -f "$src" ]] || continue
+    # exactly the scope of cmd_reset: a default exists to go back to, and the
+    # file lives where `omarchy refresh config` can reach it
+    default_for_src "$src" >/dev/null || continue
     is_default_file "$src" && continue
-    # same scope as cmd_reset: only what "omarchy refresh config <rel>" knows how to restore
-    case "$rel" in hypr/*|alacritty*|foot*|omarchy/*) candidates+=("$rel");; esac
+    crel=$(config_rel_for_src "$src") || continue
+    candidates+=("$rel"); rels+=("$crel")
   done
   if (( ${#candidates[@]} == 0 )); then ok "reset-all: nothing to reset (everything is already default, or has no known default)"; return 0; fi
   echo "── reset-all: ${#candidates[@]} non-default file(s) with a known Omarchy default ──" >&2
@@ -367,9 +390,9 @@ cmd_reset_all() {
     read -rp "Restore ${#candidates[@]} file(s) to Omarchy defaults? .bak.<epoch> backups will be made [y/N] " resp </dev/tty 2>&1 || resp=""
     [[ $resp == [yY] ]] || { warn "reset-all cancelled"; return 0; }
   fi
-  local failures=0
-  for rel in "${candidates[@]}"; do
-    omarchy refresh config "$rel" 2>&1 && ok "reset $rel" || { warn "failed: $rel"; failures=$((failures+1)); }
+  local failures=0 i
+  for i in "${!rels[@]}"; do
+    omarchy refresh config "${rels[$i]}" 2>&1 && ok "reset ${candidates[$i]}" || { warn "failed: ${candidates[$i]}"; failures=$((failures+1)); }
   done
   if (( failures > 0 )); then warn "reset-all: $failures failure(s) — see above"; else ok "reset-all complete — check .bak.<epoch>"; fi
 }
@@ -397,6 +420,152 @@ cmd_set() {
   cmd_savegame -m "config: $id = $value"
 }
 
+# save-file — commit and push exactly one tracked file. The panel's per-file
+# Save: after editing one config you rarely want the "everything at once"
+# savegame, and you always want the commit message to say which file it was.
+cmd_save_file() {
+  local id="${1:-}" msg=""
+  shift || true
+  while (( $# )); do case "$1" in -m|--message) msg="${2:-}"; shift 2;; *) shift;; esac; done
+  [[ -n "$id" ]] || fail "usage: save-file <id> [-m \"why\"]"
+  ensure_core
+  # shellcheck disable=SC1090
+  source "$CORE" 2>/dev/null || true
+  local src; src=$(resolve_manifest_src "$id") || fail "unknown id: $id"
+  [[ -f "$src" ]] || fail "$src does not exist on this machine"
+  local dst="$CONFIG_DIR/$id"
+  case "$id" in ssh/*|env/*) dst="$SECRETS_DIR/$id" ;; esac
+  mkdir -p "$(dirname "$dst")"
+  if [[ "$dst" == "$SECRETS_DIR"/* ]]; then install -m 600 "$src" "$dst"; else cp -f "$src" "$dst"; fi
+  local repo_rel="${dst#$REPO_DIR/}"
+  if git_repo diff --quiet -- "$repo_rel" 2>/dev/null && ! git_repo status --porcelain -- "$repo_rel" 2>/dev/null | grep -q .; then
+    ok "$id is already saved — nothing to commit"; return 0
+  fi
+  git_repo add -- "$repo_rel"
+  git_repo commit -q -m "${msg:-config: update $id}" || fail "commit failed"
+  if git_repo rev-parse --abbrev-ref --symbolic-full-name @{u} >/dev/null 2>&1; then
+    git_repo push -q origin HEAD 2>&1 && ok "saved and pushed: $id" || warn "committed, but the push failed — try Save to GitHub"
+  else
+    ok "committed: $id (no remote yet — run 'omarchy-replicant create --push')"
+  fi
+}
+
+cmd_log() {
+  local n=8 json=0
+  while (( $# )); do case "$1" in
+    -n) n="${2:-8}"; shift 2;;
+    --json) json=1; shift;;
+    *) shift;;
+  esac; done
+  ensure_core
+  if (( json )); then bash "$CORE" log "$n"; else
+    [[ -d "$REPO_DIR/.git" ]] || fail "no repo yet"
+    git_repo log -n "$n" --date=format:'%d %b %H:%M' --pretty=format:'%C(dim)%ad%C(reset)  %s'
+    echo
+  fi
+}
+
+cmd_settings() {
+  ensure_core
+  # shellcheck disable=SC1090
+  source "$CORE" 2>/dev/null || true
+  if [[ "${1:-}" == "--json" ]]; then build_settings_json; return 0; fi
+  local entry id label value unit group last="" fb
+  for entry in "${SETTINGS[@]}"; do
+    id=$(setting_field "$entry" 1);    group=$(setting_field "$entry" 2)
+    label=$(setting_field "$entry" 6); unit=$(setting_field "$entry" 7)
+    value=$(get_setting_value "$id" 2>/dev/null) || value=""
+    # An absent key is not the same as an unreadable one: most shell.toml keys
+    # simply aren't written down until you change them, and the value in force
+    # is the shell's own default (field 13). Show that, marked, rather than a dash.
+    if [[ -z "$value" ]]; then
+      local fb; fb=$(setting_field "$entry" 13)
+      if [[ -n "$fb" ]]; then value="$fb$unit (default)"; else value="— not on this machine"; fi
+    else
+      value="$value$unit"
+    fi
+    [[ "$group" != "$last" ]] && { printf '\n\033[1m%s\033[0m\n' "$group"; last="$group"; }
+    printf '  %-26s %-30s %s\n' "$id" "$label" "$value"
+  done
+  echo
+}
+
+# doctor — the questions a user actually asks when something looks wrong,
+# answered in one screen. Read-only: it never changes anything.
+cmd_doctor() {
+  ensure_core
+  # shellcheck disable=SC1090
+  source "$CORE" 2>/dev/null || true
+  local problems=0
+  chk_ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
+  chk_warn() { printf '  \033[33m!\033[0m %s\n' "$1"; problems=$((problems+1)); }
+  chk_bad()  { printf '  \033[31m✗\033[0m %s\n' "$1"; problems=$((problems+1)); }
+
+  echo "Tools"
+  for c in git jq gh; do
+    command -v "$c" >/dev/null 2>&1 && chk_ok "$c installed" || chk_bad "$c missing — omarchy pkg add ${c/gh/github-cli}"
+  done
+
+  echo "GitHub"
+  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    chk_ok "logged in as $(gh api user --jq .login 2>/dev/null || echo '?')"
+  else
+    chk_warn "not logged in — run: omarchy-replicant login"
+  fi
+
+  echo "Repo"
+  if [[ -d "$REPO_DIR/.git" ]]; then
+    chk_ok "local repo at $REPO_DIR"
+    local url; url=$(git_repo remote get-url origin 2>/dev/null || echo "")
+    if [[ -z "$url" ]]; then
+      chk_warn "no remote — nothing is backed up off this machine"
+    else
+      chk_ok "remote $url"
+      local slug vis
+      slug=$(printf '%s' "$url" | sed -E 's#(https://github.com/|git@github.com:)##; s/\.git$//')
+      vis=$(gh repo view "$slug" --json visibility --jq .visibility 2>/dev/null || echo "")
+      case "$vis" in
+        PRIVATE) chk_ok "remote is PRIVATE" ;;
+        PUBLIC)  chk_bad "remote is PUBLIC and this repo holds secrets — gh repo edit $slug --visibility private" ;;
+        *)       chk_warn "could not read the remote's visibility (offline, or no access)" ;;
+      esac
+    fi
+    [[ "$(git_repo config core.hooksPath 2>/dev/null)" == ".githooks" ]] \
+      && chk_ok "pre-commit secret scan enabled" \
+      || chk_warn "secret-scan hook not enabled — run: omarchy-replicant savegame"
+    local perm; perm=$(stat -c '%a' "$SECRETS_DIR" 2>/dev/null || echo "")
+    [[ -z "$perm" ]] && chk_warn "no secrets/ directory yet" || {
+      [[ "$perm" == "700" ]] && chk_ok "secrets/ is 700" || chk_bad "secrets/ is $perm, expected 700 — chmod 700 $SECRETS_DIR"
+    }
+  else
+    chk_warn "no local repo yet — run: omarchy-replicant create --push"
+  fi
+
+  echo "Tracked files"
+  local entry src missing=0 total=0
+  for entry in "${MANIFEST[@]}"; do
+    src="${entry%%:*}"; total=$((total+1))
+    [[ -f "$src" ]] || missing=$((missing+1))
+  done
+  chk_ok "$((total - missing)) of $total manifest files present on this machine"
+  (( missing > 0 )) && printf '    (%d listed in MANIFEST do not exist here — normal on a fresh machine)\n' "$missing"
+
+  echo "Settings"
+  local unavailable=0 implicit=0 sid fb
+  for entry in "${SETTINGS[@]}"; do
+    sid=$(setting_field "$entry" 1); fb=$(setting_field "$entry" 13)
+    get_setting_value "$sid" >/dev/null 2>&1 && continue
+    if [[ -n "$fb" ]]; then implicit=$((implicit+1)); else unavailable=$((unavailable+1)); fi
+  done
+  chk_ok "$(( ${#SETTINGS[@]} - unavailable )) of ${#SETTINGS[@]} settings editable"
+  (( implicit > 0 )) && printf '    (%d still at the shell'"'"'s built-in default; changing one writes the key)\n' "$implicit"
+  (( unavailable > 0 )) && printf '    (%d absent from this machine'"'"'s configs — greyed out in the panel)\n' "$unavailable"
+  true
+
+  echo
+  if (( problems == 0 )); then ok "No problems found."; else warn "$problems thing(s) to look at above."; fi
+}
+
 usage() {
   cat <<USAGE
 omarchy-replicant — private savegame (config+secrets+state) for Omarchy
@@ -410,8 +579,14 @@ Usage:
   omarchy-replicant status [--json]
   omarchy-replicant get <setting-id>      read one curated setting (e.g. idle.screensaver)
   omarchy-replicant set <setting-id> <v>  write one curated setting + auto savegame commit
-  omarchy-replicant diff [id]             diff vs default (or status if no id)
+  omarchy-replicant diff [id] [--against repo|default] [--terminal]
+                                          plain-text diff (the panel renders it inline)
+  omarchy-replicant settings [--json]     list every editable setting and its value
   omarchy-replicant edit <id>             open id in your editor (e.g. hypr/input.lua)
+  omarchy-replicant path <id>             print the real path an id refers to
+  omarchy-replicant save-file <id> [-m]   commit + push just that one file
+  omarchy-replicant log [-n N] [--json]   recent saves
+  omarchy-replicant doctor                check auth, remote privacy, hooks, permissions
   omarchy-replicant reset <id>            restore the default via omarchy refresh (1 file)
   omarchy-replicant reset-all [--dry-run|--apply] [--yes]   Restore EVERYTHING with a known Omarchy default back to factory
   omarchy-replicant push [msg]             Direct push (not the savegame flow)
@@ -437,7 +612,7 @@ main() {
   # Anything that writes to the repo takes the lock first; read-only commands
   # (status/get/diff/edit) stay lock-free so the panel's polling never blocks.
   case "$cmd" in
-    init|create|backup|savegame|set|reset|reset-all|push|pull|clone|restore) acquire_repo_lock ;;
+    init|create|backup|savegame|set|save-file|reset|reset-all|push|pull|clone|restore) acquire_repo_lock ;;
   esac
   case "$cmd" in
     -h|--help|help) usage; exit 0;;
@@ -453,6 +628,11 @@ main() {
       if [[ $# -gt 0 ]]; then cmd_open_diff "$@"; else cmd_diff "$@"; fi
       ;;
     edit) shift; cmd_edit "$@";;
+    path) shift; cmd_path "$@";;
+    save-file) shift; cmd_save_file "$@";;
+    log) shift; cmd_log "$@";;
+    settings) shift; cmd_settings "$@";;
+    doctor) shift; cmd_doctor "$@";;
     reset) shift; cmd_reset "$@";;
     reset-all) shift; cmd_reset_all "$@";;
     push) shift;

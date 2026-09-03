@@ -18,9 +18,14 @@ Item {
 
   property var replicantState: ({ initialized: false })
   property bool asked: false
-  property string cli: Quickshell.env("HOME") + "/.local/bin/omarchy-replicant"
-  // fallback to the plugin's own bin when ~/.local/bin/omarchy-replicant is missing
-  property string cliFallback: Quickshell.env("HOME") + "/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/bin/omarchy-replicant"
+  // The CLI that ships inside this plugin. Resolved relative to this file, so
+  // it is correct no matter where the plugin was installed — including a
+  // symlinked dev checkout. It is NOT looked up on PATH: `omarchy plugin add`
+  // runs no install hook, so nothing puts omarchy-replicant on PATH, and a
+  // fresh install pointing at ~/.local/bin would leave every button in this
+  // panel silently doing nothing. `omarchy-replicant link` is the opt-in that
+  // adds it to PATH for terminal use; the UI never depends on it.
+  readonly property string cli: String(Qt.resolvedUrl("bin/omarchy-replicant")).replace(/^file:\/\//, "")
 
   function refresh() {
     if (probe.running) return
@@ -38,29 +43,13 @@ Item {
         try {
           root.replicantState = JSON.parse(text || "{}")
         } catch (e) {
-          // One retry through the fallback path before giving up. This used to
-          // read `root.command`, which does not exist on an Item — so the retry
-          // threw instead of retrying and the service reported "not
-          // initialized" for the rest of the session.
-          if (probe.command[0] === root.cli) {
-            probe.command = [root.cliFallback].concat(probe.command.slice(1))
-            probe.running = true
-            return
-          }
           root.replicantState = ({ initialized: false, error: String(e) })
         }
         root.asked = true
       }
     }
     onExited: function(code) {
-      if (code === 0) return
-      if (probe.command[0] === root.cli) {
-        probe.command = [root.cliFallback].concat(probe.command.slice(1))
-        probe.running = true
-        return
-      }
-      root.replicantState = ({ initialized: false })
-      root.asked = true
+      if (code !== 0) root.asked = true
     }
   }
 

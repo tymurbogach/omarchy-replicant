@@ -51,7 +51,17 @@ machine- or user-specific except through `MANIFEST`/`SECRETS_MANIFEST` in
    `omarchy-launch-floating-terminal-with-presentation` wraps whatever it runs in the Omarchy
    logo *and* a "press a key to close" prompt, so using it for a read-only action costs two
    interactions to see one file. The user asked for this to stop; don't reintroduce it.
-7. **Names that are already taken.** `state` is a built-in property of every QML Item (see below),
+7. **The UI never looks for the CLI on `PATH`.** `omarchy plugin add` runs no install hook, so
+   nothing puts `omarchy-replicant` in `~/.local/bin` — a fresh install that pointed there left
+   every button in the panel silently doing nothing while the bar icon looked fine. All three QML
+   entry points resolve it with `Qt.resolvedUrl("bin/omarchy-replicant")`, which is correct even
+   for a symlinked dev checkout. `link`/`unlink` are the opt-in for terminal use.
+   `tests/run-all.sh` fails if a `.qml` mentions `local/bin` or drops the `Qt.resolvedUrl` form.
+8. **The plugin writes nothing outside its own folder and `~/.local/share/omarchy-replicant/`.**
+   Anything a future feature leaves elsewhere must be listed in `cmd_purge`, so removing the
+   plugin can never leave a user guessing what is still on disk. `purge` is dry-run by default
+   and never touches the GitHub repo.
+9. **Names that are already taken.** `state` is a built-in property of every QML Item (see below),
    and `GROUPS` is a bash special variable — `local GROUPS=(...)` aborts the enclosing function
    with "variable may not be assigned value", which silently turned `restore` into a no-op for
    an entire release. Before naming a shell array or a QML property, check it is yours to use.
@@ -65,6 +75,14 @@ machine- or user-specific except through `MANIFEST`/`SECRETS_MANIFEST` in
   convention = `~/.config/omarchy/<last-segment-of-id>.json` next to the plugin's
   `manifest.json`. If a new plugin doesn't follow that convention, it won't show up on its
   own — that's not a bug, it's the deliberate limit of a generic, registry-free detector.
+- **The repo mirrors the manifest, both ways.** `core_backup` copies tracked files in *and*
+  prunes `config/` files that are no longer tracked, so dropping a MANIFEST line doesn't leave a
+  copy behind forever. A tracked file whose source is missing on this machine keeps its last
+  saved copy — "not on this machine right now" is not "no longer tracked".
+- **The plugin does not back up its own source.** It used to, which cluttered the file list with
+  four rows the user could not act on, and `restore` never had a group for them. What is recorded
+  instead is `state/omarchy-plugins.txt`: every installed plugin's id, version and git origin, so
+  a second machine can be rebuilt with `omarchy plugin add`.
 - **Adding a setting is one line** in the `SETTINGS` registry in `replicant-core.sh`: 13
   pipe-separated fields, documented above the array. `Panel.qml` renders the control from the
   `type`, so no QML change is needed for a new setting of an existing type. Give it a `fallback`

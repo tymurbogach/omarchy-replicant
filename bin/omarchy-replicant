@@ -13,6 +13,7 @@ if [[ ! -f "$CORE" ]]; then
     [[ -f "$p" ]] && CORE="$p" && PLUGIN_DIR="$(cd -- "$(dirname -- "$p")/.." && pwd)" && break
   done
 fi
+PLUGIN_ID="io.github.tymurbogach.omarchy-replicant"
 REPLICANT_HOME="${OMARCHY_REPLICANT_HOME:-$HOME/.local/share/omarchy-replicant}"
 REPO_DIR="$REPLICANT_HOME/repo"
 # Default name for `create`: <this machine's hostname>-replicant, so each user/machine
@@ -541,6 +542,13 @@ cmd_doctor() {
     chk_warn "no local repo yet — run: omarchy-replicant create --push"
   fi
 
+  echo "Command line"
+  if [[ -L "$LINK_PATH" && "$(readlink -f "$LINK_PATH" 2>/dev/null)" == "$(readlink -f "$SELF_BIN")" ]]; then
+    chk_ok "omarchy-replicant is on your PATH ($LINK_PATH)"
+  else
+    printf '  \033[33m·\033[0m not on your PATH — the panel does not need it; run '"'"'omarchy-replicant link'"'"' to use it in a terminal\n'
+  fi
+
   echo "Tracked files"
   local entry src missing=0 total=0
   for entry in "${MANIFEST[@]}"; do
@@ -566,6 +574,107 @@ cmd_doctor() {
   if (( problems == 0 )); then ok "No problems found."; else warn "$problems thing(s) to look at above."; fi
 }
 
+# ── PATH convenience, opt-in and reversible ─────────────────────────────────
+# The panel never needs this: it calls the CLI by absolute path, resolved from
+# its own location. `omarchy plugin add` runs no install hook, so a plugin that
+# wanted to be on PATH would have to write outside its own directory behind the
+# user's back — and leave a dangling symlink when the plugin is removed. So
+# it's a command instead: explicit, and `unlink` puts it back exactly.
+LINK_PATH="$HOME/.local/bin/omarchy-replicant"
+SELF_BIN="$PLUGIN_DIR/bin/omarchy-replicant"
+
+cmd_link() {
+  mkdir -p "$(dirname "$LINK_PATH")"
+  if [[ -L "$LINK_PATH" ]]; then
+    local current; current=$(readlink -f "$LINK_PATH" 2>/dev/null || echo "")
+    if [[ "$current" == "$(readlink -f "$SELF_BIN")" ]]; then ok "already linked: $LINK_PATH"; return 0; fi
+    warn "$LINK_PATH points at $current — replacing it"
+  elif [[ -e "$LINK_PATH" ]]; then
+    fail "$LINK_PATH already exists and is not a symlink — move it aside first"
+  fi
+  ln -sfn "$SELF_BIN" "$LINK_PATH"
+  ok "linked $LINK_PATH -> $SELF_BIN"
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) : ;;
+    *) warn "~/.local/bin is not on your PATH — add it to use 'omarchy-replicant' by name" ;;
+  esac
+}
+
+cmd_unlink() {
+  if [[ -L "$LINK_PATH" ]]; then
+    rm -f "$LINK_PATH"; ok "removed $LINK_PATH"
+  elif [[ -e "$LINK_PATH" ]]; then
+    warn "$LINK_PATH is not a symlink — leaving it alone"
+  else
+    ok "nothing to unlink"
+  fi
+}
+
+# ── purge — leave the machine as if the plugin had never run ────────────────
+# Everything this plugin creates outside its own directory, in one place, so a
+# user removing it is never left guessing what is still on disk. Dry-run by
+# default like every other destructive command here.
+cmd_purge() {
+  local DRY=1 YES=0 KEEP_REPO=1
+  while (( $# )); do case "$1" in
+    --apply) DRY=0; shift;;
+    --dry-run) DRY=1; shift;;
+    --yes|-y) YES=1; shift;;
+    --repo) KEEP_REPO=0; shift;;
+    -h|--help)
+      echo "purge: remove everything omarchy-replicant put on this machine outside the plugin folder."
+      echo "  --apply    actually delete (default is a dry run)"
+      echo "  --repo     also delete the local clone of your backup repo"
+      echo "             (your GitHub repo is never touched)"
+      return 0;;
+    *) fail "unknown option: $1";;
+  esac; done
+
+  local -a targets=()
+  [[ -L "$LINK_PATH" ]] && targets+=("$LINK_PATH")
+  [[ -f "$REPLICANT_HOME/.replicant.lock" ]] && targets+=("$REPLICANT_HOME/.replicant.lock")
+  [[ -f "$REPLICANT_HOME/.last-fetch" ]] && targets+=("$REPLICANT_HOME/.last-fetch")
+  if (( ! KEEP_REPO )); then
+    [[ -d "$REPLICANT_HOME" ]] && targets+=("$REPLICANT_HOME")
+  fi
+
+  # .bak.<epoch> copies this plugin left behind next to the configs it edited
+  local -a backups=()
+  local entry src
+  ensure_core
+  # shellcheck disable=SC1090
+  source "$CORE" 2>/dev/null || true
+  for entry in "${MANIFEST[@]}"; do
+    src="${entry%%:*}"
+    while IFS= read -r b; do [[ -n "$b" ]] && backups+=("$b"); done < <(ls -1 "$src".bak.* 2>/dev/null || true)
+  done
+
+  if (( ${#targets[@]} == 0 && ${#backups[@]} == 0 )); then
+    ok "nothing to purge — this machine is already clean"
+    if (( KEEP_REPO )) && [[ -d "$REPLICANT_HOME" ]]; then
+      info "your backup repo is still at $REPLICANT_HOME (use --repo to remove it too)"
+    fi
+    return 0
+  fi
+
+  echo "── would remove ──" >&2
+  local t
+  for t in "${targets[@]}"; do echo "  · ${t/#$HOME/\~}" >&2; done
+  (( ${#backups[@]} > 0 )) && echo "  · ${#backups[@]} .bak.<epoch> file(s) next to your configs" >&2
+  if (( KEEP_REPO )) && [[ -d "$REPLICANT_HOME" ]]; then
+    echo >&2; info "keeping your backup repo at $REPLICANT_HOME — pass --repo to remove that too"
+  fi
+
+  if (( DRY )); then echo >&2; skip "dry-run — nothing was touched. Repeat with --apply" >&2; return 0; fi
+  if (( ! YES )); then
+    read -rp "Remove the above? Your GitHub repo is not touched. [y/N] " resp </dev/tty 2>&1 || resp=""
+    [[ $resp == [yY] ]] || { warn "purge cancelled"; return 0; }
+  fi
+  for t in "${targets[@]}"; do rm -rf -- "$t" && ok "removed ${t/#$HOME/\~}"; done
+  (( ${#backups[@]} > 0 )) && { rm -f -- "${backups[@]}"; ok "removed ${#backups[@]} backup file(s)"; }
+  ok "purged. Remove the plugin itself with: omarchy plugin remove $PLUGIN_ID"
+}
+
 usage() {
   cat <<USAGE
 omarchy-replicant — private savegame (config+secrets+state) for Omarchy
@@ -587,6 +696,8 @@ Usage:
   omarchy-replicant save-file <id> [-m]   commit + push just that one file
   omarchy-replicant log [-n N] [--json]   recent saves
   omarchy-replicant doctor                check auth, remote privacy, hooks, permissions
+  omarchy-replicant link | unlink         add/remove omarchy-replicant on your PATH
+  omarchy-replicant purge [--apply] [--repo]  remove everything this plugin left on the machine
   omarchy-replicant reset <id>            restore the default via omarchy refresh (1 file)
   omarchy-replicant reset-all [--dry-run|--apply] [--yes]   Restore EVERYTHING with a known Omarchy default back to factory
   omarchy-replicant push [msg]             Direct push (not the savegame flow)
@@ -633,6 +744,9 @@ main() {
     log) shift; cmd_log "$@";;
     settings) shift; cmd_settings "$@";;
     doctor) shift; cmd_doctor "$@";;
+    link) shift; cmd_link "$@";;
+    unlink) shift; cmd_unlink "$@";;
+    purge) shift; cmd_purge "$@";;
     reset) shift; cmd_reset "$@";;
     reset-all) shift; cmd_reset_all "$@";;
     push) shift;

@@ -8,8 +8,14 @@ BarWidget {
   id: root
   moduleName: "io.github.tymurbogach.omarchy-replicant"
 
-  readonly property string cli: Quickshell.env("HOME") + "/.local/bin/omarchy-replicant"
-  readonly property string cliFallback: Quickshell.env("HOME") + "/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/bin/omarchy-replicant"
+  // The CLI that ships inside this plugin. Resolved relative to this file, so
+  // it is correct no matter where the plugin was installed — including a
+  // symlinked dev checkout. It is NOT looked up on PATH: `omarchy plugin add`
+  // runs no install hook, so nothing puts omarchy-replicant on PATH, and a
+  // fresh install pointing at ~/.local/bin would leave every button in this
+  // panel silently doing nothing. `omarchy-replicant link` is the opt-in that
+  // adds it to PATH for terminal use; the UI never depends on it.
+  readonly property string cli: String(Qt.resolvedUrl("bin/omarchy-replicant")).replace(/^file:\/\//, "")
 
   property var repoState: ({ initialized: false })
   property bool asked: false
@@ -82,34 +88,22 @@ BarWidget {
         try {
           var parsed = JSON.parse(text || "{}")
           root.repoState = parsed
-          // inject into panel if loaded
           if (panelLoader.item) { panelLoader.item.repoState = parsed; panelLoader.item.asked = true }
-          root.asked = true
-        } catch(e) {
-          // try fallback cli once
-          if (probe.command[0] === root.cli) {
-            probe.command = [root.cliFallback].concat(probe.command.slice(1))
-            probe.running = true
-            return
-          }
+        } catch (e) {
           root.repoState = ({ initialized: false })
-          if (panelLoader.item) panelLoader.item.asked = true
-          root.asked = true
-        }
-        probe.command = [root.cli, "status", "--json"]
-      }
-    }
-    onExited: function(code) {
-      if (code !== 0) {
-        if (probe.command[0] === root.cli) {
-          probe.command = [root.cliFallback].concat(probe.command.slice(1))
-          probe.running = true
-          return
         }
         root.asked = true
         if (panelLoader.item) panelLoader.item.asked = true
       }
-      probe.command = [root.cli, "status", "--json"]
+    }
+    onExited: function(code) {
+      // A non-zero exit still answers the question "what is the state?" — the
+      // status JSON on stdout is authoritative, and stdout has already been
+      // collected by the time this fires (waitForEnd).
+      if (code !== 0) {
+        root.asked = true
+        if (panelLoader.item) panelLoader.item.asked = true
+      }
     }
   }
 
@@ -140,8 +134,6 @@ BarWidget {
       item.hostWidget = root
       item.repoState = root.repoState
       item.asked = root.asked
-      item.cli = root.cli
-      item.cliFallback = root.cliFallback
     }
   }
 

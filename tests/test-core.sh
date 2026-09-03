@@ -141,6 +141,25 @@ before=$(hash_tree "$HOME/.config")
 core_backup >/dev/null 2>&1
 check "tracked configs are untouched by a backup" "$before" "$(hash_tree "$HOME/.config")"
 
+section "backup prunes what is no longer tracked"
+# Dropping a MANIFEST line (or uninstalling a plugin) must not leave its last
+# copy in the repo forever, describing a machine that no longer exists.
+mkdir -p "$CONFIG_DIR/stale/deeper"
+printf 'left over\n' > "$CONFIG_DIR/stale/deeper/old.conf"
+printf 'left over\n' > "$CONFIG_DIR/omarchy-plugin-copy.qml"
+core_backup >/dev/null 2>&1
+check "an untracked file is removed"      "0" "$(ls "$CONFIG_DIR/omarchy-plugin-copy.qml" 2>/dev/null | wc -l)"
+check "…including nested ones"            "0" "$(ls "$CONFIG_DIR/stale/deeper/old.conf" 2>/dev/null | wc -l)"
+check "…and the empty dirs it leaves"     "0" "$(ls -d "$CONFIG_DIR/stale" 2>/dev/null | wc -l)"
+check "a tracked file is kept"            "1" "$(ls "$CONFIG_DIR/hypr/input.lua" 2>/dev/null | wc -l)"
+# A file whose source is missing on this machine is still tracked: keep its
+# last saved copy rather than deleting the only record of it.
+printf 'saved earlier\n' > "$CONFIG_DIR/home/XCompose"
+rm -f "$HOME/.XCompose"
+core_backup >/dev/null 2>&1
+check "a tracked file with no source is kept" "1" "$(ls "$CONFIG_DIR/home/XCompose" 2>/dev/null | wc -l)"
+check "…with its saved content intact" "saved earlier" "$(cat "$CONFIG_DIR/home/XCompose" 2>/dev/null)"
+
 section "status --json is well-formed"
 st=$(core_status --json 2>/dev/null)
 check "valid JSON"        "0"    "$(printf '%s' "$st" | jq empty >/dev/null 2>&1; echo $?)"

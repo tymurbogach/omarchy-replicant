@@ -68,6 +68,17 @@ fi
 if grep -n 'console\.log' "$ROOT"/*.qml; then
   printf '  \033[31m✗\033[0m console.log left in the panel\n'; qml_problem=1
 fi
+# 4. The UI must never look for the CLI on PATH. `omarchy plugin add` runs no
+#    install hook, so nothing puts omarchy-replicant in ~/.local/bin, and a
+#    fresh install pointing there leaves every button silently doing nothing.
+if grep -n 'local/bin' "$ROOT"/*.qml | grep -v ':[0-9]*: *//'; then
+  printf '  \033[31m✗\033[0m the UI resolves the CLI on PATH — use Qt.resolvedUrl("bin/...")\n'; qml_problem=1
+fi
+# 5. Each QML entry point resolves the CLI from its own location.
+for f in "$ROOT"/Panel.qml "$ROOT"/BarWidget.qml "$ROOT"/Service.qml; do
+  grep -q 'Qt.resolvedUrl("bin/omarchy-replicant")' "$f" || {
+    printf '  \033[31m✗\033[0m %s does not resolve the CLI relative to itself\n' "$(basename "$f")"; qml_problem=1; }
+done
 if (( qml_problem == 0 )); then printf '  \033[32m✓\033[0m none present\n'; else failed=$((failed+1)); fi
 
 banner "manifest"

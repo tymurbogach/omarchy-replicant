@@ -60,11 +60,6 @@ MANIFEST=(
   "/etc/systemd/system/fprintd-resume.service:etc/fprintd-resume.service"
   "/etc/systemd/logind.conf.d/99-lid.conf:etc/99-lid.conf"
   "/etc/systemd/sleep.conf.d/99-hibernate-delay.conf:etc/99-hibernate-delay.conf"
-  # v2 extra: the replicant plugin itself (so the plugin survives a reinstall)
-  "$HOME/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/manifest.json:omarchy-plugin/manifest.json"
-  "$HOME/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/BarWidget.qml:omarchy-plugin/BarWidget.qml"
-  "$HOME/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/Panel.qml:omarchy-plugin/Panel.qml"
-  "$HOME/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/Service.qml:omarchy-plugin/Service.qml"
 )
 
 SECRETS_MANIFEST=(
@@ -202,6 +197,30 @@ core_backup() {
   done < <(discover_plugin_entries)
   echo "  $pcopied plugin config(s) detected" >&2
 
+  # Prune what is no longer tracked. Without this, dropping a line from MANIFEST
+  # (or uninstalling a plugin) leaves its last copy in config/ forever — the
+  # repo slowly fills with files that describe a machine that no longer exists,
+  # and the panel has no row to act on them with. Nothing is actually lost:
+  # every removal lands in a commit, and git keeps the content.
+  local -a expected=()
+  for entry in "${MANIFEST[@]}"; do expected+=("${entry##*:}"); done
+  while IFS=$'\t' read -r _psrc prel _pname; do
+    [[ -n "$prel" ]] && expected+=("$prel")
+  done < <(discover_plugin_entries)
+  local pruned=0 rel found e
+  while IFS= read -r -d '' f; do
+    rel="${f#"$CONFIG_DIR"/}"
+    found=0
+    for e in "${expected[@]}"; do [[ "$e" == "$rel" ]] && { found=1; break; }; done
+    (( found )) && continue
+    rm -f -- "$f"
+    echo "  · no longer tracked, removed from the repo: $rel" >&2
+    pruned=$((pruned+1))
+  done < <(find "$CONFIG_DIR" -type f -print0 2>/dev/null)
+  # leave no empty directories behind either
+  find "$CONFIG_DIR" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+  (( pruned > 0 )) && echo "  $pruned stale file(s) pruned" >&2
+
   echo "→ Copying secrets (private repo, 600)" >&2
   install -d -m 700 "$SECRETS_DIR" 2>/dev/null || true
   scopied=0
@@ -258,6 +277,23 @@ core_backup() {
     : > "$STATE_DIR/pacman-delta.txt"
     : > "$STATE_DIR/pacman-delta-aur.txt"
   fi
+  # Which Omarchy plugins this machine has, and where they came from — the one
+  # thing you need to make a second machine's shell match this one. Recorded
+  # rather than copied: `omarchy plugin add <url>` rebuilds each of them, and
+  # copying a plugin's source into a backup repo only ages badly.
+  {
+    echo "# id<TAB>version<TAB>origin — reinstall with: omarchy plugin add <origin>"
+    local pmf pid pver porigin pdir
+    for pmf in "$HOME/.config/omarchy/plugins"/*/manifest.json; do
+      [[ -f "$pmf" ]] || continue
+      pdir="$(dirname "$pmf")"
+      pid=$(jq -r '.id // empty' "$pmf" 2>/dev/null) || continue
+      [[ -n "$pid" ]] || continue
+      pver=$(jq -r '.version // "?"' "$pmf" 2>/dev/null)
+      porigin=$(git -C "$pdir" remote get-url origin 2>/dev/null || echo "-")
+      printf '%s\t%s\t%s\n' "$pid" "$pver" "$porigin"
+    done
+  } > "$STATE_DIR/omarchy-plugins.txt"
   mise ls 2>/dev/null > "$STATE_DIR/mise.txt" || true
   npm ls -g --depth=0 2>/dev/null > "$STATE_DIR/npm-global.txt" || true
   systemctl list-unit-files --state=enabled --no-pager --no-legend 2>/dev/null | awk '{print $1}' > "$STATE_DIR/system-services.txt" || true

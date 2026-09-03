@@ -18,8 +18,14 @@ Panel {
   moduleName: "io.github.tymurbogach.omarchy-replicant"
   manageIpc: false
 
-  property string cli: Quickshell.env("HOME") + "/.local/bin/omarchy-replicant"
-  property string cliFallback: Quickshell.env("HOME") + "/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/bin/omarchy-replicant"
+  // The CLI that ships inside this plugin. Resolved relative to this file, so
+  // it is correct no matter where the plugin was installed — including a
+  // symlinked dev checkout. It is NOT looked up on PATH: `omarchy plugin add`
+  // runs no install hook, so nothing puts omarchy-replicant on PATH, and a
+  // fresh install pointing at ~/.local/bin would leave every button in this
+  // panel silently doing nothing. `omarchy-replicant link` is the opt-in that
+  // adds it to PATH for terminal use; the UI never depends on it.
+  readonly property string cli: String(Qt.resolvedUrl("bin/omarchy-replicant")).replace(/^file:\/\//, "")
   property var repoState: ({ initialized: false, configs: [], secrets: [], settings: [] })
   // True once a real status response has come back at least once. Gates the
   // "no repo yet — create one" screen: showing it before we know the state let

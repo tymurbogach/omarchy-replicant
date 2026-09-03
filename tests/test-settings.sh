@@ -257,6 +257,41 @@ check "reverting to the repo writes that"  "900" "$(get_setting_value idle.lock)
 check_false "an unknown target is refused"  core_revert idle.lock sideways
 check_false "an unknown setting is refused" core_revert not.a.setting default
 
+section "the lid, on a machine that has one"
+# The drop-in is root-owned in real life, so point the registry at a writable
+# fixture: what is under test is the reader, the writer and the gate, not sudo.
+export REPLICANT_LOGIND_DROPIN="$TMP/logind.d/99-lid.conf"
+mkdir -p "$TMP/logind.d"
+printf '[Login]\nHandleLidSwitch=ignore\n' > "$REPLICANT_LOGIND_DROPIN"
+# shellcheck source=/dev/null
+source "$CORE"
+is_laptop() { return 0; }
+
+check "a drop-in value is read back"    "ignore" "$(get_setting_value lid.close)"
+set_setting_value lid.close suspend >/dev/null 2>&1
+check "…and written"                    "suspend" "$(get_setting_value lid.close)"
+check "…in systemd's own spelling, not TOML's" "1" \
+  "$(grep -cx 'HandleLidSwitch=suspend' "$REPLICANT_LOGIND_DROPIN" || true)"
+check "…keeping a backup like every other write" "1" \
+  "$(ls "$REPLICANT_LOGIND_DROPIN".bak.* 2>/dev/null | wc -l)"
+# A key the drop-in does not carry yet is logind's own built-in default, which
+# is what the fallback field records — not "missing".
+check "an absent key reports logind's default" "suspend" "$(get_setting_value lid.closeAc)"
+set_setting_value lid.closeAc ignore >/dev/null 2>&1
+check "…and writing it adds the key"    "ignore" "$(get_setting_value lid.closeAc)"
+check "…without disturbing the other"   "suspend" "$(get_setting_value lid.close)"
+check_false "a value logind does not know is refused" set_setting_value lid.close sideways
+check "…and the file is untouched after a refusal" "suspend" "$(get_setting_value lid.close)"
+
+check "the group is offered on a laptop" "1" \
+  "$(build_setting_groups_json | jq -r '[.[] | select(.name=="Lid & sleep")] | length')"
+is_laptop() { return 1; }
+check "…and absent on a desktop"         "0" \
+  "$(build_setting_groups_json | jq -r '[.[] | select(.name=="Lid & sleep")] | length')"
+check "…along with its settings"         "0" \
+  "$(build_settings_json | jq -r '[.[] | select(.group=="Lid & sleep")] | length')"
+is_laptop() { return 0; }
+
 section "the registry itself is well-formed"
 bad_fields=0; dupe=0; seen=""
 for entry in "${SETTINGS[@]}"; do

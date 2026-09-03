@@ -193,6 +193,17 @@ printf '\U000F0450 F0450   \U000F0167 F0167\n' > /tmp/g.txt
 magick -background '#101315' -fill '#cacccc' -font "$F" -pointsize 26 label:@/tmp/g.txt /tmp/g.png
 ```
 
+## Every writer of a repo-shape file must migrate first
+
+`core_scope` once rewrote `.replicant-sync` from whatever `read_scopes` returned. On a repo that
+still had the v0.5 `.replicant-exclude`, that read returned nothing — so changing one file's scope
+silently discarded the user's entire off-list. Reading has a fallback (`scope_for` honours the
+legacy file until the migration runs); **writing needs the real migration**, so every writer calls
+`ensure_scope_file` first. `tests/test-core.sh` fails if it does not.
+
+The general rule: a fallback that makes reads correct does not make writes correct. A read-modify-
+write against a file the fallback invented is a delete.
+
 ## Two machines, one repo
 
 The plugin is built for a desktop *and* a laptop sharing one private repo, which rules out two
@@ -201,11 +212,26 @@ shapes that look fine with a single machine:
 - **`state/` is scoped by hostname** (`state/<machine>/`). A shared inventory meant each machine
   overwrote the other's package list on every save and every pull looked like a change.
   `ensure_repo_layout` migrates a flat `state/*.txt` under the current machine.
-- **Every tracked file has a sync switch**, and the off-list lives in `.replicant-exclude` **in
-  the repo** — "monitors are machine-specific" is a fact about the setup, not about one machine.
-  Off means: not copied from here, not restored onto here, and whatever the repo already holds is
-  left alone (`core_backup` still counts it as expected, so the prune pass does not delete it).
-  `hypr/monitors.lua` is seeded off.
+- **Every tracked file has a scope** — `shared`, `profile` or `off` — in `.replicant-sync` **in the
+  repo**, because "monitors are machine-specific" is a fact about the setup, not about one machine.
+  `profile` is the one that makes two machines practical: the file lives at
+  `profiles/<profile>/config/<rel>`, so each profile keeps its own copy and neither overwrites the
+  other. Switching a file off means nobody gets a backup; scoping it means everybody gets their
+  own. `hypr/monitors.lua` is seeded `profile`, not off.
+- **`repo_path_for()` is the only place that knows where a file's copy lives.** The copy pass, the
+  prune pass, the restore plan and the "revert to repo" button all call it, so a file can never be
+  saved to one path and restored from another. The prune pass sweeps only `config/` and *this*
+  profile's tree — another machine's profile directory looks entirely untracked from here, and
+  pruning it would delete that machine's only backup.
+
+## Root-owned files: ask, or say you could not
+
+`/etc/systemd/logind.conf.d/99-lid.conf` is the one thing worth configuring that is not ours to
+write. `root_apply()` tries pkexec, then passwordless `sudo -n`, and otherwise prints the exact
+command and fails **leaving /etc untouched**. Omarchy ships no polkit agent by default, so the
+third branch is the common one in the panel — which is the point: a settings control that quietly
+does nothing is worse than one that explains. The whole file is staged under `$HOME` first, so the
+privileged step is a single copy of a file the user could have read, never an editor run as root.
 
 ## Values are stored in one unit and shown in another
 

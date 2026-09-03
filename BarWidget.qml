@@ -26,9 +26,12 @@ BarWidget {
 
   // Symbol by state. Material Design Icon code points, not pasted glyphs — see
   // the note in Panel.qml: these all live above U+FFFF, where a re-encoding of
-  // the file silently truncates the character into a different symbol. The
-  // letter "R" was a placeholder; at rest the widget now shows the GitHub mark,
-  // which is what it is actually watching.
+  // the file silently truncates the character into a different symbol.
+  //
+  // At rest the widget shows the plugin's own mark — content-duplicate, one
+  // thing becoming two, which is what "replicant" means here. It used to show
+  // the GitHub logo; GitHub is only where the copy happens to be kept, and the
+  // icon should say what the thing does, not who stores it.
   function mdi(cp) { return String.fromCodePoint(cp) }
   readonly property string glyph: {
     if (!asked) return root.mdi(0xF0450)                                         // refresh
@@ -37,7 +40,7 @@ BarWidget {
     if ((repoState.ahead || 0) > 0) return root.mdi(0xF0167)                     // cloud-upload
     if ((repoState.behind || 0) > 0) return root.mdi(0xF0162)                    // cloud-download
     if ((repoState.dirty || 0) > 0) return root.mdi(0xF0193)                     // content-save
-    return root.mdi(0xF02A4)                                                     // github
+    return root.mdi(0xF0191)                                                     // content-duplicate
   }
   readonly property string tooltip: {
     if (!asked) return "Replicant — loading…"

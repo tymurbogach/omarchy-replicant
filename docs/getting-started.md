@@ -61,22 +61,47 @@ save, `c` to collapse every open area, `Esc` to back out. To open it from a keyb
 
 ## 3b. Two machines, one repo
 
-This is the case the per-file switch exists for. Some files describe the *machine*, not you —
+This is the case profiles exist for. Some files describe the *machine*, not you —
 `hypr/monitors.lua` lists the screens physically plugged into this box, and copying the laptop's
 version onto the desktop is actively wrong.
 
-Every row in **Configs** has a switch. Off means: not saved from here, not restored onto here, and
-whatever the repo already holds is left exactly as it is. `hypr/monitors.lua` starts off for
-exactly this reason. The list lives in `.replicant-exclude` **inside the repo**, so the decision
-travels — make it once, both machines honour it.
+Every row in **Configs** has a scope button. It cycles three answers:
+
+| Scope | What it means |
+| --- | --- |
+| **Shared** | one copy in `config/`, every machine saves and restores it |
+| **`<profile>`** | a copy under `profiles/<profile>/config/` — the desktop and the laptop each keep their own, and neither overwrites the other |
+| **Off** | not saved from here, not restored onto here; whatever the repo holds is left alone |
+
+`hypr/monitors.lua` starts profile-scoped, which is better than off: both machines get a backup of
+their own screen layout, they just don't get each other's. The list lives in `.replicant-sync`
+**inside the repo**, so the decision travels — make it once, both machines honour it.
+
+Your machine picks its profile from its own chassis (a lid means `laptop`). Override it once:
+
+```bash
+omarchy-replicant profile            # show this machine's profile and all the others
+omarchy-replicant profile desktop    # assign it explicitly
+```
 
 Everything else is already per-machine where it needs to be: the package/service/plugin inventory
 is written to `state/<hostname>/`, so the desktop and the laptop add to the repo instead of
-overwriting each other. Overview lists every machine that has saved into the repo and when.
+overwriting each other. Overview lists every machine, its profile, and when it last saved.
 
-If anything looks off, **Overview → Health check** answers the questions you would otherwise go
-and check by hand: am I logged in, is my repo actually private, is the secret-scanning hook on,
-are the permissions right.
+> Upgrading from 0.5? Your old `.replicant-exclude` is migrated to `.replicant-sync` on the next
+> save, and every file you had switched off stays off — nothing is reinterpreted. If you switched
+> `monitors.lua` off, consider moving it to *profile* instead: you get a backup of it again.
+
+## 3c. Lid behaviour, on a laptop
+
+**Settings → Lid & sleep** sets what closing the lid does — on battery, on AC, and when docked to
+an external monitor (`ignore` there is clamshell mode). These live in
+`/etc/systemd/logind.conf.d/99-lid.conf`, which is root-owned, so applying a change asks for root
+through a polkit prompt or passwordless `sudo`. If neither is available, nothing is changed and
+you get the exact command to run — it never fails silently, and it never writes behind your back.
+
+The file is tracked and profile-scoped, so your laptop's lid behaviour is backed up without ever
+landing on a desktop that has no lid.
 
 ## 4. Your second machine
 

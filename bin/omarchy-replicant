@@ -542,6 +542,19 @@ cmd_settings() {
     ""'
 }
 
+# Both the scope list and the profile map are part of the repo's shape, so a
+# change to either is committed like any other decision — otherwise the second
+# machine never learns about it, which is the whole point of keeping them here.
+commit_repo_shape() {
+  local msg="$1"; shift
+  [[ -d "$REPO_DIR/.git" ]] || return 0
+  git_repo add -- "$@" >/dev/null 2>&1 || true
+  if ! git_repo diff --cached --quiet -- "$@" 2>/dev/null; then
+    git_repo commit -q -m "$msg" -- "$@" >/dev/null 2>&1 || true
+    git_repo push -q 2>/dev/null || warn "committed locally; push failed (offline?)"
+  fi
+}
+
 cmd_sync() {
   local id="${1:-}" want="${2:-}"
   [[ -n "$id" && -n "$want" ]] || fail "usage: omarchy-replicant sync <id> on|off"
@@ -549,15 +562,50 @@ cmd_sync() {
   # shellcheck disable=SC1090
   source "$CORE" 2>/dev/null || true
   core_sync "$id" "$want" || exit 1
-  # The switch is part of the repo's shape, so it is committed like any other
-  # decision — otherwise the other machine never learns about it.
-  if [[ -d "$REPO_DIR/.git" ]]; then
-    git_repo add .replicant-exclude >/dev/null 2>&1 || true
-    if ! git_repo diff --cached --quiet -- .replicant-exclude 2>/dev/null; then
-      git_repo commit -q -m "sync: turn $id $want" -- .replicant-exclude >/dev/null 2>&1 || true
-      git_repo push -q 2>/dev/null || warn "committed locally; push failed (offline?)"
-    fi
+  commit_repo_shape "sync: turn $id $want" .replicant-sync
+}
+
+# cmd_scope <id> <shared|profile|off> — the three-state version of `sync`, and
+# what the control in every Configs row actually calls.
+cmd_scope() {
+  local id="${1:-}" want="${2:-}"
+  [[ -n "$id" && -n "$want" ]] || fail "usage: omarchy-replicant scope <id> shared|profile|off"
+  ensure_core
+  # shellcheck disable=SC1090
+  source "$CORE" 2>/dev/null || true
+  core_scope "$id" "$want" || exit 1
+  # The copy may have moved between config/ and profiles/, so both are staged.
+  commit_repo_shape "scope: $id is now $want" .replicant-sync config profiles
+}
+
+# cmd_profile [name] — which profile this machine belongs to. With no argument
+# it prints the current one and every profile the repo knows about.
+cmd_profile() {
+  ensure_core
+  # shellcheck disable=SC1090
+  source "$CORE" 2>/dev/null || true
+  local want="${1:-}"
+  if [[ -z "$want" || "$want" == "list" ]]; then
+    local cur; cur=$(current_profile)
+    printf 'This machine (%s) is in the "%s" profile.\n\n' "$MACHINE" "$cur"
+    printf 'Profiles in this repo:\n'
+    local pr n
+    while IFS= read -r pr; do
+      [[ -n "$pr" ]] || continue
+      # `find` on a profile directory that does not exist yet exits non-zero,
+      # and under `set -o pipefail` that fails the whole assignment and, with
+      # `set -e`, this function — the same trap as `grep -q` in a pipeline.
+      n=$(find "$REPO_DIR/profiles/$pr/config" -type f 2>/dev/null | wc -l || true)
+      if [[ "$pr" == "$cur" ]]; then printf '  * %-14s %s file(s)   <- this machine\n' "$pr" "$n"
+      else printf '    %-14s %s file(s)\n' "$pr" "$n"; fi
+    done < <(list_profiles)
+    printf '\nMachines:\n'
+    read_profile_map | sed 's/^/    /'
+    return 0
   fi
+  core_profile_set "$want" || exit 1
+  commit_repo_shape "profile: $MACHINE is now '$want'" .replicant-profiles
+  echo "Files scoped to a profile will now be saved and restored from profiles/$want/." >&2
 }
 
 # cmd_revert <setting-id> [--to default|repo] — put ONE setting back without
@@ -813,7 +861,9 @@ Usage:
                                           plain-text diff (the panel renders it inline)
   omarchy-replicant settings [--json]     list every editable setting and its value
   omarchy-replicant revert <id> [--to default|repo]   put ONE setting back
-  omarchy-replicant sync <id> on|off      stop / resume syncing one file
+  omarchy-replicant scope <id> <scope>    shared | profile | off, per file
+  omarchy-replicant sync <id> on|off      the older two-state form of scope
+  omarchy-replicant profile [name]        which profile this machine is in
   omarchy-replicant shortcuts [--json]    your keybinding overrides, and what is bound now
   omarchy-replicant edit <id>             open id in your editor (e.g. hypr/input.lua)
   omarchy-replicant path <id>             print the real path an id refers to
@@ -848,7 +898,7 @@ main() {
   # Anything that writes to the repo takes the lock first; read-only commands
   # (status/get/diff/edit) stay lock-free so the panel's polling never blocks.
   case "$cmd" in
-    init|create|backup|savegame|set|save-file|reset|reset-all|push|pull|clone|restore|sync|revert|restore-file) acquire_repo_lock ;;
+    init|create|backup|savegame|set|save-file|reset|reset-all|push|pull|clone|restore|sync|scope|profile|revert|restore-file) acquire_repo_lock ;;
   esac
   case "$cmd" in
     -h|--help|help) usage; exit 0;;
@@ -870,6 +920,8 @@ main() {
     settings) shift; cmd_settings "$@";;
     doctor) shift; cmd_doctor "$@";;
     sync) shift; cmd_sync "$@";;
+    scope) shift; cmd_scope "$@";;
+    profile) shift; cmd_profile "$@";;
     revert) shift; cmd_revert "$@";;
     restore-file) shift; cmd_restore_file "$@";;
     shortcuts) shift; cmd_shortcuts "$@";;

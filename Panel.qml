@@ -104,10 +104,17 @@ Panel {
   readonly property string icDown: root.mdi(0xF0140)    // chevron-down
   readonly property string icRight: root.mdi(0xF0142)    // chevron-right
   readonly property string icInfo: root.mdi(0xF02FC)    // information
-  readonly property string icGithub: root.mdi(0xF02A4)    // github
   readonly property string icMachine: root.mdi(0xF0176)    // laptop
+  // The plugin's own mark: one thing becoming two. Chosen over the GitHub logo
+  // because GitHub is where the copy happens to live, not what this does.
+  readonly property string icReplicant: root.mdi(0xF0191)   // content-duplicate
+  readonly property string icShared: root.mdi(0xF0191)      // content-duplicate
+  readonly property string icProfile: root.mdi(0xF0322)     // laptop
+  readonly property string icOff: root.mdi(0xF0377)         // minus-circle-outline
 
   // ── derived summaries ─────────────────────────────────────────────────────
+  readonly property string profileName: root.repoState.profile || "this machine"
+  readonly property int scopedCount: (root.repoState.configs || []).filter(function(c){ return c.scope === "profile" }).length
   readonly property int nDirty: repoState.dirty || 0
   readonly property int nAhead: repoState.ahead || 0
   readonly property int nBehind: repoState.behind || 0
@@ -150,7 +157,8 @@ Panel {
       out.push({
         id: s.id, label: s.id, src: s.src, category: "secrets",
         sync_state: s.sync_state, exists: s.exists, has_default: false,
-        synced: s.synced, secret: true, kind: s.kind, mode: s.mode,
+        synced: s.synced, scope: s.synced === false ? "off" : "shared",
+        secret: true, kind: s.kind, mode: s.mode,
         vars: s.vars || [], var_count: s.var_count || 0
       })
     }
@@ -167,7 +175,8 @@ Panel {
       out.push({
         id: c.id, label: c.label, src: c.src, category: c.category,
         sync_state: c.sync_state, exists: c.exists, has_default: c.has_default,
-        synced: c.synced, secret: false, kind: "", mode: "", vars: [], var_count: 0
+        synced: c.synced, scope: c.scope || "shared",
+        secret: false, kind: "", mode: "", vars: [], var_count: 0
       })
     }
     if (categoryId === "secrets") out = out.concat(root.secretRows())
@@ -277,9 +286,37 @@ Panel {
     setProc.running = true
   }
 
-  function doSync(id, on) {
-    root.busyLabel = (on ? "Resuming " : "Pausing ") + id + "…"
-    fileSaveProc.command = [root.cli, "sync", id, on ? "on" : "off"]
+  // Three scopes, cycled in the order a person actually reasons about them:
+  // "everyone gets this" -> "each kind of machine gets its own" -> "nobody".
+  function nextScope(scope, allowProfile) {
+    if (scope === "off") return "shared"
+    if (scope === "shared") return allowProfile ? "profile" : "off"
+    return "off"
+  }
+  function scopeLabel(scope) {
+    if (scope === "profile") return root.profileName
+    if (scope === "off") return "Off"
+    return "Shared"
+  }
+  function scopeIcon(scope) {
+    if (scope === "profile") return root.icProfile
+    if (scope === "off") return root.icOff
+    return root.icShared
+  }
+  function scopeHint(scope, allowProfile) {
+    if (scope === "shared" && !allowProfile)
+      return "One copy, shared by every machine on this repo. Click for: off"
+    if (scope === "profile")
+      return "Kept per profile: this machine saves and restores the '" + root.profileName
+           + "' copy, and never overwrites another profile's. Click for: off"
+    if (scope === "off")
+      return "Not saved from here and not restored onto here. Whatever the repo "
+           + "already holds is left alone. Click for: shared"
+    return "One copy, shared by every machine on this repo. Click for: per profile"
+  }
+  function doScope(id, scope) {
+    root.busyLabel = "Setting " + id + " to " + scope + "…"
+    fileSaveProc.command = [root.cli, "scope", id, scope]
     fileSaveProc.running = true
   }
 
@@ -455,7 +492,7 @@ Panel {
           foreground: root.fg
           fontFamily: root.ff
           iconComponent: Component {
-            Text { text: root.icGithub; color: root.fg; font.family: root.ff; font.pixelSize: Style.font.display }
+            Text { text: root.icReplicant; color: root.fg; font.family: root.ff; font.pixelSize: Style.font.display }
           }
           trailingControl: Component {
             Button {
@@ -637,17 +674,19 @@ Panel {
                 FactRow { label: "Theme";       value: root.settingText("theme.current") }
                 FactRow { label: "Bar position"; value: root.settingText("bar.position") }
                 FactRow { label: "Lock screen"; value: root.settingText("idle.lock") }
+                FactRow { label: "Profile";     value: root.profileName + "  ·  " + root.scopedCount + " file(s) kept per profile" }
                 FactRow { label: "Plugin";      value: "omarchy-replicant " + (root.repoState.plugin_version || "?") }
               }
             }
 
-            // Only worth the space once a second machine exists — and then it
-            // is the first thing you want to know.
+            // Shown from the first machine onward, because the profile it is in
+            // decides what it saves — that matters before the second one exists,
+            // not after.
             Column {
               width: parent.width
               spacing: Style.space(4)
-              visible: (root.repoState.machines || []).length > 1
-              PanelSectionHeader { width: parent.width; text: "Machines sharing this repo"; foreground: root.fg; fontFamily: root.ff }
+              visible: root.ready
+              PanelSectionHeader { width: parent.width; text: "Machines & profiles"; foreground: root.fg; fontFamily: root.ff }
               Repeater {
                 model: root.repoState.machines || []
                 delegate: Item {
@@ -667,6 +706,14 @@ Panel {
                     Text {
                       text: machineRow.modelData.name + (machineRow.modelData.current ? "  (this one)" : "")
                       color: root.fg; font.family: root.ff; font.pixelSize: Style.font.caption
+                    }
+                    Text {
+                      // A machine with no explicit assignment guessed from its
+                      // own chassis; say so rather than showing an empty column.
+                      text: machineRow.modelData.profile
+                          ? machineRow.modelData.profile
+                          : (machineRow.modelData.current ? root.profileName + " (guessed)" : "—")
+                      color: Color.accent; font.family: root.ff; font.pixelSize: Style.font.caption
                     }
                     Text {
                       text: machineRow.modelData.last_save ? "last saved " + machineRow.modelData.last_save : "no saves yet"
@@ -769,10 +816,22 @@ Panel {
               }
             }
 
+            // Two different things share every row and they are easy to
+            // confuse: the badge is the file's STATE, the button is what this
+            // repo DOES with it. Spelling both out here costs two lines and
+            // saves the question.
             Text {
               width: parent.width
               text: "○ Omarchy default   ● changed here   ◆ saved on GitHub   ⊘ not synced"
               color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
+            }
+
+            Text {
+              width: parent.width
+              text: "Shared = every machine   ·   " + root.profileName
+                  + " = only machines in that profile   ·   Off = never copied"
+              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
             }
 
             Text {
@@ -1443,6 +1502,7 @@ Panel {
     readonly property bool isBool:   setting.type === "bool" || setting.type === "lua-bool"
     readonly property bool isChoice: setting.type === "enum" || setting.type === "lua-enum"
                                   || setting.type === "line-enum" || setting.type === "theme"
+                                  || setting.type === "ini-enum"
     readonly property bool isLongList: srow.isChoice && (setting.options || []).length > 8
     readonly property bool usable: setting.available === true && !root.busy
 
@@ -1626,6 +1686,7 @@ Panel {
     readonly property string syncState: frow.config.sync_state || "modified"
     readonly property bool isDefault: frow.syncState === "default"
     readonly property bool isModified: frow.syncState === "modified"
+    readonly property string scope: frow.config.scope || "shared"
     readonly property bool isOff: frow.config.synced === false
     readonly property bool missing: frow.config.exists === false
     readonly property bool isSecret: frow.config.secret === true
@@ -1679,19 +1740,25 @@ Panel {
         }
       }
 
-      // The per-file sync switch. Some files are about the machine, not about
+      // The per-file scope control. Some files are about the machine, not about
       // the user — hypr/monitors.lua describes the screens physically plugged
       // into THIS box — and copying them between a desktop and a laptop is
-      // actively wrong. Off means: not saved from here, not restored onto here,
-      // and whatever the repo already holds is left alone.
-      ToggleSwitch {
+      // actively wrong. Rather than the old on/off switch, which forced you to
+      // choose between "wrong on one machine" and "no backup at all", this
+      // cycles the three answers: shared, per profile, or off.
+      Button {
         id: syncSwitch
         anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(96)
         enabled: !root.busy
-        checked: frow.config.synced !== false
-        foreground: root.fg
-        accent: Color.accent
-        onToggled: root.doSync(frow.config.id, frow.config.synced === false)
+        bordered: true
+        text: root.scopeLabel(frow.scope)
+        iconText: root.scopeIcon(frow.scope)
+        foreground: frow.scope === "off" ? root.dim
+                  : frow.scope === "profile" ? Color.accent : root.fg
+        fontFamily: root.ff
+        tooltipText: root.scopeHint(frow.scope, !frow.isSecret)
+        onClicked: root.doScope(frow.config.id, root.nextScope(frow.scope, !frow.isSecret))
       }
 
       Row {

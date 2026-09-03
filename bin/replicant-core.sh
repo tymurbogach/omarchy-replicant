@@ -20,6 +20,11 @@ SECRETS_DIR="$REPO_DIR/secrets"
 MACHINE="${REPLICANT_MACHINE:-$(hostnamectl --static 2>/dev/null || hostname 2>/dev/null || echo unknown)}"
 STATE_ROOT="$REPO_DIR/state"
 STATE_DIR="$STATE_ROOT/$MACHINE"
+
+# Overridable so the tests can exercise the reader and the writer without a
+# root-owned file; in normal use it is exactly where logind looks.
+LOGIND_DROPIN="${REPLICANT_LOGIND_DROPIN:-/etc/systemd/logind.conf.d/99-lid.conf}"
+
 TEMPLATES_DIR="$REPO_DIR/templates"
 GITHOOKS_DIR="$REPO_DIR/.githooks"
 
@@ -150,50 +155,238 @@ build_categories_json() {
   printf '%s\n' "${entries[@]}" | jq -s '.'
 }
 
-# ─── What NOT to sync ───────────────────────────────────────────────────────
-# Some files are about the machine, not about the user: hypr/monitors.lua
-# describes the screens physically plugged into THIS box, and copying the
-# laptop's version onto the desktop is actively wrong. Rather than guessing,
-# every tracked file carries a switch, and this list is the off position.
+# ─── Profiles and what each machine syncs ───────────────────────────────────
+# One repo, more than one machine, and they are not the same machine. A desktop
+# and a laptop want the same shell, the same keybindings and the same git
+# identity — and emphatically NOT the same monitor layout, touchpad settings or
+# lid behaviour. So every tracked file carries a scope:
 #
-# It lives in the repo, not in ~/.local/share, because "monitors are
-# machine-specific" is a fact about the setup, not about one machine — you want
-# to make that decision once and have the other machine honour it. A file that
-# is switched off is neither copied INTO the repo from here nor restored OUT of
-# it onto here; whatever copy the repo already has is left exactly as it is.
-EXCLUDE_FILE="$REPO_DIR/.replicant-exclude"
-# Seeded on a fresh repo. Not a hardcoded rule: it is written into a file the
-# user can see, edit and switch back on from the panel.
-DEFAULT_EXCLUDES=("hypr/monitors.lua")
+#   shared   (default) one copy in config/, every machine saves and restores it
+#   profile  a copy per profile in profiles/<profile>/config/, so the desktop
+#            and the laptop each keep their own and neither overwrites the other
+#   off      not saved from here, not restored onto here, and whatever copy the
+#            repo already holds is left exactly as it is
+#
+# "profile" is the one that makes two machines practical. Switching monitors.lua
+# off means nobody gets a backup of it; scoping it to a profile means both
+# machines get one, they just don't get each OTHER's.
+#
+# Both lists live in the repo rather than ~/.local/share, because "monitors are
+# machine-specific" is a fact about the setup, not about one machine: decide it
+# once, and every machine sharing the repo honours it.
+SCOPE_FILE="$REPO_DIR/.replicant-sync"
+PROFILE_FILE="$REPO_DIR/.replicant-profiles"
+LEGACY_EXCLUDE_FILE="$REPO_DIR/.replicant-exclude"
 
-read_excludes() {
-  [[ -f "$EXCLUDE_FILE" ]] || return 0
-  sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$EXCLUDE_FILE" 2>/dev/null || true
+# Seeded on a fresh repo. Not hardcoded rules: they are written into a file the
+# user can see, edit, and change from the panel. These are the files that are
+# *about the hardware*, which is exactly what a profile is for.
+# Only files that describe the hardware itself. hypr/input.lua deliberately is
+# NOT here: it carries the keyboard layout and repeat rate, which you do want on
+# both machines, alongside a few touchpad keys a desktop simply ignores.
+# Splitting it per profile would cost more than it saves.
+DEFAULT_SCOPES=(
+  "hypr/monitors.lua=profile"
+  "etc/99-lid.conf=profile"
+  "etc/99-hibernate-delay.conf=profile"
+)
+
+# A machine with no explicit assignment guesses from its own chassis. Guessing
+# is safe here: the guess only picks WHICH profile directory this machine reads
+# and writes, and `profile set` overrides it permanently.
+guess_profile() {
+  if command -v omarchy-hw-laptop >/dev/null 2>&1; then
+    omarchy-hw-laptop >/dev/null 2>&1 && { echo laptop; return; }
+    echo desktop; return
+  fi
+  # No Omarchy helper (a test fixture, or a non-Omarchy box): fall back to the
+  # kernel's own answer — a lid is the thing that makes a laptop a laptop.
+  if [[ -d /proc/acpi/button/lid ]]; then echo laptop; else echo desktop; fi
 }
 
-is_excluded() {
-  local rel="$1" line
-  while IFS= read -r line; do [[ "$line" == "$rel" ]] && return 0; done < <(read_excludes)
+read_profile_map() {
+  [[ -f "$PROFILE_FILE" ]] || return 0
+  sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$PROFILE_FILE" 2>/dev/null || true
+}
+
+profile_for_machine() {
+  local want="$1" line k v
+  while IFS= read -r line; do
+    k="${line%%=*}"; v="${line#*=}"
+    k="${k//[[:space:]]/}"; v="${v//[[:space:]]/}"
+    [[ "$k" == "$want" ]] && { printf '%s\n' "$v"; return 0; }
+  done < <(read_profile_map)
   return 1
 }
 
-# core_sync <rel> <on|off> — the panel's per-file switch.
-core_sync() {
-  local rel="$1" want="$2" line
+# Resolved once per process: every scope lookup needs it.
+current_profile() {
+  if [[ -n "${REPLICANT_PROFILE:-}" ]]; then printf '%s\n' "$REPLICANT_PROFILE"; return; fi
+  profile_for_machine "$MACHINE" && return
+  guess_profile
+}
+
+# core_profile_set <name> — assign this machine to a profile, creating it.
+core_profile_set() {
+  local want="$1" line k v
   local -a keep=()
-  case "$want" in on|off) ;; *) echo "sync: expected 'on' or 'off'" >&2; return 1 ;; esac
-  resolve_manifest_src "$rel" >/dev/null 2>&1 || { echo "unknown id: $rel" >&2; return 1; }
-  mkdir -p "$(dirname "$EXCLUDE_FILE")"
-  while IFS= read -r line; do [[ "$line" == "$rel" ]] || keep+=("$line"); done < <(read_excludes)
-  [[ "$want" == "off" ]] && keep+=("$rel")
+  [[ "$want" =~ ^[a-z0-9][a-z0-9_-]{0,31}$ ]] || {
+    echo "profile: use lowercase letters, digits, '-' or '_' (max 32)" >&2; return 1; }
+  ensure_repo_layout
+  while IFS= read -r line; do
+    k="${line%%=*}"; k="${k//[[:space:]]/}"
+    [[ "$k" == "$MACHINE" ]] || keep+=("$line")
+  done < <(read_profile_map)
+  keep+=("$MACHINE = $want")
   {
-    echo "# Files Replicant does not sync, one repo path per line."
-    echo "# Written by the panel's per-file switch; safe to edit by hand."
-    echo "# A file listed here is neither saved from nor restored onto any machine"
-    echo "# that shares this repo. Its last saved copy, if any, is left untouched."
+    echo "# Which profile each machine belongs to: <hostname> = <profile>."
+    echo "# A machine that is not listed guesses from its own chassis."
+    echo "# Files scoped to a profile live in profiles/<profile>/config/, so two"
+    echo "# machines in different profiles never overwrite each other's copy."
+    printf '%s\n' "${keep[@]}"
+  } > "$PROFILE_FILE"
+  echo "$MACHINE is now in the '$want' profile" >&2
+}
+
+# Every profile the repo knows about: the assignments, the directories that
+# already exist, and this machine's own — so the panel can list them.
+list_profiles() {
+  {
+    read_profile_map | sed -e 's/.*=//' -e 's/[[:space:]]//g'
+    [[ -d "$REPO_DIR/profiles" ]] && find "$REPO_DIR/profiles" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null
+    current_profile
+  } | sed '/^$/d' | sort -u
+}
+
+read_scopes() {
+  [[ -f "$SCOPE_FILE" ]] || return 0
+  sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$SCOPE_FILE" 2>/dev/null || true
+}
+
+# scope_for <rel> → shared | profile | off   (unlisted files are shared)
+scope_for() {
+  local rel="$1" line k v
+  while IFS= read -r line; do
+    k="${line%%=*}"; v="${line#*=}"
+    k="${k//[[:space:]]/}"; v="${v//[[:space:]]/}"
+    if [[ "$k" == "$rel" ]]; then
+      case "$v" in shared|profile|off) printf '%s\n' "$v"; return 0 ;; esac
+    fi
+  done < <(read_scopes)
+  # A v0.5 repo that has not been through ensure_repo_layout yet still keeps its
+  # off-list in the old flat file. Honour it until the migration runs, so a file
+  # the user switched off never reads as shared for even one command.
+  if [[ ! -f "$SCOPE_FILE" && -f "$LEGACY_EXCLUDE_FILE" ]]; then
+    while IFS= read -r line; do
+      [[ "${line//[[:space:]]/}" == "$rel" ]] && { printf 'off\n'; return 0; }
+    done < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$LEGACY_EXCLUDE_FILE" 2>/dev/null || true)
+  fi
+  printf 'shared\n'
+}
+
+# Kept so the eight call sites that only care about "is this switched off"
+# read the way they always did.
+is_excluded() { [[ "$(scope_for "$1")" == "off" ]]; }
+
+# repo_path_for <rel> [profile] — where this file's copy lives in the repo.
+# The one place that knows shared files sit in config/ and profile-scoped ones
+# sit under profiles/<profile>/. Every reader and writer goes through it, so a
+# file cannot be saved to one path and restored from another.
+repo_path_for() {
+  local rel="$1" prof="${2:-}"
+  if [[ "$(scope_for "$rel")" == "profile" ]]; then
+    [[ -n "$prof" ]] || prof=$(current_profile)
+    printf '%s\n' "$REPO_DIR/profiles/$prof/config/$rel"
+  else
+    printf '%s\n' "$CONFIG_DIR/$rel"
+  fi
+}
+
+write_scope_file() {
+  local -a keep=("$@")
+  {
+    echo "# What Replicant does with each tracked file, one per line:"
+    echo "#   <path> = shared    one copy, every machine saves and restores it"
+    echo "#   <path> = profile   a copy per profile, under profiles/<profile>/config/"
+    echo "#   <path> = off       never saved from or restored onto any machine"
+    echo "# A path that is not listed is shared. Written by the panel; safe to edit."
     (( ${#keep[@]} )) && printf '%s\n' "${keep[@]}"
-  } > "$EXCLUDE_FILE"
-  if [[ "$want" == "off" ]]; then echo "$rel will no longer sync" >&2; else echo "$rel will sync again" >&2; fi
+  } > "$SCOPE_FILE"
+}
+
+# Seed the scope list on a fresh repo, and migrate the v0.5 flat off-list.
+# .replicant-exclude only had two states; every path in it meant "off", which is
+# still exactly what it means here — so the migration is a straight translation
+# and nothing a user chose is reinterpreted.
+#
+# EVERY writer must call this before rewriting the file. core_scope once did not,
+# and because read_scopes() sees no .replicant-sync it rebuilt the list from
+# nothing — silently discarding a v0.5 user's entire off-list the first time they
+# touched any file's scope. Reading has a fallback; writing needs the real thing.
+ensure_scope_file() {
+  [[ -f "$SCOPE_FILE" ]] && return 0
+  mkdir -p "$(dirname "$SCOPE_FILE")" 2>/dev/null || true
+  local -a seed=()
+  if [[ -f "$LEGACY_EXCLUDE_FILE" ]]; then
+    local ln
+    while IFS= read -r ln; do
+      ln="${ln//[[:space:]]/}"
+      [[ -n "$ln" ]] && seed+=("$ln = off")
+    done < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$LEGACY_EXCLUDE_FILE" 2>/dev/null || true)
+    write_scope_file "${seed[@]}"
+    rm -f -- "$LEGACY_EXCLUDE_FILE"
+    echo "  · migrated .replicant-exclude to .replicant-sync (${#seed[@]} entries kept off)" >&2
+  else
+    write_scope_file "${DEFAULT_SCOPES[@]/=/ = }"
+  fi
+}
+
+# core_scope <rel> <shared|profile|off> — the panel's per-file scope control.
+core_scope() {
+  local rel="$1" want="$2" line k old
+  local -a keep=()
+  case "$want" in shared|profile|off) ;; *)
+    echo "scope: expected 'shared', 'profile' or 'off'" >&2; return 1 ;; esac
+  resolve_manifest_src "$rel" >/dev/null 2>&1 || { echo "unknown id: $rel" >&2; return 1; }
+  ensure_scope_file
+  old=$(scope_for "$rel")
+  [[ "$old" == "$want" ]] && { echo "$rel is already '$want'" >&2; return 0; }
+  mkdir -p "$(dirname "$SCOPE_FILE")"
+  while IFS= read -r line; do
+    k="${line%%=*}"; k="${k//[[:space:]]/}"
+    [[ "$k" == "$rel" ]] || keep+=("$line")
+  done < <(read_scopes)
+  [[ "$want" != "shared" ]] && keep+=("$rel = $want")
+  write_scope_file "${keep[@]}"
+
+  # Moving between scopes moves the copy the repo already holds, so changing
+  # your mind does not silently strand a backup at the old path.
+  local from to
+  case "$old:$want" in
+    shared:profile)
+      from="$CONFIG_DIR/$rel"; to="$REPO_DIR/profiles/$(current_profile)/config/$rel"
+      if [[ -f "$from" ]]; then mkdir -p "$(dirname "$to")"; mv -f -- "$from" "$to"; fi ;;
+    profile:shared)
+      from="$REPO_DIR/profiles/$(current_profile)/config/$rel"; to="$CONFIG_DIR/$rel"
+      if [[ -f "$from" ]]; then mkdir -p "$(dirname "$to")"; mv -f -- "$from" "$to"; fi ;;
+  esac
+
+  case "$want" in
+    shared)  echo "$rel is shared by every machine" >&2 ;;
+    profile) echo "$rel is kept per profile — this machine reads and writes the '$(current_profile)' copy" >&2 ;;
+    off)     echo "$rel will no longer sync" >&2 ;;
+  esac
+}
+
+# core_sync <rel> <on|off> — the older two-state switch, kept because it is in
+# the shipped README and in scripts. "on" means shared.
+core_sync() {
+  local rel="$1" want="$2"
+  case "$want" in
+    on)  core_scope "$rel" shared ;;
+    off) core_scope "$rel" off ;;
+    *)   echo "sync: expected 'on' or 'off'" >&2; return 1 ;;
+  esac
 }
 
 # install helpers — install_file() writes with a .bak.<epoch> of whatever it overwrites
@@ -241,15 +434,8 @@ ensure_repo_layout() {
       mv -- "$flat" "$STATE_DIR/$name" 2>/dev/null || true
     fi
   done
-  if [[ ! -f "$EXCLUDE_FILE" ]]; then
-    {
-      echo "# Files Replicant does not sync, one repo path per line."
-      echo "# Written by the panel's per-file switch; safe to edit by hand."
-      echo "# A file listed here is neither saved from nor restored onto any machine"
-      echo "# that shares this repo. Its last saved copy, if any, is left untouched."
-      printf '%s\n' "${DEFAULT_EXCLUDES[@]}"
-    } > "$EXCLUDE_FILE"
-  fi
+  ensure_scope_file
+  mkdir -p "$REPO_DIR/profiles/$(current_profile)/config" 2>/dev/null || true
   install -d -m 700 "$SECRETS_DIR" 2>/dev/null || mkdir -p "$SECRETS_DIR"
   # templates placeholder
   if [[ ! -f "$TEMPLATES_DIR/60-secrets.conf.example" && -f "$HOME/omarchy_thinkpad/templates/60-secrets.conf.example" ]]; then
@@ -329,8 +515,8 @@ core_backup() {
   for entry in "${MANIFEST[@]}"; do
     src=${entry%%:*}
     rel="${entry##*:}"
-    dst="$CONFIG_DIR/$rel"
-    # Switched off in .replicant-exclude: not copied from here, and (see the
+    dst=$(repo_path_for "$rel")
+    # Switched off in .replicant-sync: not copied from here, and (see the
     # prune pass below) whatever the repo already holds is left alone.
     if is_excluded "$rel"; then
       skipped=$((skipped + 1))
@@ -367,23 +553,42 @@ core_backup() {
   # repo slowly fills with files that describe a machine that no longer exists,
   # and the panel has no row to act on them with. Nothing is actually lost:
   # every removal lands in a commit, and git keeps the content.
+  # A file is expected at exactly one path: the one repo_path_for() gives it.
+  # So the prune pass asks the same function the copy pass did, and a file that
+  # moved between scopes is cleaned up at its old path by core_scope(), not here.
   local -a expected=()
-  for entry in "${MANIFEST[@]}"; do expected+=("${entry##*:}"); done
+  local _e
+  for entry in "${MANIFEST[@]}"; do
+    _e="${entry##*:}"
+    is_excluded "$_e" && continue
+    expected+=("$(repo_path_for "$_e")")
+  done
   while IFS=$'\t' read -r _psrc prel _pname; do
-    [[ -n "$prel" ]] && expected+=("$prel")
+    [[ -n "$prel" ]] && expected+=("$CONFIG_DIR/$prel")
   done < <(discover_plugin_entries)
-  local pruned=0 rel found e
+  local pruned=0 found e
+  # Only this profile's tree is swept. Another machine's profile directory is
+  # not ours to tidy: from here every file in it looks untracked, and pruning
+  # it would delete the other machine's only backup on our next save.
+  local -a sweep=("$CONFIG_DIR")
+  [[ -d "$REPO_DIR/profiles/$(current_profile)/config" ]] && sweep+=("$REPO_DIR/profiles/$(current_profile)/config")
   while IFS= read -r -d '' f; do
-    rel="${f#"$CONFIG_DIR"/}"
     found=0
-    for e in "${expected[@]}"; do [[ "$e" == "$rel" ]] && { found=1; break; }; done
+    for e in "${expected[@]}"; do [[ "$e" == "$f" ]] && { found=1; break; }; done
     (( found )) && continue
+    # A file that is switched off keeps its last saved copy, by design —
+    # wherever that copy happens to sit. Strip whichever sweep root it is under
+    # so an off file stranded in the profile tree is recognised too.
+    local candrel="$f"
+    candrel="${candrel#"$REPO_DIR/profiles/$(current_profile)/config/"}"
+    candrel="${candrel#"$CONFIG_DIR/"}"
+    is_excluded "$candrel" && continue
     rm -f -- "$f"
-    echo "  · no longer tracked, removed from the repo: $rel" >&2
+    echo "  · no longer tracked, removed from the repo: ${f#"$REPO_DIR"/}" >&2
     pruned=$((pruned+1))
-  done < <(find "$CONFIG_DIR" -type f -print0 2>/dev/null)
+  done < <(find "${sweep[@]}" -type f -print0 2>/dev/null)
   # leave no empty directories behind either
-  find "$CONFIG_DIR" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+  find "${sweep[@]}" -mindepth 1 -type d -empty -delete 2>/dev/null || true
   (( pruned > 0 )) && echo "  $pruned stale file(s) pruned" >&2
 
   echo "→ Copying secrets (private repo, 600)" >&2
@@ -645,6 +850,13 @@ SETTINGS=(
   "input.naturalScroll|Input|$HOME/.config/hypr/input.lua|natural_scroll|lua-bool|Natural scrolling|||||Touchpad: two fingers down moves the page up|hyprctl reload||1|"
   "input.tapToClick|Input|$HOME/.config/hypr/input.lua|tap_to_click|lua-bool|Tap to click|||||Touchpad: a tap counts as a click|hyprctl reload||1|"
   "input.disableWhileTyping|Input|$HOME/.config/hypr/input.lua|disable_while_typing|lua-bool|Ignore touchpad while typing|||||Stops the cursor jumping mid-sentence|hyprctl reload||1|"
+  # ── Lid & sleep — /etc/systemd/logind.conf.d/, root-owned, laptop only.
+  # These are the three questions a laptop actually asks. logind's own built-in
+  # default for all three is 'suspend'; the fallback field records that so the
+  # panel can show a value even before a drop-in exists.
+  "lid.close|Lid & sleep|$LOGIND_DROPIN|Login.HandleLidSwitch|ini-enum|Closing the lid||||suspend,suspend-then-hibernate,hibernate,lock,ignore,poweroff|What happens on battery when the lid closes|systemctl reload systemd-logind|suspend|1|"
+  "lid.closeAc|Lid & sleep|$LOGIND_DROPIN|Login.HandleLidSwitchExternalPower|ini-enum|Closing the lid on AC||||suspend,suspend-then-hibernate,hibernate,lock,ignore,poweroff|What happens while plugged in — many people want 'ignore' here and 'suspend' on battery|systemctl reload systemd-logind|suspend|1|"
+  "lid.closeDocked|Lid & sleep|$LOGIND_DROPIN|Login.HandleLidSwitchDocked|ini-enum|Closing the lid when docked||||ignore,suspend,suspend-then-hibernate,hibernate,lock,ignore,poweroff|What happens with an external monitor attached; 'ignore' is clamshell mode|systemctl reload systemd-logind|ignore|1|"
   # ── Defaults
   "default.editor|Defaults|$HOME/.local/state/omarchy/defaults/editor|-|line-enum|Default editor||||nvim,code,hx,micro,nano,zed|Editor Omarchy opens config files with||nvim|1|"
 )
@@ -654,6 +866,7 @@ SETTING_GROUPS=(
   "Idle & power|󰐥|When the screen dims, locks and the machine suspends"
   "Appearance|󰏘|Theme, bar and how large everything is drawn"
   "Input|󰌌|Keyboard and touchpad behaviour"
+  "Lid & sleep|󰌢|What closing the lid does — shown on laptops only"
   "Defaults|󰒓|Which program Omarchy reaches for"
 )
 
@@ -685,6 +898,77 @@ toml_get() {
       sub(/^[^=]*=[[:space:]]*/, ""); gsub(/[[:space:]]*$/, ""); print; exit
     }
   ' "$file"
+}
+
+# ─── systemd drop-ins (root-owned) ──────────────────────────────────────────
+# A laptop's lid behaviour lives in /etc/systemd/logind.conf.d/, which is the
+# one thing worth configuring here that is not ours to write. The shape of the
+# file is close enough to TOML that the same reader works: [Section] headers and
+# Key=Value lines, whitespace around '=' ignored by systemd either way.
+ini_get() { toml_get "$1" "$2"; }
+
+# root_apply <destination> <staged file> [command to run afterwards]
+# Writes a staged file into a root-owned path, keeping the same .bak.<epoch>
+# every other write in this plugin makes, and runs the reload in the SAME
+# privileged call so the user is asked at most once.
+#
+# There is no silent path here. It tries, in order:
+#   1. pkexec  — a graphical prompt, when the session runs a polkit agent
+#   2. sudo -n — only if this user already has passwordless rights for it
+#   3. nothing — prints the exact command and fails, leaving /etc untouched
+# Omarchy ships no polkit agent by default, so (3) is the common outcome in the
+# panel and (2)/(1) the common one from a terminal. Saying so is the point:
+# a settings control that quietly does nothing is worse than one that explains.
+root_apply() {
+  local dst="$1" staged="$2" after="${3:-}" script rc=0
+  script='dst="$1"; staged="$2"; after="$3";
+    if [ -f "$dst" ]; then cp -a "$dst" "$dst.bak.$(date +%s)" || exit 1; fi
+    install -D -m 644 -o root -g root "$staged" "$dst" || exit 1
+    [ -n "$after" ] && { sh -c "$after" || exit 2; }
+    exit 0'
+  if command -v pkexec >/dev/null 2>&1 && [[ -n "${XDG_SESSION_ID:-}${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    if pkexec /bin/sh -c "$script" _ "$dst" "$staged" "$after" 2>/dev/null; then return 0; fi
+    rc=1
+  fi
+  if sudo -n true 2>/dev/null; then
+    if sudo -n /bin/sh -c "$script" _ "$dst" "$staged" "$after" 2>/dev/null; then return 0; fi
+    rc=1
+  fi
+  echo "This one needs root, and nothing on this session could ask for it." >&2
+  echo "Nothing was changed. To apply it yourself:" >&2
+  echo "  sudo install -D -m 644 $staged $dst" >&2
+  [[ -n "$after" ]] && echo "  sudo $after" >&2
+  return "${rc:-1}"
+}
+
+# ini_set <file> <Section.Key> <value> [reload command]
+# Stages the whole edited file under $HOME first, so the privileged step is a
+# single copy of a file the user could have inspected, not an editor run as root.
+ini_set() {
+  local file="$1" path="$2" value="$3" after="${4:-}" staged
+  staged=$(mktemp "${TMPDIR:-/tmp}/replicant-lid.XXXXXX") || return 1
+  if [[ -f "$file" ]]; then cp -- "$file" "$staged"; else printf '[%s]\n' "${path%%.*}" > "$staged"; fi
+  toml_set "$staged" "$path" "$value" || { rm -f "$staged"; return 1; }
+  # toml_set keeps whatever spacing surrounded the '='; TOML writes `key = v`
+  # and systemd writes `Key=v`. Normalise to systemd's idiom so a drop-in this
+  # plugin has touched still reads like every other one on the machine.
+  local k="${path#*.}"
+  sed -i -E "s|^([[:space:]]*)${k}[[:space:]]*=[[:space:]]*|\1${k}=|" "$staged"
+  if [[ -w "$file" || ( ! -e "$file" && -w "$(dirname "$file")" ) ]]; then
+    backup_before_write "$file"
+    install -D -m 644 "$staged" "$file" || { rm -f "$staged"; return 1; }
+    [[ -n "$after" ]] && bash -c "$after" >/dev/null 2>&1
+    rm -f "$staged"; return 0
+  fi
+  root_apply "$file" "$staged" "$after" || { rm -f "$staged"; return 1; }
+  rm -f "$staged"
+}
+
+# Only a machine with a lid should be offered lid settings. On a desktop the
+# group is not greyed out, it is absent — an irrelevant control is clutter.
+is_laptop() {
+  if command -v omarchy-hw-laptop >/dev/null 2>&1; then omarchy-hw-laptop >/dev/null 2>&1; return; fi
+  [[ -d /proc/acpi/button/lid ]]
 }
 
 # Writes key = value, creating the [section] and/or the key when either is
@@ -812,6 +1096,17 @@ get_setting_value() {
       [[ -n "$raw" ]] || return 1
       printf '%s\n' "$raw"
       ;;
+    ini-enum)
+      # No drop-in yet means logind is on its built-in default, which is what
+      # the fallback field records — so report that rather than "missing".
+      if [[ -f "$file" ]]; then
+        raw=$(ini_get "$file" "$path" 2>/dev/null || true)
+        [[ -n "$raw" ]] && { printf '%s\n' "$raw"; return 0; }
+      fi
+      raw=$(setting_field "$entry" 13)
+      [[ -n "$raw" ]] || return 1
+      printf '%s\n' "$raw"
+      ;;
     lua-int|lua-bool|lua-enum)
       lua_get "$file" "$path"
       ;;
@@ -860,7 +1155,7 @@ set_setting_value() {
     bool|lua-bool)
       [[ "$value" == "true" || "$value" == "false" ]] || { echo "$1: '$value' must be true or false" >&2; return 1; }
       ;;
-    enum|lua-enum|line-enum|theme)
+    enum|lua-enum|line-enum|theme|ini-enum)
       [[ -n "$options" ]] || { echo "$1: no options available on this machine" >&2; return 1; }
       [[ ",$options," == *",$value,"* ]] || { echo "$1: '$value' is not one of: ${options//,/, }" >&2; return 1; }
       ;;
@@ -879,6 +1174,12 @@ set_setting_value() {
     toml-int|toml-float)
       backup_before_write "$file"
       toml_set "$file" "$path" "$value" || { echo "$1: could not write '$path' in $file — left untouched" >&2; return 1; }
+      ;;
+    ini-enum)
+      # The reload is part of the privileged write, so root is asked once, not
+      # twice — hence apply is consumed here and cleared before the tail below.
+      ini_set "$file" "$path" "$value" "$apply" || { echo "$1: $file was left untouched" >&2; return 1; }
+      apply=""
       ;;
     lua-int|lua-bool)
       [[ -f "$file" ]] || { echo "file not found: $file" >&2; return 1; }
@@ -976,7 +1277,7 @@ rel_for_src() {
 repo_copy_for_rel() {
   case "$1" in
     ssh/*|env/*) printf '%s\n' "$SECRETS_DIR/$1" ;;
-    *)           printf '%s\n' "$CONFIG_DIR/$1" ;;
+    *)           repo_path_for "$1" ;;
   esac
 }
 
@@ -1064,8 +1365,11 @@ build_settings_json() {
   local entry id group file path type label unit min max options hint value available fallback implicit
   local scale disp dvalue dmin dmax dstep vtext defval deftext repoval repotext canrd canrr numeric boolean
   {
+  local laptop=1; is_laptop || laptop=0
   for entry in "${SETTINGS[@]}"; do
     id=$(setting_field "$entry" 1);      group=$(setting_field "$entry" 2)
+    # A desktop has no lid. The group is absent rather than greyed out.
+    [[ "$group" == "Lid & sleep" && "$laptop" == 0 ]] && continue
     file=$(setting_field "$entry" 3);    path=$(setting_field "$entry" 4)
     type=$(setting_field "$entry" 5);    label=$(setting_field "$entry" 6)
     unit=$(setting_field "$entry" 7);    min=$(setting_field "$entry" 8)
@@ -1145,7 +1449,9 @@ build_settings_json() {
 
 build_setting_groups_json() {
   local entries=() entry
+  local laptop=1; is_laptop || laptop=0
   for entry in "${SETTING_GROUPS[@]}"; do
+    [[ "${entry%%|*}" == "Lid & sleep" && "$laptop" == 0 ]] && continue
     entries+=("$(jq -nc --arg name "$(printf '%s' "$entry" | cut -d'|' -f1)" \
       --arg icon "$(printf '%s' "$entry" | cut -d'|' -f2)" \
       --arg description "$(printf '%s' "$entry" | cut -d'|' -f3)" \
@@ -1158,7 +1464,7 @@ build_configs_json() {
   # One jq for the whole list. Same reason as build_settings_json: this runs on
   # every panel refresh and there are forty-odd rows.
   local entry src rel label category exists is_default has_default default_src config_rel
-  local dirty unpushed sync_state saved synced source
+  local dirty unpushed sync_state saved synced source scope repo_path git_rel
   {
   for entry in "${MANIFEST[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"; label="$rel"
@@ -1172,23 +1478,26 @@ build_configs_json() {
     else
       is_default=false
     fi
+    scope=$(scope_for "$rel")
+    repo_path=$(repo_path_for "$rel")
+    git_rel="${repo_path#"$REPO_DIR"/}"
     dirty=false
-    git -C "$REPO_DIR" status --porcelain -- "config/$rel" 2>/dev/null | grep -q . && dirty=true
+    git -C "$REPO_DIR" status --porcelain -- "$git_rel" 2>/dev/null | grep -q . && dirty=true
     unpushed=false
-    path_unpushed "config/$rel" && unpushed=true
+    path_unpushed "$git_rel" && unpushed=true
     saved=false
-    [[ -f "$CONFIG_DIR/$rel" ]] && saved=true
+    [[ -f "$repo_path" ]] && saved=true
     synced=true
-    is_excluded "$rel" && synced=false
+    [[ "$scope" == "off" ]] && synced=false
     # Precedence for the badge: off > default > modified > saved.
     if [[ "$synced" == false ]]; then sync_state="off"
     elif [[ "$is_default" == true ]]; then sync_state="default"
     elif [[ "$dirty" == true || "$unpushed" == true ]]; then sync_state="modified"
     else sync_state="saved"
     fi
-    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
       "$rel" "$label" "$src" "$category" "$exists" "$is_default" "$has_default" \
-      "$config_rel" "$dirty" "$unpushed" "$sync_state" "$saved" "$synced" "manifest"
+      "$config_rel" "$dirty" "$unpushed" "$sync_state" "$saved" "$synced" "manifest" "$scope"
   done
   # Auto-detected entries from other plugins. No Omarchy default ships for
   # these, so they can never read as "default".
@@ -1207,9 +1516,9 @@ build_configs_json() {
     elif [[ "$dirty" == true || "$unpushed" == true ]]; then sync_state="modified"
     else sync_state="saved"
     fi
-    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
       "$prel" "$pname" "$psrc" "plugins" "true" "false" "false" \
-      "omarchy/${psrc##*/}" "$dirty" "$unpushed" "$sync_state" "$saved" "$synced" "auto"
+      "omarchy/${psrc##*/}" "$dirty" "$unpushed" "$sync_state" "$saved" "$synced" "auto" "$(scope_for "$prel")"
   done < <(discover_plugin_entries)
   } | jq -Rsc '
     def flag: . == "true";
@@ -1219,7 +1528,7 @@ build_configs_json() {
       exists: (.[4]|flag), is_default: (.[5]|flag), has_default: (.[6]|flag),
       config_rel: .[7], dirty: (.[8]|flag), unpushed: (.[9]|flag),
       sync_state: .[10], saved: (.[11]|flag), synced: (.[12]|flag),
-      source: .[13]
+      source: .[13], scope: .[14]
     })'
 }
 
@@ -1387,9 +1696,23 @@ core_status() {
           local mname mwhen
           mname=$(basename "$d")
           mwhen=$(git -C "$REPO_DIR" log -1 --date=format:'%d %b %H:%M' --format='%ad' -- "state/$mname" 2>/dev/null || true)
-          printf '%s\t%s\t%s\n' "$mname" "$mwhen" "$( [[ "$mname" == "$MACHINE" ]] && echo true || echo false )"
+          local mprof; mprof=$(profile_for_machine "$mname" 2>/dev/null || echo "")
+          printf '%s\t%s\t%s\t%s\n' "$mname" "$mwhen" \
+            "$( [[ "$mname" == "$MACHINE" ]] && echo true || echo false )" "$mprof"
         done; } | jq -Rsc 'split("\n") | map(select(length > 0) | split("\t")
-          | {name: .[0], last_save: .[1], current: (.[2] == "true")})'
+          | {name: .[0], last_save: .[1], current: (.[2] == "true"), profile: (.[3] // "")})'
+    )
+    # Which profiles exist, and how many files each one is actually holding —
+    # the answer to "did scoping that file to a profile do anything?".
+    local profiles_json
+    profiles_json=$(
+      { local pr pn
+        while IFS= read -r pr; do
+          [[ -n "$pr" ]] || continue
+          pn=$(find "$REPO_DIR/profiles/$pr/config" -type f 2>/dev/null | wc -l || true)
+          printf '%s\t%s\t%s\n' "$pr" "$pn" "$( [[ "$pr" == "$(current_profile)" ]] && echo true || echo false )"
+        done < <(list_profiles); } | jq -Rsc 'split("\n") | map(select(length > 0) | split("\t")
+          | {name: .[0], files: (.[1]|tonumber? // 0), current: (.[2] == "true")})'
     )
     local remote_name="" last_save="" last_subject="" plugin_version=""
     [[ -n "$remote" ]] && remote_name="${remote##*/}" && remote_name="${remote_name%.git}"
@@ -1403,8 +1726,10 @@ core_status() {
       --arg pending "$pending_groups" --argjson configs "$configs_json" --argjson secrets "$secrets_json" \
       --argjson settings "$settings_json" --argjson categories "$categories_json" \
       --argjson setting_groups "$groups_json" --argjson machines "$machines_json" \
+      --arg profile "$(current_profile)" --argjson profiles "$profiles_json" \
       '{initialized:true, branch:$branch, remote:$remote, remote_name:$remote_name,
         repo_dir:$repo_dir, machine:$machine, plugin_version:$plugin_version,
+        profile:$profile, profiles:$profiles,
         last_save:$last_save, last_subject:$last_subject,
         dirty:$dirty, untracked:$untracked, ahead:$ahead, behind:$behind, pending:$pending,
         configs:$configs, secrets:$secrets, settings:$settings,
@@ -1463,7 +1788,7 @@ plan_for_category() {
     cat=$(category_for_rel "$rel")
     [[ "$cat" == "$want" ]] || continue
     is_excluded "$rel" && continue
-    repo_path="$CONFIG_DIR/$rel"
+    repo_path=$(repo_path_for "$rel")
     [[ -f "$repo_path" ]] || continue
     printf '%s|%s|%s\n' "$repo_path" "$src" "$(restore_mode_for "$rel")"
   done
@@ -1593,4 +1918,8 @@ elif [[ "${1:-}" == "shortcuts" ]]; then core_shortcuts
 elif [[ "${1:-}" == "sync" ]]; then core_sync "${2:-}" "${3:-}"
 elif [[ "${1:-}" == "revert" ]]; then core_revert "${2:-}" "${3:-default}"
 elif [[ "${1:-}" == "restore-file" ]]; then core_restore_file "${2:-}"
+elif [[ "${1:-}" == "scope" ]]; then core_scope "${2:-}" "${3:-}"
+elif [[ "${1:-}" == "profile-set" ]]; then core_profile_set "${2:-}"
+elif [[ "${1:-}" == "profile-get" ]]; then current_profile
+elif [[ "${1:-}" == "profile-list" ]]; then list_profiles
 fi

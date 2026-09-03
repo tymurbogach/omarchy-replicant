@@ -209,43 +209,120 @@ check "so are shortcuts"                     "hyprctl reload" "$(apply_for_categ
 check "terminals are restarted"  "omarchy restart terminal" "$(apply_for_category terminal)"
 check "files the shell watches need nothing" "" "$(apply_for_category desktop)"
 
-section "the per-file sync switch"
-# hypr/monitors.lua describes the screens plugged into THIS machine. Seeded off
-# so a desktop and a laptop sharing one repo do not fight over it.
-check_true  "monitors.lua starts switched off" is_excluded hypr/monitors.lua
-check_false "everything else starts on"        is_excluded hypr/input.lua
-core_sync hypr/input.lua off >/dev/null 2>&1
-check_true  "switching one off takes"          is_excluded hypr/input.lua
-core_sync hypr/input.lua off >/dev/null 2>&1
-check "switching it off twice does not duplicate it" "1" \
-  "$(read_excludes | grep -cx 'hypr/input.lua')"
-core_sync hypr/input.lua on >/dev/null 2>&1
-check_false "switching it back on takes"       is_excluded hypr/input.lua
-check_false "an unknown id is refused"         core_sync nope/nope off
-check "the decision travels in the repo, not in ~/.local" "1" \
-  "$(ls "$REPO_DIR/.replicant-exclude" 2>/dev/null | wc -l)"
+section "profiles: what each machine syncs"
+# hypr/monitors.lua describes the screens plugged into THIS machine. It is not
+# switched off — it is scoped to a profile, so the desktop and the laptop each
+# keep their own copy and neither overwrites the other.
+check "monitors.lua starts scoped to a profile" "profile" "$(scope_for hypr/monitors.lua)"
+check "everything else starts shared"           "shared"  "$(scope_for hypr/input.lua)"
+check "input.lua is deliberately NOT per-profile — it holds the keyboard layout" \
+  "shared" "$(scope_for hypr/input.lua)"
+check_false "an unshared file is not 'excluded'"  is_excluded hypr/monitors.lua
 
-# A file that is switched off is not copied FROM this machine…
+# The three scopes, and the paths each one implies.
+check "a shared file lives in config/" "$CONFIG_DIR/hypr/input.lua" "$(repo_path_for hypr/input.lua)"
+check "a profile file lives under profiles/<profile>/" \
+  "$REPO_DIR/profiles/$(current_profile)/config/hypr/monitors.lua" "$(repo_path_for hypr/monitors.lua)"
+
+core_scope hypr/input.lua off >/dev/null 2>&1
+check_true  "switching one off takes"            is_excluded hypr/input.lua
+core_scope hypr/input.lua off >/dev/null 2>&1
+check "switching it off twice does not duplicate it" "1" \
+  "$(read_scopes | grep -cx 'hypr/input.lua = off' || true)"
+core_scope hypr/input.lua shared >/dev/null 2>&1
+check_false "switching it back on takes"         is_excluded hypr/input.lua
+check_false "an unknown id is refused"           core_scope nope/nope off
+check_false "an unknown scope is refused"        core_scope hypr/input.lua sideways
+check "the decision travels in the repo, not in ~/.local" "1" \
+  "$(ls "$REPO_DIR/.replicant-sync" 2>/dev/null | wc -l)"
+
+# The v0.5 two-state switch still works, because it is in the shipped README.
+core_sync hypr/input.lua off >/dev/null 2>&1
+check "sync off still means off"   "off"    "$(scope_for hypr/input.lua)"
+core_sync hypr/input.lua on  >/dev/null 2>&1
+check "sync on still means shared" "shared" "$(scope_for hypr/input.lua)"
+
+section "a profile-scoped file does not cross machines"
 printf 'monitors as of now\n' > "$HOME/.config/hypr/monitors.lua"
+core_backup >/dev/null 2>&1
+check "it is saved under this profile" "monitors as of now" \
+  "$(cat "$REPO_DIR/profiles/$(current_profile)/config/hypr/monitors.lua" 2>/dev/null)"
+check "…and not into the shared config/" "0" \
+  "$(ls "$CONFIG_DIR/hypr/monitors.lua" 2>/dev/null | wc -l)"
+check "…and it does restore, from this profile's copy" "1" \
+  "$(p=$(plan_for_category hyprland); grep -c 'monitors.lua' <<<"$p" || true)"
+
+# The other profile's copy is not ours to touch, on save or on prune.
+mkdir -p "$REPO_DIR/profiles/otherbox/config/hypr"
+printf 'the desktop version\n' > "$REPO_DIR/profiles/otherbox/config/hypr/monitors.lua"
+core_backup >/dev/null 2>&1
+check "another profile's copy survives our save" "the desktop version" \
+  "$(cat "$REPO_DIR/profiles/otherbox/config/hypr/monitors.lua" 2>/dev/null)"
+check "…and we still read our own" "monitors as of now" \
+  "$(cat "$REPO_DIR/profiles/$(current_profile)/config/hypr/monitors.lua" 2>/dev/null)"
+
+section "switching a file off keeps what the repo already had"
+core_scope hypr/monitors.lua off >/dev/null 2>&1
 core_backup >/dev/null 2>&1
 check "a file switched off is not copied into the repo" "0" \
   "$(ls "$CONFIG_DIR/hypr/monitors.lua" 2>/dev/null | wc -l)"
-# …and whatever the repo already had is left exactly as it was, not pruned.
-mkdir -p "$CONFIG_DIR/hypr"
-printf 'the desktop version\n' > "$CONFIG_DIR/hypr/monitors.lua"
-core_backup >/dev/null 2>&1
-check "…and an existing saved copy is left alone" "the desktop version" \
-  "$(cat "$CONFIG_DIR/hypr/monitors.lua" 2>/dev/null)"
 check "…and it is never restored onto this machine" "0" \
-  "$(plan_for_category hyprland | grep -c 'monitors.lua' || true)"
+  "$(p=$(plan_for_category hyprland); grep -c 'monitors.lua' <<<"$p" || true)"
 check "the panel shows it as off" "off" \
   "$(build_configs_json | jq -r '[.[] | select(.id=="hypr/monitors.lua")][0].sync_state')"
-core_sync hypr/monitors.lua on >/dev/null 2>&1
-check "switched back on, it restores again" "1" \
-  "$(plan_for_category hyprland | grep -c 'monitors.lua' || true)"
-core_sync hypr/monitors.lua off >/dev/null 2>&1
+check "the panel reports its scope too" "off" \
+  "$(build_configs_json | jq -r '[.[] | select(.id=="hypr/monitors.lua")][0].scope')"
 
-section "state/ is per machine, so two machines do not overwrite each other"
+section "changing scope moves the copy the repo already holds"
+# Changing your mind must not strand a backup at the path nothing reads any more.
+core_scope hypr/input.lua shared >/dev/null 2>&1
+core_backup >/dev/null 2>&1
+check "shared to begin with" "1" "$(ls "$CONFIG_DIR/hypr/input.lua" 2>/dev/null | wc -l)"
+core_scope hypr/input.lua profile >/dev/null 2>&1
+check "…moved out of config/ when scoped to a profile" "0" \
+  "$(ls "$CONFIG_DIR/hypr/input.lua" 2>/dev/null | wc -l)"
+check "…and into the profile tree" "1" \
+  "$(ls "$REPO_DIR/profiles/$(current_profile)/config/hypr/input.lua" 2>/dev/null | wc -l)"
+core_scope hypr/input.lua shared >/dev/null 2>&1
+check "…and back again" "1" "$(ls "$CONFIG_DIR/hypr/input.lua" 2>/dev/null | wc -l)"
+
+section "each machine belongs to a profile"
+check "this machine has one"        "1" "$(current_profile | grep -c . || true)"
+core_profile_set desktop >/dev/null 2>&1
+check "it can be set explicitly"    "desktop" "$(current_profile)"
+check "…and recorded in the repo"   "1" \
+  "$(grep -c "^$MACHINE = desktop" "$REPO_DIR/.replicant-profiles" 2>/dev/null || true)"
+core_profile_set laptop >/dev/null 2>&1
+check "…and changed without duplicating the line" "1" \
+  "$(grep -c "^$MACHINE = " "$REPO_DIR/.replicant-profiles" 2>/dev/null || true)"
+check_false "a nonsense profile name is refused" core_profile_set "../etc"
+check "the profile list includes ours" "1" \
+  "$(list_profiles | grep -cx laptop || true)"
+
+section "a v0.5 repo migrates its off-list"
+# .replicant-exclude only ever meant "off", so the translation is exact and
+# nothing the user chose is reinterpreted as something else.
+rm -f "$REPO_DIR/.replicant-sync"
+printf '# a comment\nhypr/monitors.lua\ngit/config\n' > "$REPO_DIR/.replicant-exclude"
+check "the old file is honoured before the migration runs" "off" "$(scope_for git/config)"
+ensure_repo_layout >/dev/null 2>&1
+check "…and it is gone afterwards"  "0" "$(ls "$REPO_DIR/.replicant-exclude" 2>/dev/null | wc -l)"
+check "…with both entries kept off" "2" \
+  "$(read_scopes | grep -c ' = off$' || true)"
+check "…meaning the same thing"     "off" "$(scope_for git/config)"
+
+# The bug this guards against: changing ONE file's scope on a v0.5 repo used to
+# rebuild the list from an empty read and throw the whole off-list away.
+rm -f "$REPO_DIR/.replicant-sync"
+printf 'hypr/monitors.lua\ngit/config\n' > "$REPO_DIR/.replicant-exclude"
+core_scope hypr/input.lua profile >/dev/null 2>&1
+check "changing one scope migrates first, it does not start from scratch" "off" \
+  "$(scope_for git/config)"
+check "…the other migrated entry survives too" "off" "$(scope_for hypr/monitors.lua)"
+check "…and the new choice is recorded"        "profile" "$(scope_for hypr/input.lua)"
+core_scope git/config shared >/dev/null 2>&1
+core_scope hypr/monitors.lua profile >/dev/null 2>&1
+core_scope hypr/input.lua shared >/dev/null 2>&1
 check "the inventory is scoped by hostname" "$STATE_ROOT/$MACHINE" "$STATE_DIR"
 check "…and that is where it was written"   "1" "$(ls "$STATE_DIR/system.txt" 2>/dev/null | wc -l)"
 # A repo written before the scoping existed has its inventory flat in state/.

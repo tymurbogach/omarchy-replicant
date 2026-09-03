@@ -117,15 +117,40 @@ check_false "…and a real id"            "$CLI" sync nope/nope off
 check_false "…and a real state"         "$CLI" sync hypr/input.lua sideways
 run sync hypr/input.lua off >/dev/null 2>&1
 check "switching off is recorded in the repo" "1" \
-  "$(grep -cx 'hypr/input.lua' "$REPO/.replicant-exclude" 2>/dev/null || true)"
+  "$(grep -cx 'hypr/input.lua = off' "$REPO/.replicant-sync" 2>/dev/null || true)"
 check "…and the panel reads it back as off" "off" \
   "$(run status --json --no-fetch | jq -r '[.configs[] | select(.id=="hypr/input.lua")][0].sync_state')"
 # The decision is a fact about the setup, so it travels with the repo.
 check "…committed, not left dangling" "0" \
-  "$(git -C "$REPO" status --porcelain -- .replicant-exclude | grep -c . || true)"
+  "$(git -C "$REPO" status --porcelain -- .replicant-sync | grep -c . || true)"
 run sync hypr/input.lua on >/dev/null 2>&1
 check "switching back on clears it" "0" \
-  "$(grep -cx 'hypr/input.lua' "$REPO/.replicant-exclude" 2>/dev/null || true)"
+  "$(grep -c '^hypr/input.lua' "$REPO/.replicant-sync" 2>/dev/null || true)"
+
+section "three scopes and two profiles, from the command line"
+check_false "scope needs both arguments" "$CLI" scope hypr/input.lua
+check_false "…and a real id"             "$CLI" scope nope/nope shared
+check_false "…and a real scope"          "$CLI" scope hypr/input.lua sideways
+run scope hypr/input.lua profile >/dev/null 2>&1
+check "scoping to a profile is recorded" "1" \
+  "$(grep -cx 'hypr/input.lua = profile' "$REPO/.replicant-sync" 2>/dev/null || true)"
+check "…and the panel reads the scope back" "profile" \
+  "$(run status --json --no-fetch | jq -r '[.configs[] | select(.id=="hypr/input.lua")][0].scope')"
+# Scoped to a profile is emphatically NOT switched off: it still syncs, just
+# not with the other profile. The badge has to keep saying so.
+check "…and it is not reported as off" "false" \
+  "$(run status --json --no-fetch | jq -r '[.configs[] | select(.id=="hypr/input.lua")][0].sync_state == "off"')"
+check "…committed, not left dangling" "0" \
+  "$(git -C "$REPO" status --porcelain -- .replicant-sync | grep -c . || true)"
+run scope hypr/input.lua shared >/dev/null 2>&1
+
+check "profile prints the current one" "1" \
+  "$(run profile | grep -c 'is in the' || true)"
+run profile deskbox >/dev/null 2>&1
+check "…and can be set"            "deskbox" "$(run profile | sed -n 's/.*is in the "\([^"]*\)".*/\1/p')"
+check "…and is recorded in the repo" "1" \
+  "$(grep -c ' = deskbox$' "$REPO/.replicant-profiles" 2>/dev/null || true)"
+check_false "a nonsense profile name is refused" "$CLI" profile "../etc"
 
 section "reverting one setting"
 check_false "revert needs an id"       "$CLI" revert

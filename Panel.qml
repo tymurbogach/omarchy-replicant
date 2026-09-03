@@ -105,9 +105,11 @@ Panel {
   readonly property string icRight: root.mdi(0xF0142)    // chevron-right
   readonly property string icInfo: root.mdi(0xF02FC)    // information
   readonly property string icMachine: root.mdi(0xF0176)    // laptop
-  // The plugin's own mark: one thing becoming two. Chosen over the GitHub logo
-  // because GitHub is where the copy happens to live, not what this does.
-  readonly property string icReplicant: root.mdi(0xF0191)   // content-duplicate
+  // The plugin's own mark: two of the same thing, side by side. Chosen over the
+  // GitHub logo because GitHub is where the copy happens to live, not what this
+  // does. The scope button below keeps content-duplicate for "Shared", which is
+  // a different idea (one copy everyone reads) and sits next to its own label.
+  readonly property string icReplicant: root.mdi(0xF000E)   // account-multiple
   readonly property string icShared: root.mdi(0xF0191)      // content-duplicate
   readonly property string icProfile: root.mdi(0xF0322)     // laptop
   readonly property string icOff: root.mdi(0xF0377)         // minus-circle-outline

@@ -101,6 +101,20 @@ done
 
 if (( qml_problem == 0 )); then printf '  \033[32m✓\033[0m none present\n'; else failed=$((failed+1)); fi
 
+# The repo must be clean by its own scanner. A test fixture written out whole is
+# a real credential as far as every scanner in the chain is concerned: GitHub's
+# push protection rejected the commit that first added these, correctly.
+banner "this repo, by its own secret scanner"
+if bash "$ROOT/bin/scan-secrets.sh" "$ROOT/bin" "$ROOT/tests" "$ROOT/Panel.qml" \
+        "$ROOT/BarWidget.qml" "$ROOT/docs" "$ROOT/README.md" >/dev/null 2>&1; then
+  printf '  \033[32m✓\033[0m no credential-shaped strings in the source\n'
+else
+  printf '  \033[31m✗\033[0m a credential-shaped string is in the source — split it, see CLAUDE.md\n'
+  bash "$ROOT/bin/scan-secrets.sh" "$ROOT/bin" "$ROOT/tests" "$ROOT/Panel.qml" \
+       "$ROOT/BarWidget.qml" "$ROOT/docs" "$ROOT/README.md" 2>&1 | sed 's/^/    /'
+  failed=$((failed+1))
+fi
+
 banner "manifest"
 if command -v omarchy-plugin-validate >/dev/null 2>&1; then
   if omarchy-plugin-validate "$ROOT" >/dev/null 2>&1; then printf '  \033[32m✓\033[0m valid\n'

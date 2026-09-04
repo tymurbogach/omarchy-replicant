@@ -360,6 +360,7 @@ scan_one() { # <value> -> "caught" | "missed"
 P_GH="gh""p_"; P_GL="gl""pat-"; P_ANT="sk-""ant-"; P_OAI="sk-""proj-"; P_SK="sk""-"
 P_OR="sk-""or-v1-"; P_XAI="xa""i-"; P_HF="h""f_"; P_NPM="np""m_"
 P_SLACK="xo""xb-"; P_STRIPE="sk""_live_"; P_AWS="AK""IA"; P_JWT="ey""J"
+P_GOOG="AI""za"; P_PEM="BEG""IN OPENSSH PRIVATE KEY"
 A32="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 while IFS='|' read -r name value; do
   [[ -n "$name" ]] || continue
@@ -376,9 +377,9 @@ a Hugging Face token|${P_HF}AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 an npm token|${P_NPM}${A32}AAAAAAAA
 a Slack token|${P_SLACK}123456789012-1234567890123-abcdefghijklmnop
 a Stripe live key|${P_STRIPE}AAAAAAAAAAAAAAAAAAAAAAAA
-a Google API key|AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+a Google API key|${P_GOOG}SyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 an AWS access key id|${P_AWS}IOSFODNN7AAAAAAA
-a private key|-----BEGIN OPENSSH PRIVATE KEY-----
+a private key|-----${P_PEM}-----
 a JSON Web Token|${P_JWT}hbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.${P_JWT}hIjoxLCJiIjoyfQ.abcdefghijklmnop
 SHAPES
 

@@ -298,4 +298,21 @@ check "suggest --json is valid JSON" "0" \
 check_contains "help documents track" "track <path>" "$(run --help)"
 check_contains "help documents suggest" "suggest" "$(run --help)"
 
+section "the background poll is cheap"
+# The bar icon reads six numbers and polls once a minute. It used to build the
+# whole payload — fifty file rows, every setting, every category — to answer
+# them, which was 1.4 s of CPU a minute for a plugin that was idle.
+brief=$(run status --json --brief 2>/dev/null | tail -n1)
+check "brief is valid JSON" "0" "$(printf '%s' "$brief" | jq empty >/dev/null 2>&1; echo $?)"
+check "…and says so"        "true" "$(printf '%s' "$brief" | jq -r '.brief')"
+for f in initialized branch dirty ahead behind; do
+  check "brief still answers $f" "true" "$(printf '%s' "$brief" | jq --arg f "$f" 'has($f)')"
+done
+for f in configs settings categories secrets; do
+  check "brief does not build $f" "false" "$(printf '%s' "$brief" | jq --arg f "$f" 'has($f)')"
+done
+full=$(run status --json 2>/dev/null | tail -n1)
+check "the full payload still has configs" "true" "$(printf '%s' "$full" | jq 'has("configs")')"
+check "…and is not marked brief" "false" "$(printf '%s' "$full" | jq 'has("brief")')"
+
 summary

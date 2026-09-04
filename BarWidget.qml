@@ -74,10 +74,19 @@ BarWidget {
   // once-a-minute tick costs a local git read and nothing else. Opening the
   // panel, pressing refresh, or finishing a write is when a fresh answer
   // actually matters.
+  //
+  // The tick also asks for --brief. This icon reads six numbers; the full
+  // payload builds fifty file rows, twenty-four settings and every category,
+  // which took 1.4 s of CPU once a minute to answer them. Brief takes 0.04 s.
+  // Whenever the panel is open — or a write just finished — the full payload is
+  // built, because that is when anybody is actually looking at the rows.
   function refresh(force) {
     if (probe.running) return
-    probe.command = force ? [root.cli, "status", "--json", "--fetch"]
-                          : [root.cli, "status", "--json"]
+    var full = force || root.opened
+    var cmd = [root.cli, "status", "--json"]
+    if (force) cmd.push("--fetch")
+    if (!full) cmd.push("--brief")
+    probe.command = cmd
     probe.running = true
   }
 
@@ -101,6 +110,15 @@ BarWidget {
       onStreamFinished: {
         try {
           var parsed = JSON.parse(text || "{}")
+          // A brief answer carries the counters and nothing else. Assigning it
+          // whole would empty the rows the panel is drawing from, so its fields
+          // are merged over what is already known instead.
+          if (parsed.brief === true && root.repoState && root.repoState.initialized) {
+            var merged = {}
+            for (var k in root.repoState) merged[k] = root.repoState[k]
+            for (var j in parsed) merged[j] = parsed[j]
+            parsed = merged
+          }
           root.repoState = parsed
           if (panelLoader.item) { panelLoader.item.repoState = parsed; panelLoader.item.asked = true }
         } catch (e) {

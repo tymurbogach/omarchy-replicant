@@ -455,9 +455,19 @@ list_profiles() {
   } | sed '/^$/d' | sort -u
 }
 
+# The scope list is read at least three times per row — once directly and twice
+# more through repo_path_for — and it used to spawn a sed for every one of them.
+# On fifty rows that is a hundred and fifty processes to answer a question about
+# a file of a dozen lines. It is read once per process instead.
+SCOPES_CACHE=""; SCOPES_CACHED=0
+invalidate_scopes_cache() { SCOPES_CACHED=0; SCOPES_CACHE=""; }
 read_scopes() {
-  [[ -f "$SCOPE_FILE" ]] || return 0
-  sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$SCOPE_FILE" 2>/dev/null || true
+  if (( ! SCOPES_CACHED )); then
+    SCOPES_CACHED=1
+    [[ -f "$SCOPE_FILE" ]] && SCOPES_CACHE=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$SCOPE_FILE" 2>/dev/null || true)
+  fi
+  [[ -n "$SCOPES_CACHE" ]] && printf '%s\n' "$SCOPES_CACHE"
+  return 0
 }
 
 # scope_for <rel> → shared | profile | off   (unlisted files are shared)
@@ -509,6 +519,7 @@ write_scope_file() {
     echo "# A path that is not listed is shared. Written by the panel; safe to edit."
     (( ${#keep[@]} )) && printf '%s\n' "${keep[@]}"
   } > "$SCOPE_FILE"
+  invalidate_scopes_cache
 }
 
 # Seed the scope list on a fresh repo, and migrate the v0.5 flat off-list.
@@ -1381,12 +1392,64 @@ config_rel_for_src() {
 
 # path_unpushed <rel-path-inside-the-repo> — 0 (true) if that file's local HEAD
 # differs from origin/<branch> (includes "never pushed at all": no upstream -> true)
-path_unpushed() {
-  local relpath="$1"
-  if ! git -C "$REPO_DIR" rev-parse --abbrev-ref --symbolic-full-name @{u} >/dev/null 2>&1; then
-    return 0
+# ─── One git call, not one per row ──────────────────────────────────────────
+# Every row asked git twice — "is this dirty" and "is this unpushed" — and the
+# second re-checked whether an upstream exists each time. Fifty rows came to a
+# hundred and eighty git processes per panel refresh, and the panel refreshes
+# every sixty seconds. Both questions are answered for the whole repo in one
+# call each, and the per-row lookups are then plain string matching.
+#
+# Cached per process, which is safe because the only thing that reads them is
+# status/JSON building. Anything that writes the repo runs in its own command.
+GIT_CACHE_READY=0
+GIT_DIRTY_SET=""
+GIT_UNPUSHED_SET=""
+# Cached for the length of one build, not one process. Two commands in the same
+# process — which is exactly what the test suite is — must not see the first
+# one's answer after the second has committed.
+GIT_HAS_UPSTREAM=0
+invalidate_git_cache() { GIT_CACHE_READY=0; GIT_DIRTY_SET=""; GIT_UNPUSHED_SET=""; GIT_HAS_UPSTREAM=0; }
+load_git_cache() {
+  (( GIT_CACHE_READY )) && return 0
+  GIT_CACHE_READY=1
+  [[ -d "$REPO_DIR/.git" ]] || return 0
+  # -uall so an untracked DIRECTORY is listed as its files: git collapses one to
+  # "config/nvim/" otherwise, and a per-file lookup would miss every file in it.
+  # -z so a path with a space or a quote arrives intact; a rename yields both
+  # of its sides, and counting both as dirty is the safe direction.
+  local rec
+  while IFS= read -r -d '' rec; do
+    [[ ${#rec} -gt 3 ]] && rec="${rec:3}"
+    [[ -n "$rec" ]] && GIT_DIRTY_SET+="$rec"$'\n'
+  done < <(git -C "$REPO_DIR" status --porcelain -z -uall 2>/dev/null || true)
+  if git -C "$REPO_DIR" rev-parse --abbrev-ref --symbolic-full-name @{u} >/dev/null 2>&1; then
+    GIT_HAS_UPSTREAM=1
+    GIT_UNPUSHED_SET=$(git -C "$REPO_DIR" diff --name-only @{u} 2>/dev/null || true)
   fi
-  ! git -C "$REPO_DIR" diff --quiet @{u} -- "$relpath" 2>/dev/null
+}
+
+# set_has <set> <path> — exact match, or prefix match when the path is a
+# directory id (trailing slash), which is how a tracked tree asks "did anything
+# under me change".
+set_has() {
+  local hay="$1" p="$2" line
+  [[ -n "$hay" ]] || return 1
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    if [[ "$p" == */ ]]; then [[ "$line" == "$p"* ]] && return 0
+    else [[ "$line" == "$p" ]] && return 0; fi
+  done <<<"$hay"
+  return 1
+}
+
+path_dirty() { load_git_cache; set_has "$GIT_DIRTY_SET" "$1"; }
+# No upstream at all means nothing has ever been pushed, so everything is
+# unpushed. Losing that case made a repo before its first push claim every file
+# was already safe on GitHub.
+path_unpushed() {
+  load_git_cache
+  (( GIT_HAS_UPSTREAM )) || return 0
+  set_has "$GIT_UNPUSHED_SET" "$1"
 }
 
 # discover_plugin_entries — auto-detects configs of OTHER installed Omarchy plugins
@@ -1579,6 +1642,7 @@ root_apply() {
 # Stages the whole edited file under $HOME first, so the privileged step is a
 # single copy of a file the user could have inspected, not an editor run as root.
 ini_set() {
+  invalidate_file_maps
   local file="$1" path="$2" value="$3" after="${4:-}" staged
   staged=$(mktemp "${TMPDIR:-/tmp}/replicant-lid.XXXXXX") || return 1
   if [[ -f "$file" ]]; then cp -- "$file" "$staged"; else printf '[%s]\n' "${path%%.*}" > "$staged"; fi
@@ -1609,6 +1673,7 @@ is_laptop() {
 # absent — shell.toml ships nearly empty, so "the key isn't there yet" is the
 # normal first write for most appearance settings, not an error.
 toml_set() {
+  invalidate_file_maps
   local file="$1" section="${2%%.*}" key="${2#*.}" value="$3" tmp
   [[ -f "$file" ]] || printf '' > "$file"
   tmp=$(mktemp)
@@ -1660,6 +1725,7 @@ lua_get() {
 }
 
 lua_set() {
+  invalidate_file_maps
   local file="$1" key="$2" value="$3" tmp
   [[ -f "$file" ]] || return 1
   [[ "$(lua_key_hits "$file" "$key")" == "1" ]] || return 1
@@ -1726,7 +1792,7 @@ get_setting_value() {
       ;;
     toml-int|toml-float)
       [[ -f "$file" ]] || return 1
-      raw=$(toml_get "$file" "$path") || return 1
+      raw=$(map_get "$(file_map "$file" toml)" "$path") || return 1
       [[ -n "$raw" ]] || return 1
       printf '%s\n' "$raw"
       ;;
@@ -1734,7 +1800,7 @@ get_setting_value() {
       # No drop-in yet means logind is on its built-in default, which is what
       # the fallback field records — so report that rather than "missing".
       if [[ -f "$file" ]]; then
-        raw=$(ini_get "$file" "$path" 2>/dev/null || true)
+        raw=$(map_get "$(file_map "$file" toml)" "$path" 2>/dev/null || true)
         [[ -n "$raw" ]] && { printf '%s\n' "$raw"; return 0; }
       fi
       raw=$(setting_field "$entry" 13)
@@ -1742,13 +1808,14 @@ get_setting_value() {
       printf '%s\n' "$raw"
       ;;
     lua-int|lua-bool|lua-enum)
-      lua_get "$file" "$path"
+      map_get "$(file_map "$file" lua)" "$path"
       ;;
     *)
       [[ -f "$file" ]] || return 1
-      # Not `// empty`: jq's alternative operator fires on `false` as well as
-      # `null`, so a boolean setting that is genuinely off would read as missing.
-      raw=$(jq -r "$path" "$file" 2>/dev/null) || return 1
+      # A missing key reads as absent, but `false` must not: jq's `//` fires on
+      # false as well as null, so a boolean setting that is genuinely off would
+      # look like a setting that is not there.
+      raw=$(map_get "$(file_map "$file" json)" "$path") || return 1
       [[ "$raw" == "null" ]] && return 1
       printf '%s\n' "$raw"
       ;;
@@ -1768,6 +1835,7 @@ num_in_range() {
 }
 
 set_setting_value() {
+  invalidate_file_maps
   local entry; entry=$(find_setting "$1") || { echo "unknown setting: $1" >&2; return 1; }
   local file path type label unit min max options apply value="$2"
   file=$(setting_field "$entry" 3);    path=$(setting_field "$entry" 4)
@@ -1919,6 +1987,119 @@ repo_copy_for_rel() {
 # pointed at any file. Used to read the key out of Omarchy's shipped default
 # and out of the repo's saved copy, which is what makes the two revert buttons
 # possible without a second parser.
+# ─── One pass per file, not one process per value ───────────────────────────
+# Every setting is read three times — the live file, Omarchy's default, and the
+# copy in the repo — and each read forked at least one process. lua_get forked
+# FOUR (two greps, a head and a sed). Twenty-four settings came to something
+# like seventy processes per panel refresh, which was two thirds of the time
+# `status --json` took.
+#
+# Each file is now parsed once, whole, into "path<TAB>value" lines, and the
+# per-setting reads are lookups in a string. Parsing the whole file costs the
+# same as parsing one key out of it: the process was the expense, not the work.
+declare -A FILE_MAP_CACHE=()
+declare -A FILE_MAP_LOADED=()
+invalidate_file_maps() { FILE_MAP_CACHE=(); FILE_MAP_LOADED=(); }
+
+# Command substitution forks, and a fork copies the caches rather than sharing
+# them: a map built inside `$(file_map ...)` dies with the subshell, so the
+# first version of this parsed every file on every single lookup and saved
+# almost nothing. The parse therefore has to happen in the PARENT — warm_*
+# below does that once, and the subshells then inherit a populated map.
+#
+# load_file_map is the half that may be called in the parent: it prints nothing.
+load_file_map() {
+  local file="$1" kind="$2" key="$1|$2"
+  if [[ -z "${FILE_MAP_LOADED[$key]:-}" ]]; then
+    FILE_MAP_LOADED[$key]=1
+    FILE_MAP_CACHE[$key]=""
+    if [[ -f "$file" ]]; then
+      case "$kind" in
+        json)
+          # ".idle.lock<TAB>600" — the same dotted form field 4 uses.
+          #
+          # NOT paths(scalars): jq's path filter selects on truthiness, so a key
+          # whose value is `false` produces no path and vanishes from the map.
+          # A boolean setting that is genuinely off would then read as missing,
+          # which is the exact bug the comment in get_setting_value warns about.
+          FILE_MAP_CACHE[$key]=$(jq -r '
+            paths as $p | getpath($p) as $v
+            | select(($v|type) != "object" and ($v|type) != "array")
+            | "." + ($p|map(tostring)|join(".")) + "\t" + ($v|tostring)
+          ' "$file" 2>/dev/null || true) ;;
+        toml)
+          # The key charset is deliberately "anything that is not whitespace or
+          # an equals sign", because that is what the greps this replaces
+          # matched. shell.toml's key is `base-size`: an identifier pattern
+          # dropped it, and the setting read as missing.
+          FILE_MAP_CACHE[$key]=$(awk '
+            /^[[:space:]]*\[/ { sect = $0; gsub(/^[[:space:]]*\[|\][[:space:]]*$/, "", sect); next }
+            /^[[:space:]]*[^#=[:space:]]+[[:space:]]*=/ {
+              k = $0; sub(/[[:space:]]*=.*$/, "", k); gsub(/^[[:space:]]+/, "", k)
+              v = $0; sub(/^[^=]*=[[:space:]]*/, "", v); gsub(/[[:space:]]*$/, "", v)
+              print (sect == "" ? k : sect "." k) "\t" v
+            }' "$file" 2>/dev/null || true) ;;
+        lua)
+          # lua_get deliberately refuses a key that appears twice — a nested
+          # table needs a real parser and these files decide whether the
+          # graphical session starts. The map keeps that: a key seen more than
+          # once is dropped rather than guessed at.
+          FILE_MAP_CACHE[$key]=$(awk '
+            /^[[:space:]]*[^#=[:space:]]+[[:space:]]*=/ {
+              k = $0; sub(/[[:space:]]*=.*$/, "", k); gsub(/^[[:space:]]+/, "", k)
+              v = $0; sub(/^[^=]*=[[:space:]]*/, "", v)
+              sub(/--.*$/, "", v); sub(/,[[:space:]]*$/, "", v)
+              gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+              gsub(/^"|"$/, "", v)
+              n[k]++; val[k] = v
+            }
+            END { for (k in n) if (n[k] == 1) print k "\t" val[k] }' "$file" 2>/dev/null || true) ;;
+      esac
+    fi
+  fi
+}
+
+# file_map <file> <json|toml|lua> — every scalar in the file, keyed the way the
+# SETTINGS registry addresses it.
+file_map() {
+  load_file_map "$1" "$2"
+  printf '%s' "${FILE_MAP_CACHE[$1|$2]}"
+}
+
+# Parse, in this shell, every file the registry will be read from: the live one,
+# Omarchy's default and the copy in the repo. Fourteen files instead of seventy
+# lookups, and every lookup after this is a string search.
+map_kind_for_type() {
+  case "$1" in
+    toml-int|toml-float|ini-enum)  echo toml ;;
+    lua-int|lua-bool|lua-enum)     echo lua ;;
+    number|bool|enum)              echo json ;;
+    *)                             echo "" ;;
+  esac
+}
+warm_setting_file_maps() {
+  local entry file type kind def rel copy
+  for entry in "${SETTINGS[@]}"; do
+    file=$(setting_field "$entry" 3); type=$(setting_field "$entry" 5)
+    [[ "$file" != "-" ]] || continue
+    kind=$(map_kind_for_type "$type"); [[ -n "$kind" ]] || continue
+    load_file_map "$file" "$kind"
+    def=$(default_for_src "$file" 2>/dev/null || true)
+    [[ -n "$def" ]] && load_file_map "$def" "$kind"
+    rel=$(rel_for_src "$file" 2>/dev/null || true)
+    [[ -n "$rel" ]] && { copy=$(repo_copy_for_rel "$rel"); load_file_map "$copy" "$kind"; }
+  done
+}
+
+# map_get <map-text> <key> — the value, or failure when the key is absent.
+map_get() {
+  local k v
+  while IFS=$'\t' read -r k v; do
+    [[ "$k" == "$2" ]] && { printf '%s\n' "$v"; return 0; }
+  done <<<"$1"
+  return 1
+}
+
 read_setting_from() {
   local entry="$1" file="$2" path type raw
   path=$(setting_field "$entry" 4); type=$(setting_field "$entry" 5)
@@ -1927,13 +2108,13 @@ read_setting_from() {
     line-enum)
       raw=$(head -n1 "$file" 2>/dev/null | tr -d '[:space:]')
       [[ -n "$raw" ]] && printf '%s\n' "$raw" || return 1 ;;
-    toml-int|toml-float)
-      raw=$(toml_get "$file" "$path") || return 1
+    toml-int|toml-float|ini-enum)
+      raw=$(map_get "$(file_map "$file" toml)" "$path") || return 1
       [[ -n "$raw" ]] && printf '%s\n' "$raw" || return 1 ;;
     lua-int|lua-bool|lua-enum)
-      lua_get "$file" "$path" ;;
+      map_get "$(file_map "$file" lua)" "$path" ;;
     number|bool|enum)
-      raw=$(jq -r "$path" "$file" 2>/dev/null) || return 1
+      raw=$(map_get "$(file_map "$file" json)" "$path") || return 1
       [[ "$raw" == "null" ]] && return 1
       printf '%s\n' "$raw" ;;
     *) return 1 ;;
@@ -1993,6 +2174,8 @@ settings_display_step() {
 }
 
 build_settings_json() {
+  invalidate_file_maps
+  warm_setting_file_maps
   # One jq invocation for the whole array, not one per setting. The panel polls
   # status once a minute and refreshes after every write, and twenty-odd `jq -n`
   # spawns per build were most of the time that took.
@@ -2000,16 +2183,21 @@ build_settings_json() {
   local scale disp dvalue dmin dmax dstep vtext defval deftext repoval repotext canrd canrr numeric boolean
   {
   local laptop=1; is_laptop || laptop=0
+  local -a F
   for entry in "${SETTINGS[@]}"; do
-    id=$(setting_field "$entry" 1);      group=$(setting_field "$entry" 2)
+    # Split the line ONCE. Each setting_field call is a command substitution,
+    # which is a fork, and thirteen of them per setting across twenty-four
+    # settings was three hundred forks to read a string this shell already had.
+    IFS='|' read -ra F <<<"$entry"
+    id="${F[0]}";        group="${F[1]}"
     # A desktop has no lid. The group is absent rather than greyed out.
     [[ "$group" == "Lid & sleep" && "$laptop" == 0 ]] && continue
-    file=$(setting_field "$entry" 3);    path=$(setting_field "$entry" 4)
-    type=$(setting_field "$entry" 5);    label=$(setting_field "$entry" 6)
-    unit=$(setting_field "$entry" 7);    min=$(setting_field "$entry" 8)
-    max=$(setting_field "$entry" 9);     hint=$(setting_field "$entry" 11)
-    fallback=$(setting_field "$entry" 13)
-    scale=$(setting_field "$entry" 14);  disp=$(setting_field "$entry" 15)
+    file="${F[2]}";      path="${F[3]}"
+    type="${F[4]}";      label="${F[5]}"
+    unit="${F[6]}";      min="${F[7]}"
+    max="${F[8]}";       hint="${F[10]}"
+    fallback="${F[12]:-}"
+    scale="${F[13]:-}";  disp="${F[14]:-}"
     [[ -n "$scale" ]] || scale=1
     [[ -n "$disp" ]] || disp="$unit"
     options=$(setting_options "$entry")
@@ -2114,10 +2302,15 @@ build_setting_groups_json() {
 }
 
 build_configs_json() {
+  invalidate_git_cache
   # One jq for the whole list. Same reason as build_settings_json: this runs on
   # every panel refresh and there are forty-odd rows.
   local entry src rel label category exists is_default has_default default_src config_rel
   local dirty unpushed sync_state saved synced source scope repo_path git_rel unsaved is_dir nfiles
+  # Fill the scope cache HERE, in this shell. scope_for is reached through
+  # $(repo_path_for ...) for every row, and a cache filled inside that
+  # substitution is discarded with it — the file was re-read fifty times over.
+  read_scopes >/dev/null
   {
   for entry in "${TRACKED[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"; label="$rel"
@@ -2172,7 +2365,7 @@ build_configs_json() {
     # Copied into the repo but not committed is unsaved too — same word, same
     # button. Content and git each catch a case the other misses.
     dirty=false
-    git -C "$REPO_DIR" status --porcelain -- "$git_rel" 2>/dev/null | grep -q . && dirty=true
+    path_dirty "$git_rel" && dirty=true
     [[ "$dirty" == true ]] && unsaved=true
     unpushed=false
     path_unpushed "$git_rel" && unpushed=true
@@ -2222,7 +2415,7 @@ build_configs_json() {
     unsaved=false
     if [[ "$saved" == false ]] || ! cmp -s "$psrc" "$CONFIG_DIR/$prel" 2>/dev/null; then unsaved=true; fi
     dirty=false
-    git -C "$REPO_DIR" status --porcelain -- "config/$prel" 2>/dev/null | grep -q . && dirty=true
+    path_dirty "config/$prel" && dirty=true
     [[ "$dirty" == true ]] && unsaved=true
     unpushed=false
     path_unpushed "config/$prel" && unpushed=true
@@ -2257,6 +2450,7 @@ build_configs_json() {
 # a screen share, so the only thing read out of an env file is the NAMES of the
 # variables it defines.
 build_secrets_json() {
+  invalidate_git_cache
   local entry src rel exists mode kind dirty unpushed saved synced sync_state vars nvars unsaved
   {
   for entry in "${TRACKED_SECRETS[@]}"; do
@@ -2288,7 +2482,7 @@ build_secrets_json() {
       if [[ "$saved" == false ]] || ! cmp -s "$src" "$SECRETS_DIR/$rel" 2>/dev/null; then unsaved=true; fi
     fi
     dirty=false
-    git -C "$REPO_DIR" status --porcelain -- "secrets/$rel" 2>/dev/null | grep -q . && dirty=true
+    path_dirty "secrets/$rel" && dirty=true
     [[ "$dirty" == true ]] && unsaved=true
     unpushed=false
     path_unpushed "secrets/$rel" && unpushed=true
@@ -2375,12 +2569,17 @@ should_fetch() {
 }
 
 core_status() {
-  local json=0 force_fetch=0 arg
+  # --brief answers only what the bar icon needs. The bar polls once a minute
+  # and reads six numbers out of it; building forty kilobytes of file rows,
+  # settings and categories for those six was most of the plugin's idle cost.
+  # The full payload is built when the panel opens and after every write.
+  local json=0 force_fetch=0 brief=0 arg
   for arg in "$@"; do
     case "$arg" in
       --json) json=1 ;;
       --fetch) force_fetch=1 ;;
       --no-fetch) force_fetch=-1 ;;
+      --brief) brief=1 ;;
     esac
   done
   if [[ ! -d "$REPO_DIR/.git" ]]; then
@@ -2405,9 +2604,19 @@ core_status() {
     behind=$(git -C "$REPO_DIR" rev-list --count HEAD..@{u} 2>/dev/null || echo 0)
   fi
   local pending_groups=""
-  if git -C "$REPO_DIR" status --porcelain -- config/ 2>/dev/null | grep -q .; then pending_groups="$pending_groups config"; fi
-  if git -C "$REPO_DIR" status --porcelain -- secrets/ 2>/dev/null | grep -q .; then pending_groups="$pending_groups secrets"; fi
-  if git -C "$REPO_DIR" status --porcelain -- state/ 2>/dev/null | grep -q .; then pending_groups="$pending_groups state"; fi
+  path_dirty "config/"  && pending_groups="$pending_groups config"
+  path_dirty "secrets/" && pending_groups="$pending_groups secrets"
+  path_dirty "state/"   && pending_groups="$pending_groups state"
+  if (( json && brief )); then
+    jq -nc --arg branch "$branch" --arg remote "$remote" \
+      --argjson dirty "$dirty" --argjson untracked "$untracked" \
+      --argjson ahead "$ahead" --argjson behind "$behind" \
+      --arg pending "$pending_groups" \
+      '{initialized:true, brief:true, branch:$branch, remote:$remote,
+        dirty:$dirty, untracked:$untracked, ahead:$ahead, behind:$behind,
+        pending:$pending}'
+    return 0
+  fi
   if (( json )); then
     local configs_json secrets_json settings_json categories_json groups_json machines_json
     configs_json=$(build_configs_json)

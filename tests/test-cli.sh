@@ -81,6 +81,12 @@ out=$(run reset-all)
 check "reset-all with no flags is a dry run" "$before_home" "$(hash_tree "$HOME/.config")"
 
 section "reset refuses what it cannot restore"
+# `omarchy refresh config` restores one FILE. A tracked directory has no single
+# default to go back to, and cmp on a directory would decide whether it is
+# "still the default" by failing. Today the only reason one is never offered is
+# that Omarchy ships no default for the directories people track — luck.
+check_false "a directory cannot be reset" "$CLI" reset "nvim/"
+check_contains "…and it says what to use instead" "restore-file" "$(run reset 'nvim/')"
 # A file Omarchy ships no default for has nothing to be reset to, and must be
 # refused before `omarchy refresh` is ever invoked.
 check_false "no default -> refused" "$CLI" reset omarchy/shell.toml

@@ -293,6 +293,11 @@ cmd_reset() {
   source "$CORE" 2>/dev/null || true
   local src
   src=$(resolve_manifest_src "$id") || fail "unknown id: $id"
+  # `omarchy refresh config` restores one FILE. A tracked directory has no
+  # single default to go back to, and today the only reason one is never
+  # offered is that Omarchy happens to ship no default for the directories
+  # people track — luck, not design.
+  is_dir_entry "$id" && fail "$id is a directory — reset restores one file; use restore-file to bring the tree back from your repo"
   # Only a file Omarchy actually ships a default for can be reset, and the
   # refresh path is derived from the real file rather than from the repo
   # layout — the two only coincide by accident (repo "home/bashrc" is
@@ -571,6 +576,9 @@ cmd_reset_all() {
   local entry src rel crel
   for entry in "${TRACKED[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"
+    # Same reason as cmd_reset: refresh restores a file, and cmp on a directory
+    # would decide whether it is "still the default" by failing.
+    is_dir_entry "$rel" && continue
     [[ -f "$src" ]] || continue
     # exactly the scope of cmd_reset: a default exists to go back to, and the
     # file lives where `omarchy refresh config` can reach it

@@ -292,6 +292,29 @@ check "…along with its settings"         "0" \
   "$(build_settings_json | jq -r '[.[] | select(.group=="Lid & sleep")] | length')"
 is_laptop() { return 0; }
 
+section "a notice only when a setting genuinely cannot work"
+# One rule, deliberately. A screensaver at or after the lock timer never appears,
+# so the control silently does nothing — worth saying. Orderings people merely
+# *assume* are wrong (display sleeping before the lock, suspend before the lock)
+# are normal and must stay silent, or the notice trains people to ignore it.
+cat > "$HOME/.config/omarchy/shell.json" <<'JSON'
+{ "idle": { "lock": 300, "screensaver": 150, "lazyDpms": 60, "lazySuspendAc": 0, "lazySuspendBatt": 120 },
+  "bar": { "position": "top", "transparent": false } }
+JSON
+notice_of() { build_settings_json | jq -r --arg id "$1" '[.[] | select(.id==$id)][0].notice'; }
+check "a sane order says nothing"            "" "$(notice_of idle.screensaver)"
+check "…display sleeping first is not a fault" "" "$(notice_of idle.lazyDpms)"
+check "…nor is suspending before the lock"     "" "$(notice_of idle.lazySuspendBatt)"
+
+# Screensaver at 10 min with a 5 min lock: it can never appear.
+jq '.idle.screensaver = 600' "$HOME/.config/omarchy/shell.json" > "$TMP/s.json" && mv "$TMP/s.json" "$HOME/.config/omarchy/shell.json"
+check "a screensaver that can never appear is called out" "1" \
+  "$(notice_of idle.screensaver | grep -c 'never appears' || true)"
+jq '.idle.screensaver = 150' "$HOME/.config/omarchy/shell.json" > "$TMP/s.json" && mv "$TMP/s.json" "$HOME/.config/omarchy/shell.json"
+check "…and it clears when the order is fixed" "" "$(notice_of idle.screensaver)"
+check "every setting carries the field"        "0" \
+  "$(build_settings_json | jq '[.[] | select(has("notice") | not)] | length')"
+
 section "the registry itself is well-formed"
 bad_fields=0; dupe=0; seen=""
 for entry in "${SETTINGS[@]}"; do

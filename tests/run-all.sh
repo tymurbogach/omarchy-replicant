@@ -86,6 +86,19 @@ done
 if grep -nP '[\x{f0000}-\x{ffffd}]' "$ROOT"/*.qml; then
   printf '  \033[31m✗\033[0m a pasted Nerd Font glyph in QML — use root.mdi(0xF….) — see CLAUDE.md\n'; qml_problem=1
 fi
+# 7. A sync_state the QML tests for that the core never emits. Renaming a state
+#    in replicant-core.sh left `sync_state === "modified"` in Panel.qml, which
+#    matched nothing — so every category card reported "in sync" while its own
+#    rows showed unsaved changes. The comparison is a string on both sides and
+#    nothing but this check makes them agree.
+known_states=$(grep -oE 'sync_state="[a-z]+"' "$ROOT/bin/replicant-core.sh" | sed 's/.*="//; s/"//' | sort -u)
+for st in $(grep -oE 'sync_state === "[a-z]+"' "$ROOT"/*.qml | sed 's/.*=== "//; s/"//' | sort -u); do
+  if ! printf '%s\n' "$known_states" | grep -qx "$st"; then
+    printf '  \033[31m✗\033[0m Panel.qml tests for sync_state "%s", which replicant-core.sh never emits\n' "$st"
+    qml_problem=1
+  fi
+done
+
 if (( qml_problem == 0 )); then printf '  \033[32m✓\033[0m none present\n'; else failed=$((failed+1)); fi
 
 banner "manifest"

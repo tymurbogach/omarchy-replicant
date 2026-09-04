@@ -75,7 +75,7 @@ check "a secret id"          "$HOME/.ssh/id_ed25519"        "$(resolve_manifest_
 check "an auto-detected id"  "$HOME/.config/omarchy/demo.json" "$(resolve_manifest_src plugins/demo.json)"
 check_false "an unknown id"  resolve_manifest_src not/a/real/one
 
-section "the three sync states, driven for real through git"
+section "the sync states, driven for real through git"
 git init -q "$REPO_DIR" 2>/dev/null
 git -C "$REPO_DIR" config user.email t@example.com
 git -C "$REPO_DIR" config user.name Test
@@ -89,7 +89,7 @@ state_of() { printf '%s' "$configs" | jq -r --arg id "$1" '[.[] | select(.id == 
 
 check "untouched file → default" "default" "$(state_of hypr/looknfeel.lua)"
 # Committed but with no upstream at all, so it cannot be "saved on GitHub" yet.
-check "committed but never pushed → modified" "modified" "$(state_of hypr/input.lua)"
+check "committed but never pushed → unpushed" "unpushed" "$(state_of hypr/input.lua)"
 
 # Give it an upstream and push, and the same file must flip to "saved".
 git init -q --bare "$TMP/remote.git"
@@ -102,7 +102,52 @@ check "pushed → saved"  "saved" "$(state_of hypr/input.lua)"
 printf 'changed again\n' > "$HOME/.config/hypr/input.lua"
 core_backup >/dev/null 2>&1
 configs=$(build_configs_json)
-check "changed since the last save → modified" "modified" "$(state_of hypr/input.lua)"
+check "changed since the last save → unsaved" "unsaved" "$(state_of hypr/input.lua)"
+
+section "a live edit is noticed without running a backup first"
+# The bug this guards: `dirty` used to ask git whether the REPO COPY had changed,
+# which only becomes true after core_backup has copied the live file in. A file
+# edited on the machine and never saved therefore reported "saved on GitHub".
+# Note there is deliberately NO core_backup between the edit and the check.
+# Start from a genuinely clean baseline: copied in, committed AND pushed, so
+# "saved" is the honest answer before the edit.
+core_backup >/dev/null 2>&1
+git -C "$REPO_DIR" add -A >/dev/null 2>&1
+git -C "$REPO_DIR" commit -q -m "baseline" >/dev/null 2>&1
+git -C "$REPO_DIR" push -q origin HEAD >/dev/null 2>&1
+configs=$(build_configs_json)
+check "a committed and pushed file reads as saved" "saved" "$(state_of hypr/input.lua)"
+
+cp "$HOME/.config/hypr/input.lua" "$TMP/input.saved"
+printf 'edited but never saved\n' > "$HOME/.config/hypr/input.lua"
+configs=$(build_configs_json)
+check "editing a tracked file marks it unsaved" "unsaved" "$(state_of hypr/input.lua)"
+
+# …and putting it back must clear the warning by itself, with no backup either.
+cp "$TMP/input.saved" "$HOME/.config/hypr/input.lua"
+configs=$(build_configs_json)
+check "putting it back clears the warning on its own" "saved" "$(state_of hypr/input.lua)"
+
+# Reverting a customised file TO Omarchy's default is still a change to save.
+# It used to read "default" and look settled, hiding the pending change.
+def_src=$(default_for_src "$HOME/.config/hypr/input.lua" 2>/dev/null || true)
+if [[ -n "$def_src" && -f "$def_src" ]]; then
+  cp "$def_src" "$HOME/.config/hypr/input.lua"
+  configs=$(build_configs_json)
+  check "reverting to Omarchy's default still needs saving" "unsaved" "$(state_of hypr/input.lua)"
+  cp "$TMP/input.saved" "$HOME/.config/hypr/input.lua"
+fi
+
+# A file copied in but not yet committed is also unsaved — same word, same button.
+printf 'copied in, not committed\n' > "$HOME/.config/hypr/input.lua"
+core_backup >/dev/null 2>&1
+configs=$(build_configs_json)
+check "copied into the repo but uncommitted is unsaved" "unsaved" "$(state_of hypr/input.lua)"
+cp "$TMP/input.saved" "$HOME/.config/hypr/input.lua"
+core_backup >/dev/null 2>&1
+git -C "$REPO_DIR" add -A >/dev/null 2>&1
+git -C "$REPO_DIR" commit -q -m "back to the saved copy" >/dev/null 2>&1
+git -C "$REPO_DIR" push -q origin HEAD >/dev/null 2>&1
 
 section "what each config row tells the panel"
 row=$(printf '%s' "$configs" | jq -c '[.[] | select(.id == "hypr/input.lua")][0]')
@@ -115,8 +160,8 @@ check "has_default is false where none does" "false" \
   "$(printf '%s' "$configs" | jq -r '[.[] | select(.id=="etc/99-lid.conf")][0].has_default')"
 check "every row has a sync_state" "0" \
   "$(printf '%s' "$configs" | jq '[.[] | select(.sync_state == null or .sync_state == "")] | length')"
-check "sync_state is one of the four" "0" \
-  "$(printf '%s' "$configs" | jq '[.[] | select(.sync_state | IN("default","modified","saved","off") | not)] | length')"
+check "sync_state is one of the known set" "0" \
+  "$(printf '%s' "$configs" | jq '[.[] | select(.sync_state | IN("default","unsaved","unpushed","saved","off","missing") | not)] | length')"
 
 section "the diff the panel renders inline"
 check_contains "against the repo copy" "this machine" "$(core_diff hypr/input.lua repo)"

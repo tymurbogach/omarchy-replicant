@@ -707,7 +707,7 @@ core_backup() {
 # default_for_src <abs-src> — prints the path of Omarchy's shipped default for
 # that file, or fails when the file has no default at all. Three callers need
 # this same answer and used to each guess it differently: the sync badge
-# ("default" vs "modified"), Diff (there is nothing to diff against without
+# ("default" vs "unsaved"), Diff (there is nothing to diff against without
 # one), and reset-all (`omarchy refresh config` can only restore a file that
 # ships a default — listing one that doesn't guaranteed a failure mid-run).
 default_for_src() {
@@ -1444,7 +1444,26 @@ build_settings_json() {
       default_value: .[20], default_text: .[21],
       repo_value: .[22], repo_text: .[23],
       can_revert_default: (.[24]|flag), can_revert_repo: (.[25]|flag)
-    })'
+    })' | jq -c '
+    # A second pass, because a notice is about how settings sit RELATIVE to each
+    # other and the per-setting record cannot see its siblings.
+    #
+    # Exactly one rule, on purpose. A screensaver set at or after the lock timer
+    # can never appear — the setting silently does nothing, which is worth
+    # saying. The other orderings people assume are wrong are not: a display that
+    # sleeps long before the lock is a normal power choice, and suspending before
+    # the lock timer is fine because Omarchy locks on suspend. Warning about
+    # those fires on a perfectly good config and teaches people to ignore
+    # notices, which costs more than it saves.
+    #
+    # A notice, never a refusal. A deliberate 0 ("never") is a real answer.
+    def val($id): [ .[] | select(.id == $id) | .value ][0];
+    (val("idle.screensaver")) as $ss
+    | (val("idle.lock")) as $lock
+    | map(. + { notice: (
+        if .id == "idle.screensaver" and ($ss != null and $lock != null and $lock > 0 and $ss >= $lock)
+          then "The screen locks first, so this screensaver never appears."
+        else "" end) })'
 }
 
 build_setting_groups_json() {
@@ -1464,7 +1483,7 @@ build_configs_json() {
   # One jq for the whole list. Same reason as build_settings_json: this runs on
   # every panel refresh and there are forty-odd rows.
   local entry src rel label category exists is_default has_default default_src config_rel
-  local dirty unpushed sync_state saved synced source scope repo_path git_rel
+  local dirty unpushed sync_state saved synced source scope repo_path git_rel unsaved
   {
   for entry in "${MANIFEST[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"; label="$rel"
@@ -1481,44 +1500,79 @@ build_configs_json() {
     scope=$(scope_for "$rel")
     repo_path=$(repo_path_for "$rel")
     git_rel="${repo_path#"$REPO_DIR"/}"
-    dirty=false
-    git -C "$REPO_DIR" status --porcelain -- "$git_rel" 2>/dev/null | grep -q . && dirty=true
-    unpushed=false
-    path_unpushed "$git_rel" && unpushed=true
     saved=false
     [[ -f "$repo_path" ]] && saved=true
+    # "Unsaved" is a question about CONTENT: does the file on this machine differ
+    # from the copy the repo holds? Asking git instead only ever sees files
+    # core_backup has already copied in, so a file edited on the machine and
+    # never saved reported itself as "saved on GitHub" — a backup tool claiming
+    # a change was safe when it was nowhere.
+    #
+    # Comparing content is also what makes the warning self-healing: edit a file
+    # and put it back, and cmp matches again, so the badge clears on its own with
+    # no flag to go stale.
+    unsaved=false
+    if [[ "$exists" == true ]]; then
+      if [[ "$saved" == false ]] || ! cmp -s "$src" "$repo_path" 2>/dev/null; then
+        unsaved=true
+      fi
+    fi
+    # Copied into the repo but not committed is unsaved too — same word, same
+    # button. Content and git each catch a case the other misses.
+    dirty=false
+    git -C "$REPO_DIR" status --porcelain -- "$git_rel" 2>/dev/null | grep -q . && dirty=true
+    [[ "$dirty" == true ]] && unsaved=true
+    unpushed=false
+    path_unpushed "$git_rel" && unpushed=true
     synced=true
     [[ "$scope" == "off" ]] && synced=false
-    # Precedence for the badge: off > default > modified > saved.
+    # off > missing > unsaved > default > unpushed > saved.
+    #
+    # unsaved MUST outrank default. Putting a customised file back to Omarchy's
+    # default is itself a change that still needs saving, and it used to show the
+    # calm "default" badge while the repo still held the old customised version —
+    # the pending change hidden behind the tidiest-looking state.
+    #
+    # default outranks unpushed the other way round, and deliberately. Before the
+    # first push nothing is on GitHub, so every untouched default file would
+    # light up as "to push" and drown the handful of rows that actually changed.
+    # Pushing is a repo-level act the header already prompts for; per file, what
+    # matters is whether THIS machine has something the repo does not.
     if [[ "$synced" == false ]]; then sync_state="off"
+    elif [[ "$exists" == false ]]; then sync_state="missing"
+    elif [[ "$unsaved" == true ]]; then sync_state="unsaved"
     elif [[ "$is_default" == true ]]; then sync_state="default"
-    elif [[ "$dirty" == true || "$unpushed" == true ]]; then sync_state="modified"
+    elif [[ "$unpushed" == true ]]; then sync_state="unpushed"
     else sync_state="saved"
     fi
-    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
       "$rel" "$label" "$src" "$category" "$exists" "$is_default" "$has_default" \
-      "$config_rel" "$dirty" "$unpushed" "$sync_state" "$saved" "$synced" "manifest" "$scope"
+      "$config_rel" "$dirty" "$unpushed" "$sync_state" "$saved" "$synced" "manifest" "$scope" "$unsaved"
   done
   # Auto-detected entries from other plugins. No Omarchy default ships for
   # these, so they can never read as "default".
   local psrc prel pname
   while IFS=$'\t' read -r psrc prel pname; do
     [[ -n "$psrc" ]] || continue
-    dirty=false
-    git -C "$REPO_DIR" status --porcelain -- "config/$prel" 2>/dev/null | grep -q . && dirty=true
-    unpushed=false
-    path_unpushed "config/$prel" && unpushed=true
     saved=false
     [[ -f "$CONFIG_DIR/$prel" ]] && saved=true
+    unsaved=false
+    if [[ "$saved" == false ]] || ! cmp -s "$psrc" "$CONFIG_DIR/$prel" 2>/dev/null; then unsaved=true; fi
+    dirty=false
+    git -C "$REPO_DIR" status --porcelain -- "config/$prel" 2>/dev/null | grep -q . && dirty=true
+    [[ "$dirty" == true ]] && unsaved=true
+    unpushed=false
+    path_unpushed "config/$prel" && unpushed=true
     synced=true
     is_excluded "$prel" && synced=false
     if [[ "$synced" == false ]]; then sync_state="off"
-    elif [[ "$dirty" == true || "$unpushed" == true ]]; then sync_state="modified"
+    elif [[ "$unsaved" == true ]]; then sync_state="unsaved"
+    elif [[ "$unpushed" == true ]]; then sync_state="unpushed"
     else sync_state="saved"
     fi
-    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
       "$prel" "$pname" "$psrc" "plugins" "true" "false" "false" \
-      "omarchy/${psrc##*/}" "$dirty" "$unpushed" "$sync_state" "$saved" "$synced" "auto" "$(scope_for "$prel")"
+      "omarchy/${psrc##*/}" "$dirty" "$unpushed" "$sync_state" "$saved" "$synced" "auto" "$(scope_for "$prel")" "$unsaved"
   done < <(discover_plugin_entries)
   } | jq -Rsc '
     def flag: . == "true";
@@ -1528,7 +1582,7 @@ build_configs_json() {
       exists: (.[4]|flag), is_default: (.[5]|flag), has_default: (.[6]|flag),
       config_rel: .[7], dirty: (.[8]|flag), unpushed: (.[9]|flag),
       sync_state: .[10], saved: (.[11]|flag), synced: (.[12]|flag),
-      source: .[13], scope: .[14]
+      source: .[13], scope: .[14], unsaved: (.[15]|flag)
     })'
 }
 
@@ -1538,7 +1592,7 @@ build_configs_json() {
 # a screen share, so the only thing read out of an env file is the NAMES of the
 # variables it defines.
 build_secrets_json() {
-  local entry src rel exists mode kind dirty unpushed saved synced sync_state vars nvars
+  local entry src rel exists mode kind dirty unpushed saved synced sync_state vars nvars unsaved
   {
   for entry in "${SECRETS_MANIFEST[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"
@@ -1559,18 +1613,27 @@ build_secrets_json() {
              | sed -e 's/^[[:space:]]*//' -e 's/^export[[:space:]]*//' -e 's/=$//' | sort -u | paste -sd, - || true)
       [[ -n "$vars" ]] && nvars=$(printf '%s' "$vars" | tr ',' '\n' | grep -c .)
     fi
-    dirty=false
-    git -C "$REPO_DIR" status --porcelain -- "secrets/$rel" 2>/dev/null | grep -q . && dirty=true
-    unpushed=false
-    path_unpushed "secrets/$rel" && unpushed=true
     saved=false
     [[ -f "$SECRETS_DIR/$rel" ]] && saved=true
+    # Same content-first rule as the config rows. cmp reads both files but says
+    # only whether they differ — no secret is read INTO a variable, printed, or
+    # put in the JSON. Comparing is not revealing.
+    unsaved=false
+    if [[ "$exists" == true ]]; then
+      if [[ "$saved" == false ]] || ! cmp -s "$src" "$SECRETS_DIR/$rel" 2>/dev/null; then unsaved=true; fi
+    fi
+    dirty=false
+    git -C "$REPO_DIR" status --porcelain -- "secrets/$rel" 2>/dev/null | grep -q . && dirty=true
+    [[ "$dirty" == true ]] && unsaved=true
+    unpushed=false
+    path_unpushed "secrets/$rel" && unpushed=true
     synced=true
     is_excluded "$rel" && synced=false
     if [[ "$synced" == false ]]; then sync_state="off"
-    elif [[ "$dirty" == true || "$unpushed" == true ]]; then sync_state="modified"
-    elif [[ "$saved" == true ]]; then sync_state="saved"
-    else sync_state="modified"
+    elif [[ "$exists" == false ]]; then sync_state="missing"
+    elif [[ "$unsaved" == true ]]; then sync_state="unsaved"
+    elif [[ "$unpushed" == true ]]; then sync_state="unpushed"
+    else sync_state="saved"
     fi
     printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
       "$rel" "$src" "$exists" "$mode" "$kind" "$dirty" "$unpushed" "$saved" \

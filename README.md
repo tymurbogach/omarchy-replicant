@@ -62,6 +62,7 @@ omarchy-replicant scope hypr/input.lua profile
 ## What else it does
 
 - **43 tracked files**, grouped into eleven areas. Nothing scrolls forever; you open the one you came for.
+- **Change detection that tells the truth.** Every file is compared by content against the copy in your repo, so editing one says so immediately — and putting it back clears the warning by itself. Badges: ● changed here · ↑ saved here, not pushed · ◆ saved on GitHub · ○ untouched default · ⊘ not synced.
 - **24 settings from the panel**, in units people use — the lock screen is *10 min*, not *600*.
 - **Lid & sleep** on laptops: what closing the lid does on battery, on AC, and when docked.
 - **Two ways back for every value** — one button to Omarchy's default, one to what your repo has.

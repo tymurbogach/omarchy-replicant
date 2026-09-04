@@ -39,9 +39,9 @@ machine- or user-specific except through `MANIFEST`/`SECRETS_MANIFEST` in
    "factory" with "what's in my repo".
 4. **Any visual change to `Panel.qml`/`BarWidget.qml` is verified with a real screenshot**
    (`grim`) after reloading the plugin — a process not crashing, or just reading the QML, is not
-   enough. `state.configs[].sync_state` is the source of truth for the 3 badges (○ default /
-   ● modified / ◆ saved); if a new state is added, verify it by actually triggering it on a test
-   file, not just by reading the code.
+   enough. `repoState.configs[].sync_state` is the source of truth for the badges
+   (● unsaved / ↑ unpushed / ◆ saved / ○ default / ⊘ off / · missing); if a new state is added,
+   verify it by actually triggering it on a test file, not just by reading the code.
 5. **Global destructive commands ask for a single summary confirmation** (not per-file) unless
    `--yes`/`-y` is passed explicitly — this applies to `reset-all` and `restore --apply --all`.
 6. **The panel never opens a terminal the user has to dismiss.** Editing a file launches the
@@ -193,6 +193,32 @@ printf '\U000F0450 F0450   \U000F0167 F0167\n' > /tmp/g.txt
 magick -background '#101315' -fill '#cacccc' -font "$F" -pointsize 26 label:@/tmp/g.txt /tmp/g.png
 ```
 
+## "Has this changed?" is a question about content, never about git alone
+
+`build_configs_json` used to answer it with `git status --porcelain` on the **repo copy**. That
+only becomes true once `core_backup` has copied the live file in, so a file edited on the machine
+and never saved reported itself as **saved on GitHub** — a backup tool telling you your change was
+safe when it existed nowhere but that machine. It survived review because the test that covered it
+ran `core_backup` first, which is exactly what hid the bug.
+
+The state is now `! cmp -s "$src" "$(repo_path_for "$rel")"`, OR'd with the git check (content
+catches "never copied in", git catches "copied in, never committed"). Comparing content is also
+what makes the warning **self-healing**: edit a file and put it back and `cmp` matches again, so
+the badge clears on its own. There is no flag to go stale.
+
+Two ordering rules fell out of it, both deliberate:
+
+- **`unsaved` outranks `default`.** Reverting a customised file to Omarchy's default is itself a
+  change that needs saving; it used to show the calm ○ while the repo still held the old version.
+- **`default` outranks `unpushed`.** Before the first push nothing is on GitHub, so every untouched
+  default file would light up as "to push" and drown the few rows that actually changed.
+
+**When you rename a state, the QML does not follow.** `Panel.qml` compared
+`sync_state === "modified"` after the core stopped emitting it, so every category card said
+"in sync" while its own rows showed unsaved changes. Both sides are bare strings and nothing
+connects them — guard 7 in `tests/run-all.sh` now fails when the QML tests for a state the core
+never emits.
+
 ## Every writer of a repo-shape file must migrate first
 
 `core_scope` once rewrote `.replicant-sync` from whatever `read_scopes` returned. On a repo that
@@ -260,8 +286,8 @@ a confusing test failure where the value being searched for was visibly present 
   below it is what that command already does, plus the things a script cannot check.
 - `omarchy-plugin-validate` on this directory after any structural change.
 - Reload the plugin and visually inspect with `grim` (bar icon + open panel).
-- `omarchy-replicant status --json | jq '.configs[] | {id, sync_state}'` after forcing all 3
-  states by hand on a test file (one untouched, one edited but uncommitted, one committed and
-  pushed) — confirm `default`/`modified`/`saved` show up correctly.
+- `omarchy-replicant status --json | jq '.configs[] | {id, sync_state}'` after forcing the states
+  by hand on a test file (one untouched, one edited and NOT saved, one committed but unpushed,
+  one committed and pushed) — confirm `default`/`unsaved`/`unpushed`/`saved` show up correctly.
 - `omarchy-replicant reset-all --dry-run` and `omarchy-replicant restore --dry-run` must not
   touch any file — compare hashes before/after if in doubt.

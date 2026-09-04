@@ -46,6 +46,7 @@ Panel {
   property string lastOutput: ""
   property string activeTab: "overview"
   property string fileSearch: ""
+  property string settingSearch: ""
   property var recent: []
   property var shortcuts: ({ own: [], active: [], own_count: 0, active_count: 0 })
   property bool shortcutsLoaded: false
@@ -118,9 +119,42 @@ Panel {
   readonly property string icOff: root.mdi(0xF0377)         // minus-circle-outline
 
   // ── derived summaries ─────────────────────────────────────────────────────
+  // One place maps a sync state to how it looks, so a new state cannot be added
+  // to the core and silently render as the fallback in three different rows.
+  function stateGlyph(st) {
+    if (st === "off") return "⊘"
+    if (st === "missing") return "·"
+    if (st === "unsaved") return "●"
+    if (st === "unpushed") return "↑"
+    if (st === "default") return "○"
+    return "◆"
+  }
+  function stateColor(st) {
+    if (st === "unsaved") return Color.accent
+    if (st === "unpushed") return Color.accent
+    if (st === "saved") return root.okColor
+    return root.dim
+  }
+  function stateWord(st) {
+    if (st === "off") return "not synced"
+    if (st === "missing") return "not on this machine"
+    if (st === "unsaved") return "changed here — press Save"
+    if (st === "unpushed") return "saved here, not pushed yet"
+    if (st === "default") return "untouched Omarchy default"
+    return "saved on GitHub"
+  }
+
   readonly property string profileName: root.repoState.profile || "this machine"
   readonly property int scopedCount: (root.repoState.configs || []).filter(function(c){ return c.scope === "profile" }).length
-  readonly property int nDirty: repoState.dirty || 0
+  // Counted from the rows themselves, not from repoState.dirty. The badges and
+  // the header have to answer to one source or they contradict each other — the
+  // git count only ever saw files already copied into the repo, so the header
+  // could read EVERYTHING SAVED while rows below it showed unsaved changes.
+  readonly property int nDirty: (root.repoState.configs || []).filter(function(c){
+    return c.sync_state === "unsaved"
+  }).length + (root.repoState.secrets || []).filter(function(s){
+    return s.sync_state === "unsaved"
+  }).length
   readonly property int nAhead: repoState.ahead || 0
   readonly property int nBehind: repoState.behind || 0
 
@@ -202,9 +236,12 @@ Panel {
     for (var i = 0; i < cats.length; i++) {
       var rows = root.rowsFor(cats[i].id)
       if (rows.length === 0) continue
+      // Counted from the same states the badges render, not a separate word.
+      // This once tested for "modified", a state that no longer exists, so every
+      // card cheerfully said "in sync" while its own rows showed unsaved changes.
       var changed = 0, off = 0
       for (var j = 0; j < rows.length; j++) {
-        if (rows[j].sync_state === "modified") changed++
+        if (rows[j].sync_state === "unsaved" || rows[j].sync_state === "unpushed") changed++
         if (rows[j].synced === false) off++
       }
       out.push({
@@ -216,16 +253,22 @@ Panel {
     return out
   }
 
-  readonly property int countChanged: (root.repoState.configs || []).filter(function(c){ return c.sync_state === "modified" }).length
+  readonly property int countChanged: root.nDirty
   readonly property int countOff: (root.repoState.configs || []).filter(function(c){ return c.synced === false }).length
 
   // ── settings, grouped in registry order ───────────────────────────────────
   readonly property var settingGroups: {
     var meta = root.repoState.setting_groups || []
     var list = root.repoState.settings || []
+    var needle = root.settingSearch.toLowerCase()
     var out = []
     for (var g = 0; g < meta.length; g++) {
       var items = list.filter(function(s) { return s.group === meta[g].name })
+      if (needle !== "") {
+        items = items.filter(function(s) {
+          return (String(s.label) + " " + String(s.id) + " " + String(s.hint)).toLowerCase().indexOf(needle) !== -1
+        })
+      }
       if (items.length === 0) continue
       var changed = items.filter(function(s) { return s.can_revert_default }).length
       out.push({ id: "set:" + meta[g].name, name: meta[g].name, icon: meta[g].icon,
@@ -477,7 +520,12 @@ Panel {
         else if (t === "r") root.refresh()
         else if (t === "s" && root.ready && !root.busy) root.doSavegame()
         else if (t === "c") root.closeAllCards()
-        else if (t === "/") { root.activeTab = "configs"; searchField.forceActiveFocus() }
+        // "/" filters where you already are. It used to always jump to Configs,
+        // which was right when that was the only list with a filter.
+        else if (t === "/") {
+          if (root.activeTab === "settings") settingSearchField.forceActiveFocus()
+          else { root.activeTab = "configs"; searchField.forceActiveFocus() }
+        }
       }
 
       // ─────────────────────────────── header (fixed) ────────────────────────
@@ -827,8 +875,10 @@ Panel {
             // saves the question.
             Text {
               width: parent.width
-              text: "○ Omarchy default   ● changed here   ◆ saved on GitHub   ⊘ not synced"
+              text: "● changed here, not saved   ↑ saved here, not pushed   "
+                  + "◆ saved on GitHub   ○ untouched default   ⊘ not synced   · not on this machine"
               color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
             }
 
             Text {
@@ -868,6 +918,28 @@ Panel {
               color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
             }
 
+            Row {
+              width: parent.width
+              spacing: Style.space(8)
+              TextField {
+                id: settingSearchField
+                width: parent.width - settingsCollapseBtn.width - Style.space(8)
+                placeholderText: "Filter settings…   (/)"
+                foreground: root.fg
+                accent: Color.accent
+                font.family: root.ff
+                onTextChanged: root.settingSearch = text
+                Keys.onEscapePressed: { text = ""; keyCatcher.forceActiveFocus() }
+              }
+              Button {
+                id: settingsCollapseBtn
+                text: "Collapse all"; bordered: false
+                foreground: root.dim; fontFamily: root.ff
+                tooltipText: "Close every open group  (c)"
+                onClicked: root.closeAllCards()
+              }
+            }
+
             Repeater {
               model: root.settingGroups
               delegate: SettingCard {
@@ -875,6 +947,13 @@ Panel {
                 group: modelData
                 width: content.width
               }
+            }
+
+            Text {
+              width: parent.width
+              visible: root.settingGroups.length === 0
+              text: "Nothing matches that filter."
+              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
             }
           }
 
@@ -1548,6 +1627,16 @@ Panel {
           color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
           elide: Text.ElideRight
         }
+        // Only ever present when the value genuinely cannot do what it says —
+        // see the single rule in build_settings_json. Not a warning strip that
+        // is always on; a row that says nothing is a row that is fine.
+        Text {
+          width: parent.width
+          visible: String(srow.setting.notice || "") !== ""
+          text: String(srow.setting.notice || "")
+          color: Color.accent; font.family: root.ff; font.pixelSize: Style.font.caption
+          elide: Text.ElideRight
+        }
       }
 
       // One control per type. Every control is instantiated on every row, so
@@ -1688,9 +1777,10 @@ Panel {
   component FileRow: Item {
     id: frow
     property var config: ({})
-    readonly property string syncState: frow.config.sync_state || "modified"
+    readonly property string syncState: frow.config.sync_state || "saved"
     readonly property bool isDefault: frow.syncState === "default"
-    readonly property bool isModified: frow.syncState === "modified"
+    // "Needs the Save button" — unsaved, or committed here but never pushed.
+    readonly property bool isModified: frow.syncState === "unsaved" || frow.syncState === "unpushed"
     readonly property string scope: frow.config.scope || "shared"
     readonly property bool isOff: frow.config.synced === false
     readonly property bool missing: frow.config.exists === false
@@ -1709,11 +1799,8 @@ Panel {
       Text {
         anchors.verticalCenter: parent.verticalCenter
         width: Style.space(14)
-        text: frow.isOff ? "⊘" : frow.missing ? "·" : frow.isDefault ? "○" : frow.isModified ? "●" : "◆"
-        color: frow.isOff ? root.dim
-             : frow.missing ? root.dim
-             : frow.isDefault ? root.dim
-             : frow.isModified ? Color.accent : root.okColor
+        text: root.stateGlyph(frow.syncState)
+        color: root.stateColor(frow.syncState)
         font.family: root.ff; font.pixelSize: Style.font.body
         horizontalAlignment: Text.AlignHCenter
       }

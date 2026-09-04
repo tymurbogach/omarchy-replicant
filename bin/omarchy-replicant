@@ -298,7 +298,11 @@ cmd_restore() {
   # the backup.
   restore_theme() {
     local dry="$1" want current
-    want=$(head -n1 "$REPO_DIR/config/omarchy/theme.name" 2>/dev/null | tr -d '\r' || true)
+    # Through repo_path_for, never a hardcoded config/ path: if theme.name is
+    # ever scoped to a profile its copy moves, and a restore reading the old path
+    # would silently find nothing. This is the rule the restore plan already
+    # follows — one function decides where a copy lives.
+    want=$(head -n1 "$(repo_path_for omarchy/theme.name)" 2>/dev/null | tr -d '\r' || true)
     if [[ -z "$want" ]]; then skip "no theme recorded in the repo" >&2; return 0; fi
     current=$(omarchy-theme-current 2>/dev/null || echo "")
     # omarchy-theme-current answers "Everforest"; the file records "everforest".

@@ -119,12 +119,55 @@ cmd_create() {
 }
 
 # savegame — system -> repo -> GitHub (ported from savegame.sh)
+# The panel has no field to type a commit message in, so from the panel a save
+# could never commit anything: savegame without -m deliberately leaves config
+# and secrets copied-in-but-uncommitted, so a human can write one commit per
+# change explaining WHY. That discipline is a terminal workflow. A button
+# labelled "commit and push" that neither commits nor pushes is not — the user
+# pressed Save, watched every badge stay exactly as red as before, and reported
+# it as "it does not upload". It was doing what it was asked; nobody could ask
+# it for the other thing.
+#
+# --auto writes the subject from the paths themselves. It says WHAT changed and
+# never why, which is honest about what a button is able to know. Paths only:
+# a file's name is not a secret (the panel lists them on screen already), a
+# file's contents are, and those never reach a commit subject.
+auto_commit_subject() {
+  local -a raw=() rels=()
+  local line p kind=config
+  while IFS= read -r line; do
+    [[ -z $line ]] && continue
+    p=${line:3}                 # porcelain is 'XY <path>'
+    p=${p##* -> }               # a rename names both; the new name is the one that matters
+    p=${p#\"}; p=${p%\"}
+    raw+=("$p")
+  # -uall, or a brand-new directory collapses to one entry and the subject says
+  # "secrets: gh/" where the file is gh/hosts.yml. The first thing ever tracked
+  # under a new folder is exactly when the name matters most.
+  done < <(git_repo status --porcelain -uall -- . ':(exclude)state/' 2>/dev/null)
+  (( ${#raw[@]} )) || { printf 'config: save\n'; return; }
+  local all_secret=1
+  for p in "${raw[@]}"; do
+    [[ $p == secrets/* ]] || all_secret=0
+    p=${p#config/}; p=${p#secrets/}; p=${p#profiles/*/config/}
+    rels+=("$p")
+  done
+  (( all_secret )) && kind=secrets
+  local n=${#rels[@]} joined
+  joined=$(printf '%s, ' "${rels[@]}"); joined=${joined%, }
+  if (( ${#joined} <= 60 )); then
+    printf '%s: %s\n' "$kind" "$joined"
+  else
+    printf '%s: %d files — %s, +%d more\n' "$kind" "$n" "${rels[0]}" "$(( n - 1 ))"
+  fi
+}
+
 cmd_savegame() {
-  local MSG="" PUSH=1
+  local MSG="" PUSH=1 AUTO=0
   while (( $# )); do case "$1" in
     -m|--message) MSG=${2:-}; [[ -n "$MSG" ]] || fail "-m needs a message"; shift 2;;
+    -a|--auto) AUTO=1; shift;;
     --no-push) PUSH=0; shift;;
-    -h|--help) echo "savegame: backup + auto-commit state + push. Without -m, leaves config/secrets uncommitted for 1 commit per change."; return 0;;
     *) fail "unknown option: $1";;
   esac; done
   ensure_core
@@ -133,7 +176,7 @@ cmd_savegame() {
     git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
   fi
   echo "→ savegame: copying into the repo" >&2
-  bash "$CORE" backup
+  bash "$CORE" backup --for-savegame
 
   if [[ -z $(git_repo status --porcelain 2>/dev/null) ]]; then
     echo "No changes. Nothing to save." >&2; return 0; fi
@@ -156,6 +199,9 @@ cmd_savegame() {
 
   local pending
   pending=$(git_repo status --porcelain -- . ':(exclude)state/' 2>/dev/null || true)
+  # An explicit -m always wins: a subject a person wrote beats one derived from
+  # a file list, and --auto is only ever a fallback for callers that cannot ask.
+  if [[ -n $pending && -z $MSG ]] && (( AUTO )); then MSG=$(auto_commit_subject); fi
   if [[ -n $pending && -n $MSG ]]; then
     git_repo add -A
     git_repo commit -q -m "$MSG"
@@ -318,6 +364,41 @@ cmd_reset() {
   command -v omarchy >/dev/null 2>&1 || fail "omarchy not found"
   omarchy refresh config "$rel" 2>&1 || fail "omarchy refresh config $rel failed"
   ok "reset $rel → previous version kept as .bak.<epoch>"
+}
+
+# `push` means push.
+#
+# It used to mean "copy everything in, stage the lot with `add -A`, invent a
+# commit message out of the current date, commit, push" — a second, worse
+# savegame, inline in the dispatcher, that nothing called: not the panel, not
+# the docs, not --help, not one test. It also took whatever arguments it was
+# handed as the commit subject, which is how a commit titled "--help" reached
+# GitHub.
+#
+# The bar reads "↑ 3 to push", so that is what the word has to do here: send
+# the commits that already exist, and nothing else. Copying and committing
+# first is savegame's job, and when there is uncommitted work this says so
+# rather than quietly deciding on the user's behalf.
+cmd_push() {
+  ensure_core
+  local branch; branch=$(git_repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)
+  if ! git_repo rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
+    echo "→ First push of $branch to $(git_repo config --get remote.origin.url 2>/dev/null)" >&2
+    git_repo push -u origin "$branch" || fail "push failed"
+    ok "pushed"; return 0
+  fi
+  local ahead; ahead=$(git_repo log --oneline '@{u}..HEAD' 2>/dev/null | wc -l)
+  if (( ahead == 0 )); then
+    ok "nothing to push"
+    # Uncommitted work is not "nothing to do", and the difference is the whole
+    # reason someone is looking at this command.
+    [[ -n $(git_repo status --porcelain 2>/dev/null) ]] &&
+      echo "  there are uncommitted changes — 'savegame --auto' commits and pushes them" >&2
+    return 0
+  fi
+  echo "→ Pushing $ahead commit(s) to $(git_repo config --get remote.origin.url 2>/dev/null)" >&2
+  git_repo push origin HEAD || fail "push failed"
+  ok "pushed"
 }
 
 cmd_pull() {
@@ -576,7 +657,6 @@ cmd_reset_all() {
     --apply) DRY=0; shift;;
     --dry-run) DRY=1; shift;;
     --yes|-y) YES=1; shift;;
-    -h|--help) echo "reset-all: restores ALL configs with a known Omarchy default back to factory (omarchy refresh), with .bak.<epoch> backups. Dry-run by default."; return 0;;
     *) fail "unknown option: $1";;
   esac; done
   ensure_core
@@ -1072,12 +1152,6 @@ cmd_purge() {
     --dry-run) DRY=1; shift;;
     --yes|-y) YES=1; shift;;
     --repo) KEEP_REPO=0; shift;;
-    -h|--help)
-      echo "purge: remove everything omarchy-replicant put on this machine outside the plugin folder."
-      echo "  --apply    actually delete (default is a dry run)"
-      echo "  --repo     also delete the local clone of your backup repo"
-      echo "             (your GitHub repo is never touched)"
-      return 0;;
     *) fail "unknown option: $1";;
   esac; done
 
@@ -1149,9 +1223,11 @@ First machine
 
 Every day
   savegame [-m "why"]         Copy everything in, commit, push        (--no-push to hold)
+            [--auto]          ...with the subject written from what changed
   backup                      Copy everything in and stop — no commit, no push
   status [--json] [--brief]   What changed, what is pushed, what is not
   diff [id]                   Pending changes, or what changed in one file
+  push                        Send the commits you already have, and nothing else
   pull                        Bring down what another machine saved
 
 What gets backed up
@@ -1191,8 +1267,131 @@ Two ways back, and they are not the same thing
 USAGE
 }
 
+# `--help` is a question, never an instruction.
+#
+# Every command dispatched before anything looked for the flag, so it arrived
+# as an ordinary argument and the command ran: `unlink --help` removed the
+# symlink from PATH, `link --help` put it back somewhere else, `pull --help`
+# fetched, `init --help` wrote the whole repo layout, and `push --help`
+# committed a file with "--help" as the subject and pushed it to GitHub. Every
+# one of those exited 0 and looked like help had been printed. Asking a command
+# what it does must never be the same as doing it.
+#
+# Only the FIRST argument is inspected, so a message that happens to be "-h"
+# (`savegame -m -h`) is still a message and not a help request.
+declare -A HELP=(
+  [init]="init [--savegame]
+  Prepare the local repo without touching GitHub. Safe to re-run: it creates the
+  layout, the hooks and the .gitignore, and migrates an older repo shape."
+  [login]="login
+  Log in to GitHub with gh, if you are not logged in already. Nothing else."
+  [create]="create [name] [--push]
+  Make the PRIVATE GitHub repo for YOUR data and push this machine into it.
+  Defaults to <hostname>-replicant. Always private. Asks; run it in a terminal."
+  [backup]="backup
+  Copy every tracked file into the local repo and stop. No commit, no push, no
+  network. This is the half of savegame that touches your files."
+  [savegame]="savegame [-m \"why\"] [--auto] [--no-push]
+  Copy everything in, commit, push.
+  With -m, one commit carrying your reason. With --auto, a subject derived from
+  the paths that changed (what the panel's Save button uses). With neither, the
+  inventory is committed and your config is left copied-in but UNCOMMITTED, so
+  you can write one commit per change by hand.
+  --no-push holds it all locally."
+  [status]="status [--json] [--brief] [--fetch|--no-fetch]
+  What changed, what is saved, what is still to push. --json is what the panel
+  reads. Read-only: it never writes to the repo."
+  [get]="get <setting-id>
+  Print one setting's current value, in the unit it is stored in."
+  [set]="set <setting-id> <value>
+  Write one setting. Always in the STORED unit — 'set idle.lock 600' is seconds,
+  even though the panel shows you minutes."
+  [diff]="diff  ·  diff <id>
+  With no id: everything waiting to be saved. With an id: what changed in that
+  one file. The contents of a tracked secret are never printed — only whether
+  it differs."
+  [edit]="edit <id> [--wait]
+  Open that tracked file in your editor. Directories open at their top."
+  [path]="path <id>
+  Print where a tracked id really lives on this machine."
+  [save-file]="save-file <id> [-m \"why\"]
+  Commit and push just that one file, staging nothing else."
+  [log]="log [-n N] [--json]
+  Recent saves. Runs of identical subjects are collapsed with a count."
+  [settings]="settings [--json]
+  Every editable setting, its current value and where it is stored."
+  [doctor]="doctor
+  Check auth, that the remote really is private, the git hooks, file modes and
+  version skew between machines. Read-only; it fixes nothing."
+  [sync]="sync <id> on|off
+  The old two-state form of scope. 'scope <id> shared|profile|off' replaced it."
+  [scope]="scope <id> shared|profile|off
+  Who gets this file. shared: every machine. profile: each profile keeps its own
+  copy, so neither overwrites the other. off: nobody backs it up."
+  [track]="track <path> [name-in-repo] [--secret]
+  Add a file or a directory (trailing /) to YOUR list, which lives in your repo
+  and travels to your other machines. --secret stores it under secrets/ at mode
+  600 and keeps its contents out of every diff and every panel row."
+  [untrack]="untrack <id>
+  Drop one of your own entries AND its copy in the repo. Refuses entries that
+  ship with the plugin — use 'scope <id> off' for those."
+  [suggest]="suggest [--json]
+  Config on this machine that nothing is backing up yet, credentials first.
+  It only proposes; nothing is tracked until you say so."
+  [profile]="profile [name]
+  Show or set which profile this machine is in. Files scoped 'profile' are kept
+  per profile, so a desktop and a laptop stop overwriting each other."
+  [revert]="revert <setting-id> [--to default|repo]
+  Put one setting back to Omarchy's default, or to what is saved in your repo."
+  [restore-file]="restore-file <id>
+  Bring one file or directory back from the repo, keeping a .bak.<epoch>."
+  [shortcuts]="shortcuts [--json]
+  Your own keybinding overrides, and what each key is bound to right now."
+  [link]="link
+  Put omarchy-replicant on your PATH at ~/.local/bin. The panel never needs
+  this — it is for typing."
+  [unlink]="unlink
+  Remove that symlink again. Nothing else is touched."
+  [purge]="purge [--apply] [--repo]
+  Remove everything omarchy-replicant put on this machine outside its own
+  folder, including the .bak.<epoch> copies it left behind.
+  --apply  actually delete (a dry run by default)
+  --repo   also delete the local clone of your backup repo
+  Your GitHub repo is never touched."
+  [reset]="reset <id>
+  Put one file back to Omarchy's default, keeping a .bak.<epoch>."
+  [reset-all]="reset-all [--apply] [--yes]
+  Put EVERY file with a known Omarchy default back to factory, keeping a
+  .bak.<epoch> for each. Dry run by default; asks once, not per file.
+  This is not the same thing as 'restore --apply --all', which brings back what
+  is saved in your repo."
+  [push]="push
+  Push the commits that already exist. It copies nothing and commits nothing —
+  when there is uncommitted work it says so and leaves it to savegame."
+  [pull]="pull
+  Bring down what another machine saved. It does not touch your files: run
+  restore afterwards to put anything back."
+  [clone]="clone <url>
+  Point this machine at a repo you already have, and check that the clone
+  actually landed on a branch with commits on it."
+  [restore]="restore [--apply] [--all] [--only <area>] [--yes]
+  Put back what is saved in your repo. A dry run by default, and every file it
+  overwrites is kept as .bak.<epoch> first.
+  Restoring is not copying: each area also runs what has to happen afterwards —
+  hyprctl reload, a terminal restart, omarchy-theme-set, plugin reinstalls.
+  This is not the same thing as 'reset-all', which goes to Omarchy's defaults."
+)
+
+
 main() {
   local cmd="${1:-}"; [[ -z "$cmd" ]] && { usage; exit 0; }
+  # Before the lock, and before anything else: help is not an action. This ran
+  # after acquire_repo_lock once, so `push --help` also took the write lock on
+  # its way to pushing.
+  if [[ "${2:-}" == "-h" || "${2:-}" == "--help" ]]; then
+    if [[ -n "${HELP[$cmd]:-}" ]]; then printf '%s\n' "${HELP[$cmd]}"; else usage; fi
+    exit 0
+  fi
   # Anything that writes to the repo takes the lock first; read-only commands
   # (status/get/diff/edit) stay lock-free so the panel's polling never blocks.
   case "$cmd" in
@@ -1231,15 +1430,7 @@ main() {
     purge) shift; cmd_purge "$@";;
     reset) shift; cmd_reset "$@";;
     reset-all) shift; cmd_reset_all "$@";;
-    push) shift;
-      # legacy push wrapper for the simple repo: still works but delegates to savegame-style push
-      ensure_core; bash "$CORE" backup 2>&1 | tail -n 5
-      git_repo add -A 2>/dev/null || true
-      if git_repo diff --cached --quiet 2>/dev/null; then ok "nothing to push"; exit 0; fi
-      local msg="replicant: sync $(date -Is)"; [[ $# -gt 0 ]] && msg="$*"
-      git_repo commit -m "$msg" 2>&1 | tail -n 5
-      git_repo push -u origin "$(git_repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)" 2>&1 | tail -n 10
-      ;;
+    push) shift; cmd_push "$@";;
     pull) shift; cmd_pull "$@";;
     clone) shift; cmd_clone "$@";;
     restore) shift; cmd_restore "$@";;

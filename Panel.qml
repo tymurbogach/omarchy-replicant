@@ -320,7 +320,13 @@ Panel {
   function refresh() { if (hostWidget) hostWidget.refresh(true); logProc.running = true }
   function shellQuote(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'" }
 
-  function doSavegame() { root.busyLabel = "Saving to GitHub…"; saveProc.command = [root.cli, "savegame"]; saveProc.running = true }
+  // --auto is not a convenience here, it is the difference between the button
+  // working and not. Bare `savegame` commits the inventory, pushes that, and
+  // deliberately leaves config and secrets copied-in-but-uncommitted so a human
+  // can write one commit per change explaining why — and this panel has nowhere
+  // to type that why. Pressing Save tracked a secret, copied it in, and left it
+  // uncommitted, with every badge as red as before.
+  function doSavegame() { root.busyLabel = "Saving to GitHub…"; saveProc.command = [root.cli, "savegame", "--auto"]; saveProc.running = true }
   function doPull()     { root.busyLabel = "Pulling…";          pullProc.command = [root.cli, "pull", "-y"]; pullProc.running = true }
   function doBackup()   { root.busyLabel = "Copying files…";    backupProc.command = [root.cli, "backup"]; backupProc.running = true }
   function doDoctor()   { root.busyLabel = "Checking…";         root.lastOutput = "Running health check…"; doctorProc.command = [root.cli, "doctor"]; doctorProc.running = true }

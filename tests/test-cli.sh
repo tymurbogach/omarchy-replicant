@@ -52,6 +52,38 @@ check_false "status on an uninitialised machine still answers" false
 check "status --json before setup is valid JSON" "0" "$(run status --json | jq empty >/dev/null 2>&1; echo $?)"
 check "…and reports not initialized" "false" "$(run status --json | jq -r '.initialized')"
 
+section "--help is a question, never an instruction"
+# Asking 33 commands what they do used to DO them. `unlink --help` removed the
+# symlink from PATH, `init --help` wrote a whole repo layout, `pull --help`
+# fetched, and `push --help` committed a file with "--help" as the subject and
+# pushed it to GitHub — all exiting 0, all looking exactly like help had been
+# printed. The flag was simply never looked for before dispatch.
+#
+# Derived from the dispatcher so a new command cannot be added without landing
+# in here, and measured against the whole tree so "it did nothing" is a fact
+# about the disk, not about the exit code.
+mapfile -t ALL_CMDS < <(grep -oE '^    [a-z|-]+\) shift' "$HERE/../bin/omarchy-replicant" \
+  | sed -e 's/^ *//' -e 's/) shift//' | tr '|' '\n' | grep -v '^-' | sort -u)
+check_true "the dispatcher has commands to check" test "${#ALL_CMDS[@]}" -gt 20
+before_help=$(hash_tree "$HOME")$(hash_tree "$OMARCHY_REPLICANT_HOME")
+bad_rc=""; bad_empty=""
+for c in "${ALL_CMDS[@]}"; do
+  out=$("$CLI" "$c" --help 2>&1); rc=$?
+  (( rc == 0 )) || bad_rc+=" $c"
+  [[ -n "$out" ]] || bad_empty+=" $c"
+done
+check "every command answers --help with rc=0" "" "$bad_rc"
+check "…and prints something"                  "" "$bad_empty"
+check "…and none of them touched the disk" \
+  "$before_help" "$(hash_tree "$HOME")$(hash_tree "$OMARCHY_REPLICANT_HOME")"
+# The two that were caught doing it, named so the reason survives a refactor.
+check_contains "unlink --help explains, it does not unlink" "Remove that symlink" "$("$CLI" unlink --help)"
+check_contains "push --help explains, it does not push"     "commits nothing"     "$("$CLI" push --help)"
+# Only the FIRST argument is inspected, so a VALUE that happens to look like the
+# flag is still a value — otherwise `savegame -m -h` would print help instead of
+# committing, and `set` would be unable to write "-h" at all.
+check_false "-h in the value position is not a help request" "$CLI" set idle.lock -h
+
 section "id -> path resolution"
 check "resolves a tracked id"  "$HOME/.config/hypr/input.lua" "$(run path hypr/input.lua)"
 check_false "rejects an unknown id" "$CLI" path nope/nope

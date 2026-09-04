@@ -180,6 +180,13 @@ omarchy-replicant --help
 
 `unlink` takes it back off.
 
+One difference worth knowing, because it is deliberate. The panel's **Save to GitHub** runs
+`savegame --auto`: it copies everything in, commits it under a subject written from the files that
+changed, and pushes. Typing plain `savegame` in a terminal does *not* commit your config — it saves
+the inventory and then stops, listing what changed and waiting for you to write one commit per
+change explaining **why**. Use `-m "why"` when you want that, `--auto` when you just want it saved.
+`push` on its own sends the commits you already have and touches nothing else.
+
 ## If it goes wrong
 
 - **Undo a restore** — every overwritten file is next to the original as `.bak.<epoch>`.

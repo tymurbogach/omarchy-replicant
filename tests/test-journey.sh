@@ -91,6 +91,11 @@ section "savegame, the button the panel actually presses"
 # a variable named there that belongs to the core, not the CLI, killed it under
 # `set -u` after it had copied every file in. A save that does the work and
 # then fails is the worst shape this tool has.
+# The inventory only commits when the inventory actually changed — it carries
+# no timestamp of its own any more — so give it something real to record.
+mkdir -p "$D/.config/omarchy/themes/second"
+git init -q "$D/.config/omarchy/themes/second"
+git -C "$D/.config/omarchy/themes/second" remote add origin https://example.com/omarchy-second-theme
 out=$(on desktop savegame --no-push; echo "rc=$?")
 check_contains "it finishes"            "rc=0" "$out"
 check_true "…and does not die on an unbound variable" \
@@ -100,6 +105,65 @@ check_contains "…and commits the inventory"  "Inventory commit" "$out"
 # two machines write to, and the date column beside it already says when.
 check_true "…naming the machine, not the date" \
   bash -c 'git -C "$1" log -1 --pretty=%s -- state/ | grep -q "desktop inventory"' _ "$DREPO"
+# And saving again, with nothing changed, must record nothing. The inventory
+# used to open with the current time, so every save committed "state: desktop
+# inventory (packages, plugins, themes)" having inventoried no change at all —
+# the panel's Last save showed one of those instead of the file the user saved,
+# and two machines on one repo diverged whenever either of them pressed Save.
+idle_head=$(git -C "$DREPO" rev-parse HEAD)
+out=$(on desktop savegame --no-push)
+check "saving twice in a row commits once" "$idle_head" "$(git -C "$DREPO" rev-parse HEAD)"
+check_contains "…and says so plainly" "Nothing to save" "$out"
+
+section "pressing Save has to finish the job"
+# The panel's Save button ran bare `savegame`, and bare savegame deliberately
+# leaves config and secrets copied-in-but-UNCOMMITTED so a human can write one
+# commit per change explaining why. The panel has nowhere to type that why, so
+# from the panel the primary button copied files in, pushed the inventory, and
+# left every badge exactly as red as it was. The user pressed Track on a secret,
+# pressed Save, and the secret was still sitting uncommitted afterwards.
+printf 'my own input, edited\n' > "$D/.config/hypr/input.lua"
+out=$(on desktop savegame --auto)
+check_true "the edit is committed, not merely copied in" \
+  bash -c '! git -C "$1" status --porcelain -- config/ secrets/ | grep -q .' _ "$DREPO"
+check_true "…and it reached the remote"  \
+  bash -c 'git -C "$1" diff --quiet origin/main HEAD' _ "$DREPO"
+# What a button is able to know is WHAT changed, never why. Saying so beats
+# both silence and a date, which the row already carries in its own column.
+check_contains "…under a subject naming what changed" "hypr/input.lua" \
+  "$(git -C "$DREPO" log -1 --pretty=%s)"
+# -m is a subject a person wrote; --auto is only ever the fallback for a caller
+# that cannot ask.
+printf 'my own input, again\n' > "$D/.config/hypr/input.lua"
+on desktop savegame --auto -m "config: raise the repeat rate" >/dev/null 2>&1
+check "an explicit -m still wins over --auto" "config: raise the repeat rate" \
+  "$(git -C "$DREPO" log -1 --pretty=%s)"
+
+section "push means push"
+# It used to mean "copy everything in, stage the lot with add -A, invent a
+# subject out of the date, commit, push" — a second, worse savegame that
+# nothing called, and that took its arguments as the commit message, which is
+# how a commit titled "--help" once reached GitHub.
+printf 'not saved by push\n' > "$D/.config/hypr/input.lua"
+on desktop backup >/dev/null 2>&1          # copied into the repo, committed nowhere
+before_head=$(git -C "$DREPO" rev-parse HEAD)
+out=$(on desktop push)
+check "push commits nothing on its own" "$before_head" "$(git -C "$DREPO" rev-parse HEAD)"
+# "nothing to push" and "nothing to do" are not the same sentence, and the
+# difference is the whole reason someone is reading this command's output.
+check_contains "…and says there is work it did not take on" "uncommitted changes" "$out"
+check_true "…leaving it for savegame" \
+  bash -c 'git -C "$1" status --porcelain -- config/ | grep -q .' _ "$DREPO"
+on desktop savegame --auto --no-push >/dev/null 2>&1
+out=$(on desktop push)
+check_contains "…and it does push what is already committed" "commit(s) to" "$out"
+check_contains "…saying so out loud" "Pushing" "$out"
+check_true "…which really reached the remote" \
+  bash -c 'git -C "$1" diff --quiet origin/main HEAD' _ "$DREPO"
+
+# Put the desktop back the way the rest of the journey expects to find it.
+printf 'my own input\n' > "$D/.config/hypr/input.lua"
+on desktop savegame --auto >/dev/null 2>&1
 
 # ── the laptop, which has never seen any of this ─────────────────────────────
 L="$TMP/laptop/home"

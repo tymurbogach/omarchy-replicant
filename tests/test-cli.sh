@@ -165,6 +165,18 @@ check "…and the unrelated edit is still pending, not swallowed" "1" \
 git -C "$REPO" checkout -- config/omarchy/shell.json 2>/dev/null || true
 run scope hypr/hyprlock.conf shared >/dev/null 2>&1
 
+section "editing a file, and coming back to the panel"
+# --wait only means something for an editor that can be waited on. A terminal
+# editor is opened in a floating terminal that detaches, so the CLI must NOT
+# claim it waited — the panel reopens on that marker and only that marker, and
+# reopening over a floating terminal would be worse than staying shut.
+printf 'nano\n' > "$HOME/.local/state/omarchy/defaults/editor"
+out=$(PATH="$TMP/nobin:$PATH" run edit hypr/input.lua --wait 2>/dev/null || true)
+check "a terminal editor does not claim to have waited" "0" \
+  "$(printf '%s' "$out" | grep -c 'replicant:waited' || true)"
+check_false "edit still needs an id"  "$CLI" edit --wait
+check_false "…and a real one"         "$CLI" edit nope/nope --wait
+
 section "reverting one setting"
 check_false "revert needs an id"       "$CLI" revert
 check_false "…a known one"             "$CLI" revert not.a.setting

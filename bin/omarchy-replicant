@@ -190,9 +190,22 @@ cmd_path() {
   resolve_src "$id" || fail "unknown id: $id"
 }
 
+# cmd_edit <id> [--wait]
+#
+# --wait holds until the editor is closed again, so the panel can come back to
+# exactly where it was instead of leaving the user to reopen it. Only some
+# editors can be waited on; the caller is told which happened rather than left
+# to guess, because reopening a panel over a floating terminal editor would be
+# worse than not reopening at all.
 cmd_edit() {
-  local id="${1:-}"
-  [[ -n "$id" ]] || fail "usage: edit <id>  (e.g. hypr/input.lua)"
+  local id="" wait_for_editor=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --wait) wait_for_editor=1 ;;
+      *) [[ -z "$id" ]] && id="$arg" ;;
+    esac
+  done
+  [[ -n "$id" ]] || fail "usage: edit <id> [--wait]  (e.g. hypr/input.lua)"
   local src
   src=$(resolve_src "$id") || fail "unknown id: $id"
   if [[ ! -f "$src" ]]; then
@@ -206,6 +219,30 @@ cmd_edit() {
   # interactions to read one file) and not omarchy-launch-config-editor (which
   # adds a desktop notification per click). Editing a config should be: click,
   # editor. It detaches via setsid, so this returns immediately.
+  # GUI editors that hold the command until their tab is closed. A terminal
+  # editor is opened in a floating terminal that detaches, so there is nothing
+  # to wait on without reimplementing Omarchy's own terminal launching.
+  local editor=""
+  [[ -f "$HOME/.local/state/omarchy/defaults/editor" ]] && read -r editor < "$HOME/.local/state/omarchy/defaults/editor"
+  local can_wait=0
+  case "${editor##*/}" in
+    code|code-insiders|codium|vscodium|zed) can_wait=1 ;;
+  esac
+
+  if (( wait_for_editor && can_wait )) && command -v "$editor" >/dev/null 2>&1; then
+    # `setsid --wait` gives the editor its own session, so a shell restart
+    # cannot take an open file down with it, while still telling us when it
+    # exits. uwsm-app keeps it in the same scope Omarchy would have used.
+    if command -v uwsm-app >/dev/null 2>&1; then
+      setsid --wait uwsm-app -- "$editor" --wait "$src" >/dev/null 2>&1 || true
+    else
+      setsid --wait "$editor" --wait "$src" >/dev/null 2>&1 || true
+    fi
+    # The caller reopens on this and only this. Silence means "not waited".
+    echo "replicant:waited"
+    return 0
+  fi
+
   if command -v omarchy-launch-editor >/dev/null 2>&1; then
     omarchy-launch-editor "$src"
   else
@@ -687,6 +724,22 @@ cmd_doctor() {
   for c in git jq gh; do
     command -v "$c" >/dev/null 2>&1 && chk_ok "$c installed" || chk_bad "$c missing — omarchy pkg add ${c/gh/github-cli}"
   done
+
+  echo "Plugins"
+  # The inventory is what rebuilds this machine's shell elsewhere, and a plugin
+  # with no git origin cannot be rebuilt by anything. shell.json still lists it
+  # in the bar layout, so the other machine would come back with a hole where
+  # that widget was — worth saying here rather than discovering it there.
+  local lo n_lo
+  lo=$(local_only_plugins 2>/dev/null || true)
+  n_lo=$(printf '%s' "$lo" | grep -c . || true)
+  if (( n_lo == 0 )); then
+    chk_ok "every installed plugin can be reinstalled from its origin"
+  else
+    chk_warn "$n_lo plugin(s) exist only on this machine and cannot be reinstalled:"
+    printf '%s\n' "$lo" | sed 's/^/      /' >&2
+    printf '      push them to a git remote, or they are lost with this machine\n' >&2
+  fi
 
   echo "GitHub"
   if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then

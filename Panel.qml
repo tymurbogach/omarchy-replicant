@@ -299,8 +299,13 @@ Panel {
   // omarchy-launch-floating-terminal-with-presentation: that wraps the command
   // in the Omarchy logo plus a "press a key to close" prompt, so reading one
   // file cost two extra interactions. The CLI detaches the editor itself.
+  // The panel closes so the editor is not opened behind it, and comes back the
+  // moment the editor is closed — same tab, same open cards, because close()
+  // keeps both. Only some editors can be waited on, so the CLI says whether it
+  // actually waited; reopening the panel over a floating terminal editor would
+  // be worse than leaving it shut.
   function doEdit(id) {
-    editProc.command = [root.cli, "edit", id]
+    editProc.command = [root.cli, "edit", id, "--wait"]
     editProc.running = true
     root.lastOutput = "Opening " + id + " in your editor…"
     root.close()
@@ -439,7 +444,18 @@ Panel {
   CliProcess { id: fileSaveProc; onExited: function(c){ root.finish("Save file", c, fileSaveProc.stdout.text, fileSaveProc.stderr.text) } }
   CliProcess { id: dangerProc;   onExited: function(c){ root.finish("Restore", c, dangerProc.stdout.text, dangerProc.stderr.text) } }
   CliProcess { id: doctorProc;   onExited: function(c){ root.busyLabel = ""; root.lastOutput = (doctorProc.stdout.text + "\n" + doctorProc.stderr.text).replace(/\x1b\[[0-9;]*m/g, "").trim() } }
-  Process { id: editProc }
+  Process {
+    id: editProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        // "replicant:waited" is printed only when the CLI genuinely held until
+        // the editor closed. Anything else means it detached and there is no
+        // moment to come back at.
+        if (String(text).indexOf("replicant:waited") !== -1) root.open()
+      }
+    }
+  }
 
   Process {
     id: shortcutsProc

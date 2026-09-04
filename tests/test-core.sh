@@ -69,6 +69,36 @@ check "…and one entry only"       "1" "$(printf '%s\n' "$entries" | grep -c . 
 check "a plugin with no config file is skipped" "0" "$(printf '%s\n' "$entries" | grep -c silent)"
 check "replicant never lists itself"            "0" "$(printf '%s\n' "$entries" | grep -c omarchy-replicant)"
 
+section "a plugin the other machine can actually reinstall"
+# The inventory is what rebuilds this machine's shell elsewhere. Two ways it
+# used to record something unusable: a plugin with no git origin at all, and one
+# installed from a local checkout, whose recorded "origin" is a path that does
+# not exist on the other machine.
+mkdir -p "$HOME/.config/omarchy/plugins/local.only"
+printf '{"id":"local.only","name":"Local Only","version":"1.0.0"}\n' \
+  > "$HOME/.config/omarchy/plugins/local.only/manifest.json"
+check "a plugin with no git origin is named, not skipped" "1" \
+  "$(local_only_plugins | grep -cx 'local.only' || true)"
+
+# A checkout that is itself a clone: the remote is the real origin.
+upstream="$TMP/upstream.git"; git init -q --bare "$upstream"
+checkout="$TMP/dev-plugin"; git init -q "$checkout"
+git -C "$checkout" remote add origin "$upstream"
+mkdir -p "$HOME/.config/omarchy/plugins/from.checkout"
+printf '{"id":"from.checkout","name":"From Checkout","version":"1.0.0"}\n' \
+  > "$HOME/.config/omarchy/plugins/from.checkout/manifest.json"
+git init -q "$HOME/.config/omarchy/plugins/from.checkout"
+git -C "$HOME/.config/omarchy/plugins/from.checkout" remote add origin "$checkout"
+core_backup >/dev/null 2>&1
+inv="$STATE_DIR/omarchy-plugins.txt"
+check "a local checkout resolves to its real remote" "1" \
+  "$(grep -c "from.checkout.*$upstream" "$inv" || true)"
+check "…and not to the path that only exists here" "0" \
+  "$(grep -c "from.checkout.*$checkout\b" "$inv" || true)"
+check "…so it is not reported as local-only" "0" \
+  "$(local_only_plugins | grep -cx 'from.checkout' || true)"
+rm -rf "$HOME/.config/omarchy/plugins/local.only" "$HOME/.config/omarchy/plugins/from.checkout"
+
 section "resolving a tracked id back to a real file"
 check "a manifest id"        "$HOME/.config/hypr/input.lua" "$(resolve_manifest_src hypr/input.lua)"
 check "a secret id"          "$HOME/.ssh/id_ed25519"        "$(resolve_manifest_src ssh/id_ed25519)"

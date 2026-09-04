@@ -663,6 +663,13 @@ core_backup() {
       [[ -n "$pid" ]] || continue
       pver=$(jq -r '.version // "?"' "$pmf" 2>/dev/null)
       porigin=$(git -C "$pdir" remote get-url origin 2>/dev/null || echo "-")
+      # A plugin installed from a local checkout records that checkout's PATH,
+      # which means nothing on the other machine — `omarchy plugin add
+      # /home/you/dev/thing` fails there. If that path is itself a clone, record
+      # its remote instead: that is where the plugin actually came from.
+      if [[ "$porigin" == /* && -d "$porigin/.git" ]]; then
+        porigin=$(git -C "$porigin" remote get-url origin 2>/dev/null || printf '%s' "$porigin")
+      fi
       printf '%s\t%s\t%s\n' "$pid" "$pver" "$porigin"
     done
   } > "$STATE_DIR/omarchy-plugins.txt"
@@ -1896,6 +1903,24 @@ core_restore_file() {
   return 0
 }
 
+# Plugins that exist ONLY on this machine: no git origin, so nothing can rebuild
+# them anywhere. They are usually the user's own, written in place. Worth naming
+# rather than skipping in silence, because shell.json lists them in the bar
+# layout — restore it on a machine that lacks them and the bar comes back with
+# holes in it.
+local_only_plugins() {
+  local pmf pid pdir porigin
+  for pmf in "$HOME/.config/omarchy/plugins"/*/manifest.json; do
+    [[ -f "$pmf" ]] || continue
+    pdir="$(dirname "$pmf")"
+    pid=$(jq -r '.id // empty' "$pmf" 2>/dev/null) || continue
+    [[ -n "$pid" ]] || continue
+    porigin=$(git -C "$pdir" remote get-url origin 2>/dev/null || echo "-")
+    [[ "$porigin" == /* && -d "$porigin/.git" ]] && continue
+    [[ "$porigin" == "-" || -z "$porigin" ]] && printf '%s\n' "$pid"
+  done
+}
+
 # Plugins are not files to copy back — they are repos to reinstall. The saved
 # inventory records each one's id and git origin so a second machine can be
 # rebuilt with the command Omarchy itself provides.
@@ -1985,4 +2010,5 @@ elif [[ "${1:-}" == "scope" ]]; then core_scope "${2:-}" "${3:-}"
 elif [[ "${1:-}" == "profile-set" ]]; then core_profile_set "${2:-}"
 elif [[ "${1:-}" == "profile-get" ]]; then current_profile
 elif [[ "${1:-}" == "profile-list" ]]; then list_profiles
+elif [[ "${1:-}" == "local-only-plugins" ]]; then local_only_plugins
 fi

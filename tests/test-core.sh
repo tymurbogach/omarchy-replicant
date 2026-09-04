@@ -97,7 +97,41 @@ check "…and not to the path that only exists here" "0" \
   "$(grep -c "from.checkout.*$checkout\b" "$inv" || true)"
 check "…so it is not reported as local-only" "0" \
   "$(local_only_plugins | grep -cx 'from.checkout' || true)"
-rm -rf "$HOME/.config/omarchy/plugins/local.only" "$HOME/.config/omarchy/plugins/from.checkout"
+
+# An edited copy of a built-in has no repo anywhere, but Omarchy can re-clone
+# the built-in it came from. Different command, so the inventory records which.
+mkdir -p "$HOME/.config/omarchy/plugins/mine.clock"
+printf '{"id":"mine.clock","name":"My Clock","version":"1.0.0","omarchy":{"clonedFrom":"omarchy.clock"}}\n' \
+  > "$HOME/.config/omarchy/plugins/mine.clock/manifest.json"
+core_backup >/dev/null 2>&1
+check "a clone of a built-in records the built-in it came from" "1" \
+  "$(grep -cP 'mine\.clock\t[^\t]*\tomarchy\.clock\tclone' "$inv" || true)"
+check "…and is not reported as unrecoverable" "0" \
+  "$(local_only_plugins | grep -cx 'mine.clock' || true)"
+
+# A plugin you wrote yourself, copied into place with no .git, but whose source
+# is a checkout on this machine. This is the case Omarchy itself cannot answer:
+# `plugin list --json` carries no origin and `plugin update` skips it entirely.
+mkdir -p "$TMP/roots/dev/my-widget"
+git init -q "$TMP/roots/dev/my-widget"
+git -C "$TMP/roots/dev/my-widget" remote add origin https://example.invalid/me/my-widget.git
+printf '{"id":"mine.widget","name":"My Widget","version":"1.0.0"}\n' \
+  > "$TMP/roots/dev/my-widget/manifest.json"
+mkdir -p "$HOME/.config/omarchy/plugins/mine.widget"
+cp "$TMP/roots/dev/my-widget/manifest.json" "$HOME/.config/omarchy/plugins/mine.widget/manifest.json"
+PLUGIN_SOURCE_ROOTS=("$TMP/roots/dev")
+core_backup >/dev/null 2>&1
+check "a plugin is traced back to the checkout that builds it" "1" \
+  "$(grep -c 'mine.widget.*example.invalid/me/my-widget.git' "$inv" || true)"
+check "…and counts as recoverable" "0" \
+  "$(local_only_plugins | grep -cx 'mine.widget' || true)"
+
+# And one with genuinely nowhere to come from stays reported.
+check "a plugin with no trail at all is still named" "1" \
+  "$(local_only_plugins | grep -cx 'local.only' || true)"
+
+rm -rf "$HOME/.config/omarchy/plugins/local.only" "$HOME/.config/omarchy/plugins/from.checkout" \
+       "$HOME/.config/omarchy/plugins/mine.clock" "$HOME/.config/omarchy/plugins/mine.widget"
 
 section "resolving a tracked id back to a real file"
 check "a manifest id"        "$HOME/.config/hypr/input.lua" "$(resolve_manifest_src hypr/input.lua)"

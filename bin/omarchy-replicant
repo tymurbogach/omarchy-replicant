@@ -356,16 +356,27 @@ cmd_restore() {
   # Plugins are reinstalled, not copied. `omarchy plugin add <origin>` is the
   # only thing that leaves a plugin in a state Omarchy itself will maintain.
   restore_plugins() {
-    local dry="$1" pid porigin n=0
-    while IFS=$'\t' read -r pid porigin; do
+    local dry="$1" pid porigin pmethod verb n=0
+    while IFS=$'\t' read -r pid porigin pmethod; do
       [[ -n "$pid" ]] || continue
       n=$((n + 1))
+      # Two different Omarchy commands, because they rebuild two different
+      # things: a third-party plugin comes from its git remote, while an edited
+      # copy of a built-in is re-cloned from the built-in it came from. Using
+      # `add` on the second would fail — "omarchy.indicators" is not a URL.
+      [[ "$pmethod" == "clone" ]] && verb="clone" || verb="add"
       if (( dry )); then
-        skip "dry-run: would run omarchy plugin add $porigin  ($pid)" >&2
+        skip "dry-run: would run omarchy plugin $verb $porigin  ($pid)" >&2
       else
-        echo "  → omarchy plugin add $porigin" >&2
-        omarchy plugin add "$porigin" --enable --yes >/dev/null 2>&1 \
-          && ok "$pid installed" >&2 || warn "$pid — omarchy plugin add failed" >&2
+        echo "  → omarchy plugin $verb $porigin" >&2
+        if [[ "$verb" == "clone" ]]; then
+          omarchy plugin clone "$porigin" >/dev/null 2>&1 \
+            && ok "$pid re-cloned from $porigin (any edits you made are not in this)" >&2 \
+            || warn "$pid — omarchy plugin clone failed" >&2
+        else
+          omarchy plugin add "$porigin" --enable --yes >/dev/null 2>&1 \
+            && ok "$pid installed" >&2 || warn "$pid — omarchy plugin add failed" >&2
+        fi
       fi
     done < <(missing_plugins)
     (( n == 0 )) && skip "every plugin in the inventory is already installed" >&2
@@ -733,6 +744,13 @@ cmd_doctor() {
   local lo n_lo
   lo=$(local_only_plugins 2>/dev/null || true)
   n_lo=$(printf '%s' "$lo" | grep -c . || true)
+  # An origin that is a filesystem path is a real answer here but may well not
+  # exist on the machine doing the restoring, so it is called out separately
+  # rather than counted as fine.
+  local inv_path n_pathy
+  inv_path="$STATE_DIR/omarchy-plugins.txt"
+  n_pathy=$(awk -F'\t' '!/^#/ && NF>=3 && $3 ~ /^\// {n++} END{print n+0}' "$inv_path" 2>/dev/null || echo 0)
+  (( n_pathy > 0 )) && chk_warn "$n_pathy plugin origin(s) are local paths — they may not exist on your other machine"
   if (( n_lo == 0 )); then
     chk_ok "every installed plugin can be reinstalled from its origin"
   else

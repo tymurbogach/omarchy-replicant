@@ -654,7 +654,10 @@ core_backup() {
   # rather than copied: `omarchy plugin add <url>` rebuilds each of them, and
   # copying a plugin's source into a backup repo only ages badly.
   {
-    echo "# id<TAB>version<TAB>origin — reinstall with: omarchy plugin add <origin>"
+    echo "# id<TAB>version<TAB>origin<TAB>method"
+    echo "# method 'add'   -> omarchy plugin add <origin>"
+    echo "# method 'clone' -> omarchy plugin clone <origin>   (an edited copy of a built-in;"
+    echo "#                  this restores the built-in, not the edits made to it)"
     local pmf pid pver porigin pdir
     for pmf in "$HOME/.config/omarchy/plugins"/*/manifest.json; do
       [[ -f "$pmf" ]] || continue
@@ -662,15 +665,9 @@ core_backup() {
       pid=$(jq -r '.id // empty' "$pmf" 2>/dev/null) || continue
       [[ -n "$pid" ]] || continue
       pver=$(jq -r '.version // "?"' "$pmf" 2>/dev/null)
-      porigin=$(git -C "$pdir" remote get-url origin 2>/dev/null || echo "-")
-      # A plugin installed from a local checkout records that checkout's PATH,
-      # which means nothing on the other machine — `omarchy plugin add
-      # /home/you/dev/thing` fails there. If that path is itself a clone, record
-      # its remote instead: that is where the plugin actually came from.
-      if [[ "$porigin" == /* && -d "$porigin/.git" ]]; then
-        porigin=$(git -C "$porigin" remote get-url origin 2>/dev/null || printf '%s' "$porigin")
-      fi
-      printf '%s\t%s\t%s\n' "$pid" "$pver" "$porigin"
+      local pmethod
+      IFS=$'\t' read -r porigin pmethod < <(resolve_plugin_origin "$pdir" "$pid" "$pmf")
+      printf '%s\t%s\t%s\t%s\n' "$pid" "$pver" "$porigin" "$pmethod"
     done
   } > "$STATE_DIR/omarchy-plugins.txt"
   mise ls 2>/dev/null > "$STATE_DIR/mise.txt" || true
@@ -1903,21 +1900,79 @@ core_restore_file() {
   return 0
 }
 
+# Where a plugin came from, when nothing records it directly.
+#
+# Omarchy does not store an origin: `omarchy plugin list --json` has no such
+# field and `omarchy plugin update` simply skips anything without a .git, so a
+# plugin copied into place has no trail of its own. It still usually HAS a
+# home — you just have to work it out. In order:
+#
+#   1. a git remote on the installed copy                        -> add
+#   2. a remote on the local checkout that remote points at       -> add
+#   3. `clonedFrom` in the manifest, i.e. an edited copy of a
+#      built-in Omarchy plugin                                    -> clone
+#   4. a checkout on this machine whose manifest carries the same
+#      id — how a plugin you wrote yourself gets installed         -> add
+#
+# (4) only resolves on the machine that holds the checkout, which is exactly
+# the machine recording the inventory. The URL it finds travels in the repo, so
+# the other machine reads a URL and never needs the checkout.
+PLUGIN_SOURCE_ROOTS=("$HOME/dev" "$HOME/src" "$HOME/code" "$HOME/projects" "$HOME/Projects" "$HOME/git" "$HOME/work")
+
+resolve_plugin_origin() {
+  local pdir="$1" pid="$2" pmf="$3" origin from m mid mroot
+  origin=$(git -C "$pdir" remote get-url origin 2>/dev/null || true)
+
+  # 1 & 2 — a remote, possibly via a local checkout it points at.
+  if [[ -n "$origin" ]]; then
+    if [[ "$origin" == /* && -d "$origin/.git" ]]; then
+      # Resolve THROUGH the checkout: its own remote is where this really lives.
+      # Accepted even when that is itself a path (a bare repo on a NAS, say) —
+      # a path is at least a lead, and recording nothing makes the plugin
+      # disappear silently. `doctor` is what says a path may not resolve
+      # elsewhere; the inventory's job is to not lose the trail.
+      from=$(git -C "$origin" remote get-url origin 2>/dev/null || true)
+      [[ -n "$from" ]] && { printf '%s\tadd\n' "$from"; return 0; }
+    elif [[ "$origin" != /* ]]; then
+      printf '%s\tadd\n' "$origin"; return 0
+    fi
+  fi
+
+  # 3 — a clone of a built-in. Restores the built-in, not the edits; the
+  # inventory says so in its header rather than implying a full recovery.
+  from=$(jq -r '.omarchy.clonedFrom // empty' "$pmf" 2>/dev/null || true)
+  [[ -n "$from" ]] && { printf '%s\tclone\n' "$from"; return 0; }
+
+  # 4 — a checkout of your own on this machine that builds this same plugin.
+  for mroot in "${PLUGIN_SOURCE_ROOTS[@]}"; do
+    [[ -d "$mroot" ]] || continue
+    while IFS= read -r m; do
+      [[ -n "$m" ]] || continue
+      mid=$(jq -r '.id // empty' "$m" 2>/dev/null) || continue
+      [[ "$mid" == "$pid" ]] || continue
+      from=$(git -C "$(dirname "$m")" rev-parse --show-toplevel 2>/dev/null) || continue
+      from=$(git -C "$from" remote get-url origin 2>/dev/null || true)
+      [[ -n "$from" ]] && { printf '%s\tadd\n' "$from"; return 0; }
+    done < <(find "$mroot" -maxdepth 4 -name manifest.json -not -path '*/node_modules/*' 2>/dev/null)
+  done
+
+  printf -- '-\t-\n'
+}
+
 # Plugins that exist ONLY on this machine: no git origin, so nothing can rebuild
 # them anywhere. They are usually the user's own, written in place. Worth naming
 # rather than skipping in silence, because shell.json lists them in the bar
 # layout — restore it on a machine that lacks them and the bar comes back with
 # holes in it.
 local_only_plugins() {
-  local pmf pid pdir porigin
+  local pmf pid pdir porigin pmethod
   for pmf in "$HOME/.config/omarchy/plugins"/*/manifest.json; do
     [[ -f "$pmf" ]] || continue
     pdir="$(dirname "$pmf")"
     pid=$(jq -r '.id // empty' "$pmf" 2>/dev/null) || continue
     [[ -n "$pid" ]] || continue
-    porigin=$(git -C "$pdir" remote get-url origin 2>/dev/null || echo "-")
-    [[ "$porigin" == /* && -d "$porigin/.git" ]] && continue
-    [[ "$porigin" == "-" || -z "$porigin" ]] && printf '%s\n' "$pid"
+    IFS=$'\t' read -r porigin pmethod < <(resolve_plugin_origin "$pdir" "$pid" "$pmf")
+    [[ "$porigin" == "-" ]] && printf '%s\n' "$pid"
   done
 }
 
@@ -1925,14 +1980,16 @@ local_only_plugins() {
 # inventory records each one's id and git origin so a second machine can be
 # rebuilt with the command Omarchy itself provides.
 missing_plugins() {
-  local inv="$STATE_DIR/omarchy-plugins.txt" pid pver porigin
+  local inv="$STATE_DIR/omarchy-plugins.txt" pid pver porigin pmethod
   [[ -f "$inv" ]] || { for inv in "$STATE_ROOT"/*/omarchy-plugins.txt; do [[ -f "$inv" ]] && break; done; }
   [[ -f "$inv" ]] || return 0
-  while IFS=$'\t' read -r pid pver porigin; do
+  while IFS=$'\t' read -r pid pver porigin pmethod; do
     [[ -n "$pid" && "$pid" != \#* ]] || continue
     [[ -d "$HOME/.config/omarchy/plugins/$pid" ]] && continue
     [[ "$porigin" == "-" || -z "$porigin" ]] && continue
-    printf '%s\t%s\n' "$pid" "$porigin"
+    # An inventory written before the method column existed only ever meant add.
+    [[ -z "$pmethod" || "$pmethod" == "-" ]] && pmethod=add
+    printf '%s\t%s\t%s\n' "$pid" "$porigin" "$pmethod"
   done < "$inv"
 }
 

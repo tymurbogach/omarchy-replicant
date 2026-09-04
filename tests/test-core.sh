@@ -753,4 +753,34 @@ check "nor anywhere in the panel payload" "0" \
   "$(printf '%s%s' "$(build_configs_json)" "$(build_secrets_json)" | grep -c 'ghp_' || true)"
 core_untrack gh/hosts.yml >/dev/null 2>&1
 
+section "changing a directory's scope moves the tree, now, not eventually"
+# Changing a file's scope moves the copy the repo holds so the backup is never
+# stranded at the old path. The guard was -f, so a tracked DIRECTORY was never
+# moved: the tree stayed in config/ while repo_path_for pointed at
+# profiles/<profile>/, and until the next save the panel called a saved tree
+# unsaved and revert-to-repo could not find it.
+mkdir -p "$HOME/.config/tree2/sub"
+printf 'a\n' > "$HOME/.config/tree2/a.lua"
+printf 'b\n' > "$HOME/.config/tree2/sub/b.lua"
+core_track "$HOME/.config/tree2" >/dev/null 2>&1
+core_backup >/dev/null 2>&1
+check "the tree starts shared" "2" "$(find "$CONFIG_DIR/tree2" -type f 2>/dev/null | wc -l)"
+core_scope "tree2/" profile >/dev/null 2>&1
+check "…and is at the profile path the moment the scope changes" "2" \
+  "$(find "$REPO_DIR/profiles/$(current_profile)/config/tree2" -type f 2>/dev/null | wc -l)"
+check "…with nothing stranded behind it" "0" \
+  "$(find "$CONFIG_DIR/tree2" -type f 2>/dev/null | wc -l)"
+check "…so repo_copy_for_rel finds it" "$REPO_DIR/profiles/$(current_profile)/config/tree2/" \
+  "$(repo_copy_for_rel 'tree2/')"
+# The content is where repo_path_for says it is, which is the thing that broke.
+# The row still reads "unsaved" here and rightly so — the move is a change git
+# has not been asked to commit yet, and cmd_scope is what commits it.
+check_true "…and the copy there matches the machine" \
+  tree_same "$(repo_copy_for_rel 'tree2/')" "$HOME/.config/tree2"
+core_scope "tree2/" shared >/dev/null 2>&1
+check "moving it back works the same way" "2" "$(find "$CONFIG_DIR/tree2" -type f 2>/dev/null | wc -l)"
+check_false "…and never writes outside the repo" move_repo_copy "$CONFIG_DIR/tree2" "$HOME/escaped"
+check_true "…leaving the source where it was" test -d "$CONFIG_DIR/tree2"
+core_untrack "tree2/" >/dev/null 2>&1
+
 summary

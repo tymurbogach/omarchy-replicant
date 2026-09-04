@@ -549,6 +549,22 @@ ensure_scope_file() {
   fi
 }
 
+# move_repo_copy <from> <to> — carry the copy the repo holds to its new path.
+#
+# The guard here used to be `-f`, so a tracked DIRECTORY was never moved: the
+# tree stayed at the old path while repo_path_for pointed at the new one, and
+# until the next save the panel called a saved tree unsaved and revert-to-repo
+# could not find it. Both sides are inside the repo, which is the only reason
+# clearing the destination first is safe — and it is checked, not assumed.
+move_repo_copy() {
+  local from="${1%/}" to="${2%/}"
+  [[ -e "$from" ]] || return 0
+  case "$to/" in "$REPO_DIR"/*) ;; *) echo "refusing to move outside the repo: $to" >&2; return 1 ;; esac
+  mkdir -p "$(dirname "$to")"
+  rm -rf -- "$to"
+  mv -f -- "$from" "$to"
+}
+
 # core_scope <rel> <shared|profile|off> — the panel's per-file scope control.
 core_scope() {
   local rel="$1" want="$2" line k old
@@ -573,10 +589,10 @@ core_scope() {
   case "$old:$want" in
     shared:profile)
       from="$CONFIG_DIR/$rel"; to="$REPO_DIR/profiles/$(current_profile)/config/$rel"
-      if [[ -f "$from" ]]; then mkdir -p "$(dirname "$to")"; mv -f -- "$from" "$to"; fi ;;
+      move_repo_copy "$from" "$to" ;;
     profile:shared)
       from="$REPO_DIR/profiles/$(current_profile)/config/$rel"; to="$CONFIG_DIR/$rel"
-      if [[ -f "$from" ]]; then mkdir -p "$(dirname "$to")"; mv -f -- "$from" "$to"; fi ;;
+      move_repo_copy "$from" "$to" ;;
   esac
 
   case "$want" in

@@ -315,4 +315,19 @@ full=$(run status --json 2>/dev/null | tail -n1)
 check "the full payload still has configs" "true" "$(printf '%s' "$full" | jq 'has("configs")')"
 check "…and is not marked brief" "false" "$(printf '%s' "$full" | jq 'has("brief")')"
 
+section "every command is asked a question it cannot answer"
+# A smoke pass over the whole surface. What is being checked is not that these
+# fail — it is that they fail the way a person can act on: exit 1 with a
+# sentence, never a bare git exit code or a stack of shell errors.
+for bad in "get nope.setting" "set nope.setting 5" "edit nope/nope" "path nope/nope" \
+           "save-file nope/nope" "scope nope/nope shared" "scope hypr/input.lua sideways" \
+           "revert nope.setting" "restore-file nope/nope" "reset nope/nope" \
+           "track /nonexistent/x" "untrack nope/nope" "profile ../evil"; do
+  # shellcheck disable=SC2086
+  out=$(run $bad 2>&1); rc=$?
+  check "'$bad' exits 1, not a raw error code" "1" "$rc"
+  if [[ -z "$out" ]]; then t_bad "'$bad' failed silently"; else t_ok "…and says why"; fi
+done
+check_contains "revert names the real problem" "unknown setting" "$(run revert nope.setting)"
+
 summary

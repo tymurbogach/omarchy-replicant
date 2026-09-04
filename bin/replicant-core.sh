@@ -1581,29 +1581,6 @@ find_setting() {
   return 1
 }
 
-# ── TOML helpers ────────────────────────────────────────────────────────────
-# Deliberately minimal: they target flat "key = value" lines inside a
-# "[section]" of a small, hand-written config (shell.toml). They are not a TOML
-# parser and are not meant to grow into one; anything more complex stays a
-# whole-file entry in MANIFEST and is edited in a real editor.
-toml_get() {
-  local file="$1" section="${2%%.*}" key="${2#*.}"
-  [[ -f "$file" ]] || return 1
-  awk -v sect="[$section]" -v key="$key" '
-    $0 ~ /^[[:space:]]*\[/ { in_sect = ($0 ~ "^[[:space:]]*\\" sect) ; next }
-    in_sect && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
-      sub(/^[^=]*=[[:space:]]*/, ""); gsub(/[[:space:]]*$/, ""); print; exit
-    }
-  ' "$file"
-}
-
-# ─── systemd drop-ins (root-owned) ──────────────────────────────────────────
-# A laptop's lid behaviour lives in /etc/systemd/logind.conf.d/, which is the
-# one thing worth configuring here that is not ours to write. The shape of the
-# file is close enough to TOML that the same reader works: [Section] headers and
-# Key=Value lines, whitespace around '=' ignored by systemd either way.
-ini_get() { toml_get "$1" "$2"; }
-
 # root_apply <destination> <staged file> [command to run afterwards]
 # Writes a staged file into a root-owned path, keeping the same .bak.<epoch>
 # every other write in this plugin makes, and runs the reload in the SAME
@@ -1672,6 +1649,12 @@ is_laptop() {
 # Writes key = value, creating the [section] and/or the key when either is
 # absent — shell.toml ships nearly empty, so "the key isn't there yet" is the
 # normal first write for most appearance settings, not an error.
+# ── TOML / INI writing ──────────────────────────────────────────────────────
+# Deliberately minimal: these target a flat "key = value" line inside a
+# "[section]" of a small, hand-written config (shell.toml, a logind drop-in).
+# They are not a TOML parser and are not meant to grow into one; anything more
+# complex stays a whole-file MANIFEST entry, edited in a real editor.
+# Reading goes through file_map() instead, which parses the whole file once.
 toml_set() {
   invalidate_file_maps
   local file="$1" section="${2%%.*}" key="${2#*.}" value="$3" tmp
@@ -2152,6 +2135,10 @@ setting_repo_value() {
 # are still there; this is the small, everyday one.
 core_revert() {
   local id="$1" to="${2:-default}" value
+  # Say which of the two things is wrong. Both failures below assume the id is
+  # real, so an id that is not reported "no Omarchy default known for
+  # nope.setting" — which reads as a fact about a setting that does not exist.
+  find_setting "$id" >/dev/null || { echo "unknown setting: $id" >&2; return 1; }
   case "$to" in
     default) value=$(setting_default_value "$id") || { echo "no Omarchy default known for $id" >&2; return 1; } ;;
     repo)    value=$(setting_repo_value "$id")    || { echo "$id is not saved in your repo yet" >&2; return 1; } ;;

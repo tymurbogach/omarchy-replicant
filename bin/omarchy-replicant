@@ -173,7 +173,23 @@ cmd_savegame() {
   else echo "Everything saved and pushed." >&2; fi
 }
 
-cmd_diff() { ensure_core; git_repo status --short 2>/dev/null | head -n 100; echo "--- diff --cached ---" >&2; git_repo diff --cached --stat 2>/dev/null | head -n 100; }
+# `diff` with no id: what is pending in the repo as a whole. With an id it is
+# cmd_open_diff instead, which compares one file.
+cmd_diff() {
+  ensure_core
+  # Without this the last git call exits 128 into main() and the user gets an
+  # empty header and a failure code, where every other command says "no repo".
+  [[ -d "$REPO_DIR/.git" ]] || fail "no repo yet — run 'create' or 'clone' first"
+  local pending; pending=$(git_repo status --short 2>/dev/null | head -n 100)
+  if [[ -z "$pending" ]]; then
+    ok "nothing pending — everything copied in is committed"
+  else
+    printf '%s\n' "$pending"
+  fi
+  local staged; staged=$(git_repo diff --cached --stat 2>/dev/null | head -n 100)
+  [[ -n "$staged" ]] && { echo "--- staged ---" >&2; printf '%s\n' "$staged"; }
+  return 0
+}
 
 # edit/diff/reset by config id — used by the panel.
 # The id -> real path mapping lives in the core (resolve_manifest_src) so the

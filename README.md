@@ -59,9 +59,44 @@ omarchy-replicant profile desktop      # put it in another one
 omarchy-replicant scope hypr/input.lua profile
 ```
 
+## It backs up *your* list, not somebody else's
+
+Every dotfile tool ships with a list of files, and that list is always one person's. This one ships
+the paths any Omarchy machine plausibly has — and keeps yours separately, in your own repo, so it
+travels to your second machine without being published to everybody else's.
+
+```bash
+omarchy-replicant suggest              # what's on this machine that nothing is backing up
+omarchy-replicant track ~/.local/bin/my-script
+omarchy-replicant track ~/.config/nvim/          # a whole directory
+omarchy-replicant track ~/.config/gh/hosts.yml --secret   # stored 600, never rendered
+```
+
+`suggest` is the point: it walks the few places hand-written config actually lives and tells you
+what is not tracked, with the reason. It refuses to propose a symlink, a mise shim, a browser's own
+state, a file another plugin installed, or anything byte-identical to Omarchy's default — and it
+flags a file that holds a credential so you track it as a secret rather than world-readable. In the
+panel it is a card at the bottom of **Configs** with a **Track** button per row. Nothing is added
+until you press it.
+
+## Themes and plugins come back as themes and plugins
+
+The eight custom themes on the machine this was written on are 556 MB — 400 of it their own `.git`.
+Copying that into a backup repo would be absurd, so Replicant records what it actually needs: the
+name and the git origin of every user theme, and reinstalls them with `omarchy theme install`
+**before** re-applying your theme. Plugins work the same way, including the ones with no obvious
+origin — a plugin you wrote yourself is traced back to your own checkout.
+
+| | Recorded | Restored with |
+| --- | --- | --- |
+| Themes | name + git origin | `omarchy theme install`, then `omarchy theme set` |
+| Plugins | id + version + origin + method | `omarchy plugin add` / `omarchy plugin clone` |
+| Packages | per hostname, official and AUR | your package manager |
+
 ## What else it does
 
-- **43 tracked files**, grouped into eleven areas. Nothing scrolls forever; you open the one you came for.
+- **50 tracked paths**, grouped into eleven areas. Nothing scrolls forever; you open the one you came for.
+- **Directories, not just files.** `~/.config/nvim/` is one row with a file count; a change anywhere inside it says so, and `.git` inside a tracked tree is never copied.
 - **Change detection that tells the truth.** Every file is compared by content against the copy in your repo, so editing one says so immediately — and putting it back clears the warning by itself. Badges: ● changed here · ↑ saved here, not pushed · ◆ saved on GitHub · ○ untouched default · ⊘ not synced.
 - **24 settings from the panel**, in units people use — the lock screen is *10 min*, not *600*.
 - **Lid & sleep** on laptops: what closing the lid does on battery, on AC, and when docked.

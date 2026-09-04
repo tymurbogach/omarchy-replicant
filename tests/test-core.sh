@@ -291,10 +291,10 @@ section "the restore plan is derived from the manifest, never hand-listed"
 # that backup copies but restore has no line for.
 core_backup >/dev/null 2>&1
 missing_from_plan=0
-for entry in "${MANIFEST[@]}"; do
+for entry in "${TRACKED[@]}"; do
   rel="${entry##*:}"
   [[ "$rel" == "omarchy/theme.name" ]] && continue      # applied, never copied
-  [[ -f "$CONFIG_DIR/$rel" ]] || continue               # not saved on this machine
+  [[ -e "$CONFIG_DIR/${rel%/}" ]] || continue           # not saved on this machine
   area=$(category_for_rel "$rel")
   # Captured, not piped into `grep -q`: grep exits on the first match, the
   # writer takes a SIGPIPE, and with `set -o pipefail` the whole pipeline then
@@ -509,6 +509,169 @@ check "valid JSON"        "0"    "$(printf '%s' "$st" | jq empty >/dev/null 2>&1
 check "reports initialized" "true" "$(printf '%s' "$st" | jq -r '.initialized')"
 for field in branch remote remote_name repo_dir machine plugin_version last_save dirty untracked ahead behind configs secrets settings categories setting_groups machines; do
   check "status carries $field" "true" "$(printf '%s' "$st" | jq --arg f "$field" 'has($f)')"
+done
+
+section "the shipped list is universal; the personal list is the user's"
+# Nothing in the public plugin's MANIFEST may name one person's script, one
+# person's project, or one person's hardware quirk. Every marketplace installer
+# gets this list, and a stranger seeing "bin/omarchy-audit" as a missing file
+# has no idea what it is or why the tool wants it.
+personal=0
+for entry in "${MANIFEST[@]}"; do
+  case "${entry%%:*}" in
+    */omarchy-audit|*/hypr-refresh-auto|*/cbm-*|*/mise.toml|*/fprintd-*|*/omarchy-audit-ignore|*/audit-config.hook)
+      personal=$((personal+1)); echo "    ${entry%%:*} is one person's, not everyone's" ;;
+  esac
+done
+check "the shipped manifest names nobody in particular" "0" "$personal"
+check "~/dev/mise.toml is gone for good, not migrated" "0" \
+  "$(printf '%s\n' "${LEGACY_PERSONAL[@]}" "${LEGACY_PERSONAL_SECRETS[@]}" | grep -c 'mise.toml' || true)"
+
+section "upgrading a 0.6 repo keeps tracking what it tracked"
+# The migration hazard this release creates: those entries were in MANIFEST, so
+# an upgraded repo already holds copies of them. If the new core simply forgot
+# them, the very next save would see the copies as untracked and PRUNE them —
+# the user's backup deleted by an upgrade.
+mkdir -p "$HOME/.local/bin" "$CONFIG_DIR/bin"
+printf 'my audit script\n' > "$HOME/.local/bin/omarchy-audit"
+printf 'my audit script\n' > "$CONFIG_DIR/bin/omarchy-audit"
+rm -f "$USER_TRACK_FILE"
+load_user_manifest
+check_true "a 0.6 entry is still tracked before any migration runs" \
+  is_tracked_path "$HOME/.local/bin/omarchy-audit"
+ensure_track_file
+check_true "…and the migration writes it into the user's own list" \
+  test -f "$USER_TRACK_FILE"
+check "…naming it" "1" "$(grep -c 'omarchy-audit' "$USER_TRACK_FILE" || true)"
+check_true "…and it is still tracked afterwards" is_tracked_path "$HOME/.local/bin/omarchy-audit"
+check "it is the user's entry now, not the plugin's" "0" \
+  "$(printf '%s\n' "${MANIFEST[@]}" | grep -c 'omarchy-audit' || true)"
+core_backup >/dev/null 2>&1
+check_true "the save does NOT prune the copy it already had" \
+  test -f "$CONFIG_DIR/bin/omarchy-audit"
+
+section "adding a file of your own"
+printf 'hello\n' > "$HOME/.config/mine.conf"
+core_track "$HOME/.config/mine.conf" >/dev/null 2>&1
+check "the name in the repo is derived the way the shipped ones are" "mine.conf" \
+  "$(derive_rel "$HOME/.config/mine.conf")"
+check "…and for a script"     "bin/thing"   "$(derive_rel "$HOME/.local/bin/thing")"
+check "…and a bare dotfile"   "home/bashrc" "$(derive_rel "$HOME/.bashrc")"
+check "…and one with a directory" "ssh/config" "$(derive_rel "$HOME/.ssh/config")"
+check_true "it is tracked" is_tracked_path "$HOME/.config/mine.conf"
+core_backup >/dev/null 2>&1
+check_true "…and saved" test -f "$CONFIG_DIR/mine.conf"
+cj=$(build_configs_json)
+check "the panel says it came from the user" "user" \
+  "$(printf '%s' "$cj" | jq -r '[.[] | select(.id=="mine.conf")][0].source')"
+check_false "tracking a symlink is refused" core_track_symlink_probe
+ln -sf "$HOME/.config/mine.conf" "$HOME/.config/mine-link.conf"
+check_false "…really refused" core_track "$HOME/.config/mine-link.conf"
+check_false "tracking something that is not there is refused" core_track "$HOME/.config/nope.conf"
+
+section "dropping one of your own"
+check_false "a file the plugin ships with cannot be untracked" core_untrack hypr/input.lua
+check_contains "…it says to switch it off instead" "scope" \
+  "$(core_untrack hypr/input.lua 2>&1)"
+core_untrack mine.conf >/dev/null 2>&1
+check_false "the entry is gone" is_tracked_path "$HOME/.config/mine.conf"
+check_false "…and so is the copy in the repo" test -f "$CONFIG_DIR/mine.conf"
+
+section "tracking a whole directory"
+mkdir -p "$HOME/.config/tree/sub" "$HOME/.config/tree/.git"
+printf 'a\n' > "$HOME/.config/tree/a.lua"
+printf 'b\n' > "$HOME/.config/tree/sub/b.lua"
+printf 'objects\n' > "$HOME/.config/tree/.git/HEAD"
+core_track "$HOME/.config/tree" >/dev/null 2>&1
+check "a directory keeps its trailing slash as its id" "tree/" \
+  "$(printf '%s\n' "${USER_MANIFEST[@]}" | grep -o 'tree/$' | head -n1)"
+core_backup >/dev/null 2>&1
+check_true "every file under it is saved" test -f "$CONFIG_DIR/tree/sub/b.lua"
+check "…and .git inside it is not — a repo is not backed up by copying it" "0" \
+  "$(find "$CONFIG_DIR/tree" -name HEAD 2>/dev/null | wc -l)"
+check "the panel counts the files" "2" \
+  "$(build_configs_json | jq -r '[.[] | select(.id=="tree/")][0].nfiles')"
+check "…and reports it as a directory" "true" \
+  "$(build_configs_json | jq -r '[.[] | select(.id=="tree/")][0].is_dir')"
+check "copied in but not committed is still unsaved" "unsaved" \
+  "$(build_configs_json | jq -r '[.[] | select(.id=="tree/")][0].sync_state')"
+git -C "$REPO_DIR" add -A >/dev/null 2>&1; git -C "$REPO_DIR" commit -qm "tree" >/dev/null 2>&1
+check "…once committed" "unpushed" \
+  "$(build_configs_json | jq -r '[.[] | select(.id=="tree/")][0].sync_state')"
+
+section "a change inside a tracked tree is noticed, and un-noticing is automatic"
+printf 'b changed\n' > "$HOME/.config/tree/sub/b.lua"
+check "editing one file in the tree marks the whole entry unsaved" "unsaved" \
+  "$(build_configs_json | jq -r '[.[] | select(.id=="tree/")][0].sync_state')"
+printf 'b\n' > "$HOME/.config/tree/sub/b.lua"
+check "…and putting it back clears it, with no save in between" "unpushed" \
+  "$(build_configs_json | jq -r '[.[] | select(.id=="tree/")][0].sync_state')"
+printf 'c\n' > "$HOME/.config/tree/c.lua"
+check "adding a file to the tree counts as a change" "unsaved" \
+  "$(build_configs_json | jq -r '[.[] | select(.id=="tree/")][0].sync_state')"
+rm -f "$HOME/.config/tree/c.lua"
+check "…and removing it again clears the warning" "unpushed" \
+  "$(build_configs_json | jq -r '[.[] | select(.id=="tree/")][0].sync_state')"
+
+section "the prune pass leaves tracked trees alone"
+# The trap a directory entry sets for the prune pass: every file under it is
+# untracked when the list is read one entry at a time, so without the prefix
+# rule a save would delete the whole tree it had just written.
+core_backup >/dev/null 2>&1
+check_true "the tree survives a second save" test -f "$CONFIG_DIR/tree/sub/b.lua"
+check "the tree's own mirroring drops what the machine deleted" "0" \
+  "$(find "$CONFIG_DIR/tree" -name 'c.lua' 2>/dev/null | wc -l)"
+
+section "restoring a directory"
+rm -rf "$HOME/.config/tree/sub"
+check_false "a file inside it is gone from the machine" test -f "$HOME/.config/tree/sub/b.lua"
+core_restore_file "tree/" >/dev/null 2>&1
+check_true "restore-file brings the whole tree back" test -f "$HOME/.config/tree/sub/b.lua"
+check "…with the content it had" "b" "$(cat "$HOME/.config/tree/sub/b.lua" 2>/dev/null)"
+check_contains "the plan lists it as a tree, slash and all" "/tree/|" \
+  "$(plan_for_category "$(category_for_rel 'tree/')")"
+d=$(core_diff "tree/")
+check_contains "its diff summarises rather than dumps" "identical to the copy in your repo" "$d"
+
+section "themes travel as URLs, not as 556 MB of wallpaper"
+mkdir -p "$STATE_DIR"
+printf '# name\torigin\nmine\thttps://example.com/omarchy-mine-theme\n' > "$STATE_DIR/omarchy-themes.txt"
+check "a theme this machine lacks is reported with its origin" \
+  "mine	https://example.com/omarchy-mine-theme" "$(missing_themes)"
+mkdir -p "$HOME/.config/omarchy/themes/mine"
+check "…and not once it is installed" "" "$(missing_themes)"
+check "a theme with no origin is never proposed for install" "" \
+  "$(printf 'other\t-\n' >> "$STATE_DIR/omarchy-themes.txt"; missing_themes)"
+
+section "suggest proposes, and refuses to propose noise"
+mkdir -p "$HOME/.config/appstate" "$HOME/.local/bin"
+printf 'x\n' > "$HOME/.config/appstate/Local State"
+printf 'y\n' > "$HOME/.config/appstate/settings.json"
+printf '#!/bin/bash\nexec mise x "gh" -- "gh" "$@"\n' > "$HOME/.local/bin/gh"; chmod +x "$HOME/.local/bin/gh"
+printf 'real\n' > "$HOME/.config/candidate.toml"
+ln -sf "$HOME/.config/candidate.toml" "$HOME/.config/linked.toml"
+sg=$(core_suggest)
+check_contains "a config file you wrote is proposed" "candidate.toml" "$sg"
+check "an application's own state directory is not" "0" "$(grep -c 'appstate' <<<"$sg" || true)"
+check "a mise shim is not"  "0" "$(grep -c '/.local/bin/gh$' <<<"$sg" || true)"
+check "a symlink is not"    "0" "$(grep -c 'linked.toml' <<<"$sg" || true)"
+check "something already tracked is not" "0" "$(grep -c 'hypr/input.lua' <<<"$sg" || true)"
+mkdir -p "$HOME/.config/gh"; printf 'token: abc\n' > "$HOME/.config/gh/hosts.yml"
+check "a file that holds a credential is proposed as a secret" "secret" \
+  "$(core_suggest | awk -F'\t' '$1 ~ /hosts.yml/ {print $4}')"
+check "suggest --json is valid JSON" "0" \
+  "$(core_suggest --json | jq empty >/dev/null 2>&1; echo $?)"
+
+section "every writer of the tracked list migrates first"
+# The same rule ensure_scope_file exists for, and the same failure if it is
+# broken: load_user_manifest's fallback invents a list, and a read-modify-write
+# against an invented list is a delete.
+for fn in core_track core_untrack; do
+  body=$(declare -f "$fn")
+  check "$fn calls ensure_track_file before writing" "1" \
+    "$(grep -c 'ensure_track_file' <<<"$body" || true)"
+  check "…and before write_track_file" "1" \
+    "$(awk '/ensure_track_file/{seen=1} /write_track_file/{if(seen) print "1"; exit}' <<<"$body" | head -n1 || true)"
 done
 
 summary

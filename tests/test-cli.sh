@@ -171,7 +171,16 @@ section "editing a file, and coming back to the panel"
 # claim it waited — the panel reopens on that marker and only that marker, and
 # reopening over a floating terminal would be worse than staying shut.
 printf 'nano\n' > "$HOME/.local/state/omarchy/defaults/editor"
-out=$(PATH="$TMP/nobin:$PATH" run edit hypr/input.lua --wait 2>/dev/null || true)
+# Stub out every way this command can reach a real editor. Without them the
+# fallback branch runs the machine's actual omarchy-launch-editor, and the test
+# opens nvim on the screen of whoever is running the suite — which is both
+# rude and a way to make the measurement lie, because a window closing
+# mid-test changes what the command returns.
+mkdir -p "$TMP/nobin"
+for stub in omarchy-launch-editor xdg-open nano nvim; do
+  printf '#!/bin/sh\nexit 0\n' > "$TMP/nobin/$stub"; chmod +x "$TMP/nobin/$stub"
+done
+out=$(PATH="$TMP/nobin:$PATH" EDITOR="$TMP/nobin/nvim" run edit hypr/input.lua --wait 2>/dev/null || true)
 check "a terminal editor does not claim to have waited" "0" \
   "$(printf '%s' "$out" | grep -c 'replicant:waited' || true)"
 check_false "edit still needs an id"  "$CLI" edit --wait
@@ -258,5 +267,35 @@ for i in 1 2 3; do ( "$CLI" backup >/dev/null 2>&1 ) & done
 wait
 check "no leftover git index lock" "0" "$(ls "$REPO/.git/index.lock" 2>/dev/null | wc -l)"
 check_true "the repo is still usable afterwards" git -C "$REPO" status --porcelain
+
+section "track / untrack commit only their own paths"
+printf 'mine\n' > "$HOME/.config/mine.conf"
+# Something unrelated left pending, exactly as a user would have it.
+printf '{ "idle": { "lock": 900 } }\n' > "$HOME/.config/omarchy/shell.json"
+run backup >/dev/null 2>&1
+run track "$HOME/.config/mine.conf" >/dev/null 2>&1
+check_contains "the list names it" "mine.conf" "$(cat "$REPO/.replicant-track" 2>/dev/null)"
+check "the track commit is about the list, not the pending edit" "0" \
+  "$(git -C "$REPO" show --stat --format="" HEAD 2>/dev/null | grep -c 'shell.json' || true)"
+check "…and it does commit the list" "1" \
+  "$(git -C "$REPO" show --stat --format="" HEAD 2>/dev/null | grep -c 'replicant-track' || true)"
+check "…leaving the unrelated edit still pending" "1" \
+  "$(git -C "$REPO" status --porcelain -- config/omarchy/shell.json | grep -c . || true)"
+check_false "track needs a path"                "$CLI" track
+check_false "…that exists"                      "$CLI" track "$HOME/.config/definitely-not-here.conf"
+check_false "untrack needs an id"               "$CLI" untrack
+check_false "untrack refuses a shipped file"    "$CLI" untrack hypr/input.lua
+run untrack mine.conf >/dev/null 2>&1
+check "untracking removes it from the list" "0" \
+  "$(grep -c 'mine.conf' "$REPO/.replicant-track" 2>/dev/null || true)"
+
+section "suggest never writes anything"
+before=$(hash_tree "$HOME")
+out=$(run suggest 2>&1)
+check "suggest changes nothing on the machine" "$before" "$(hash_tree "$HOME")"
+check "suggest --json is valid JSON" "0" \
+  "$("$CLI" suggest --json 2>/dev/null | jq empty >/dev/null 2>&1; echo $?)"
+check_contains "help documents track" "track <path>" "$(run --help)"
+check_contains "help documents suggest" "suggest" "$(run --help)"
 
 summary

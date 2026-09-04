@@ -230,6 +230,83 @@ legacy file until the migration runs); **writing needs the real migration**, so 
 The general rule: a fallback that makes reads correct does not make writes correct. A read-modify-
 write against a file the fallback invented is a delete.
 
+## The shipped list is universal; the personal list is the user's
+
+`MANIFEST` is public plugin source, so it may only name paths any Omarchy machine plausibly has.
+It used to carry one person's Claude hooks, their audit script, their `~/dev/mise.toml` and a
+fingerprint-reader unit — which every marketplace installer then saw as a screenful of "missing"
+rows for files they had never heard of, while none of their own files were tracked at all.
+
+Everything personal lives in **`.replicant-track` in the user's repo**, next to `.replicant-sync`
+and `.replicant-profiles` and for the same reason: "back up my audit script" is a decision about
+the setup, not about one machine.
+
+- `MANIFEST` + `USER_MANIFEST` are joined into **`TRACKED`** by `rebuild_tracked()`. Every loop that
+  means "everything tracked" reads `TRACKED`/`TRACKED_SECRETS`; the two source arrays are only for
+  telling a shipped row from a user row (`source: "manifest"` vs `"user"`, which is what gates the
+  panel's Untrack button).
+- **`load_user_manifest` has a read-only fallback and `ensure_track_file` does the real migration** —
+  the same split, and the same reason, as `scope_for`/`ensure_scope_file`. Without the fallback, the
+  first command after an upgrade would see a 0.6 repo's saved copies as untracked and the prune pass
+  would delete every one of them. `tests/test-core.sh` proves both halves.
+- A shipped entry that exists neither on this machine nor in the repo **draws no row**. The core list
+  is written for everybody, so any one machine is expected to be missing part of it. One the repo
+  *has* a copy of always shows, because "it was here and now it isn't" is exactly what a backup tool
+  must not hide.
+- `untrack` refuses a shipped entry and says to use `scope <id> off` instead — untracking removes the
+  row *and* the repo copy, so doing it to a core entry would make a file the next release tracks
+  again vanish with no way back.
+
+## Big things are inventoried, never copied
+
+The eight custom themes on this machine are **556 MB**, 400 of it their own `.git` directories.
+Tracking `~/.config/omarchy/themes/` as a directory — which is what the plan said to do — would have
+put all of it in a git repo. Every user theme Omarchy knows about is a git clone, so what travels is
+the URL: `state/<machine>/omarchy-themes.txt` records `name<TAB>origin`, and `restore_themes` runs
+`omarchy theme install` for the missing ones **before** `restore_theme` applies the name. That order
+is the bug the pair exists to close: `omarchy theme set enter-the-matrix` on a machine that does not
+have the theme fails, and the most visible thing about the setup comes back as nothing.
+
+Same shape as plugins, and the honest caveat is the same: reinstalling gets the *upstream* copy, not
+local edits. A hand-made theme has no origin — `doctor` names it and the answer is to track its
+directory.
+
+Theme names are compared **normalised**: `omarchy-theme-current` answers "Enter The Matrix" and the
+file records "enter-the-matrix". They differ in case *and* separator, so case-folding alone still
+made every restore claim the theme needed re-applying.
+
+## A directory entry is a trailing slash, everywhere
+
+`MANIFEST`/`.replicant-track` entries ending in `/` are trees. The slash is carried through the id,
+the repo path and the restore plan as a plain string, which is what lets `is_dir_entry` be the only
+test anywhere. What each pass has to do differently:
+
+- **copy**: `copy_tree_into_repo` mirrors *both ways* — a file deleted on the machine goes from the
+  repo too, or a tracked directory only ever grows. It refuses a destination outside `$REPO_DIR`.
+- **prune**: a directory entry claims everything under it *by prefix*. Without that case the sweep
+  sees every file in the tree as untracked and deletes the whole thing one file at a time, on the
+  save that just wrote it. `owning_rel()` exists for the same reason: "is this switched off" is a
+  question about the *entry*, and a file three levels inside a tree has no entry of its own.
+- **`.git` is excluded** (`TREE_EXCLUDES`). A repo nested in a repo is not backed up by copying its
+  objects around.
+- **state**: `tree_same` is `cmp` over the whole tree, so the self-healing badge works unchanged —
+  edit a file inside, the entry says unsaved; put it back, it clears.
+- **diff**: `tree_diff_summary` names which files moved, never their contents. A tree is too big to
+  render, and the useful answer is the file list.
+
+## `suggest` proposes; a blocklist would never have worked
+
+The first version of `core_suggest` offered 1Password's `Local State`, Chromium's `Preferences`, a
+`.sock.pid` and a log file — the things under `~/.config` that are *not* config outnumber the things
+that are, and they are invented faster than anyone can exclude them. It is now a **positive** test:
+a known config extension, or an executable in `~/.local/bin`, or a systemd unit. On top of that,
+`is_app_state_dir` catches the whole Chromium/Electron profile layout by its own marker files, which
+is what removes 1Password, Code and chromium in one rule rather than three.
+
+`suggest_kind` marks a file that holds a credential (`gh/hosts.yml`, `.netrc`, `*token*`) so it is
+offered as a **secret**. Tracking one as ordinary config would leave an OAuth token world-readable
+in a git checkout.
+
 ## Two machines, one repo
 
 The plugin is built for a desktop *and* a laptop sharing one private repo, which rules out two
@@ -278,6 +355,15 @@ would change nothing is worse than no button.
 exits at the first hit, the writer takes a SIGPIPE, and `set -o pipefail` turns that into a
 non-zero pipeline. Capture first (`p=$(plan_for_category "$c"); grep -qF "$x" <<<"$p"`). This cost
 a confusing test failure where the value being searched for was visibly present in the output.
+
+## A test must never open a window on the user's screen
+
+`tests/test-cli.sh` exercises `edit --wait`, and its fake `$HOME` did nothing to stop the command
+from finding the machine's real `omarchy-launch-editor`: the suite opened nvim on the screen of
+whoever was running it, twice, on a file called `input.lua` that was not theirs. Stub every escape
+hatch (`omarchy-launch-editor`, `xdg-open`, and the editor named in the fixture) into a directory
+placed first on `PATH`. This is not only manners — a window the user closes mid-measurement changes
+what the command returns, so the test can lie.
 
 ## Verify before calling it done
 

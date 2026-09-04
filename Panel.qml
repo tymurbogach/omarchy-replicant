@@ -117,6 +117,10 @@ Panel {
   readonly property string icShared: root.mdi(0xF0191)      // content-duplicate
   readonly property string icProfile: root.mdi(0xF0322)     // laptop
   readonly property string icOff: root.mdi(0xF0377)         // minus-circle-outline
+  // A list with a minus, NOT a waste basket. Untracking removes an entry from
+  // your list and the copy from the repo; the file on the machine is untouched,
+  // and a trash can on that button would say the opposite of what it does.
+  readonly property string icUntrack: root.mdi(0xF0410)     // playlist-remove
 
   // ── derived summaries ─────────────────────────────────────────────────────
   // One place maps a sync state to how it looks, so a new state cannot be added
@@ -197,6 +201,7 @@ Panel {
         id: s.id, label: s.id, src: s.src, category: "secrets",
         sync_state: s.sync_state, exists: s.exists, has_default: false,
         synced: s.synced, scope: s.synced === false ? "off" : "shared",
+        source: s.source || "manifest", is_dir: false, nfiles: 0,
         secret: true, kind: s.kind, mode: s.mode,
         vars: s.vars || [], var_count: s.var_count || 0
       })
@@ -215,6 +220,7 @@ Panel {
         id: c.id, label: c.label, src: c.src, category: c.category,
         sync_state: c.sync_state, exists: c.exists, has_default: c.has_default,
         synced: c.synced, scope: c.scope || "shared",
+        source: c.source || "manifest", is_dir: c.is_dir === true, nfiles: c.nfiles || 0,
         secret: false, kind: "", mode: "", vars: [], var_count: 0
       })
     }
@@ -367,6 +373,30 @@ Panel {
            + "already holds is left alone. Click for: shared"
     return "One copy, shared by every machine on this repo. Click for: per profile"
   }
+  // ── the user's own list ───────────────────────────────────────────────────
+  // The shipped manifest is what every Omarchy user plausibly has. Everything
+  // else is the user's, and adding to it has to be one click or the list stays
+  // whatever the plugin decided. `suggest` does the finding; the panel only
+  // ever proposes, and nothing is tracked until the button is pressed.
+  property var suggestions: []
+  property bool suggestLoaded: false
+  function loadSuggestions() {
+    suggestProc.command = [root.cli, "suggest", "--json"]
+    suggestProc.running = true
+  }
+  function doTrack(path, kind) {
+    root.busyLabel = "Tracking " + path + "…"
+    var cmd = [root.cli, "track", path]
+    if (kind === "secret") cmd.push("--secret")
+    trackProc.command = cmd
+    trackProc.running = true
+  }
+  function doUntrack(id) {
+    root.busyLabel = "Untracking " + id + "…"
+    trackProc.command = [root.cli, "untrack", id]
+    trackProc.running = true
+  }
+
   function doScope(id, scope) {
     root.busyLabel = "Setting " + id + " to " + scope + "…"
     fileSaveProc.command = [root.cli, "scope", id, scope]
@@ -411,6 +441,7 @@ Panel {
     else if (a === "reset-all")    { root.busyLabel = "Resetting everything…"; dangerProc.command = [root.cli, "reset-all", "--apply", "--yes"] }
     else if (a === "restore-all")  { root.busyLabel = "Restoring everything…"; dangerProc.command = [root.cli, "restore", "--apply", "--all", "--yes"] }
     else if (a === "restore-cat")  { root.busyLabel = "Restoring " + arg + "…"; dangerProc.command = [root.cli, "restore", "--apply", "--all", "--yes", "--only", arg] }
+    else if (a === "untrack")      { root.doUntrack(arg); return }
     else return
     root.lastOutput = root.busyLabel
     dangerProc.running = true
@@ -453,6 +484,25 @@ Panel {
         // the editor closed. Anything else means it detached and there is no
         // moment to come back at.
         if (String(text).indexOf("replicant:waited") !== -1) root.open()
+      }
+    }
+  }
+
+  // Tracking changes the list the rows come from, so the suggestions have to be
+  // re-read alongside the status — otherwise a file you just tracked stays in
+  // the "not tracked yet" list until the panel is reopened.
+  CliProcess {
+    id: trackProc
+    onExited: function(c){ root.finish("Track", c, trackProc.stdout.text, trackProc.stderr.text); root.loadSuggestions() }
+  }
+
+  Process {
+    id: suggestProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try { root.suggestions = JSON.parse(text || "[]") } catch (e) { root.suggestions = [] }
+        root.suggestLoaded = true
       }
     }
   }
@@ -501,7 +551,11 @@ Panel {
   property var anchorItem
   property var hostWidget
   property bool opened: false
-  function open() { root.opened = true; root.refresh(); if (!root.shortcutsLoaded) root.loadShortcuts() }
+  function open() {
+    root.opened = true; root.refresh()
+    if (!root.shortcutsLoaded) root.loadShortcuts()
+    if (!root.suggestLoaded) root.loadSuggestions()
+  }
   function close() { root.opened = false; root.diffOpen = false; confirmDialog.opened = false }
   function toggle() { root.opened ? root.close() : root.open() }
 
@@ -920,6 +974,12 @@ Panel {
                 width: content.width
               }
             }
+
+            // The list above is what the plugin ships with plus what you have
+            // already added. This is how you add more — the one card that is
+            // about files NOT tracked yet, kept last so it never competes with
+            // the areas, and collapsed so it is an offer rather than a chore.
+            SuggestCard { width: content.width }
           }
 
           // ══════════════ Settings ══════════════
@@ -1409,6 +1469,117 @@ Panel {
     }
   }
 
+  // ── "what else could I be backing up?" ────────────────────────────────────
+  // Auto-discovery is deliberately NOT how the manifest works: the guarantee
+  // that only what a human chose gets tracked is the point of the whole tool.
+  // So this proposes and the user disposes. Every row states why it is here,
+  // and nothing is added until a button is pressed.
+  component SuggestCard: BorderSurface {
+    id: sc
+    readonly property bool expanded: root.isOpen("__suggest")
+    readonly property var items: root.suggestions || []
+
+    visible: sc.items.length > 0
+    implicitHeight: scCol.implicitHeight
+    radius: Style.cornerRadius
+    color: Style.controlFill(false, false, root.fg, Color.accent)
+    borderSpec: Border.controlSpec(sc.expanded ? "focus" : "normal", root.fg, Color.accent)
+
+    Column {
+      id: scCol
+      anchors.top: parent.top
+      anchors.left: parent.left
+      anchors.right: parent.right
+      spacing: 0
+
+      CardHeader {
+        width: parent.width
+        icon: root.icPlus
+        title: "Add more files"
+        subtitle: "Config on this machine that nothing is backing up yet"
+        countText: String(sc.items.length)
+        statusText: "not tracked"
+        statusHighlight: false
+        expanded: sc.expanded
+        onToggled: root.toggleCard("__suggest")
+      }
+
+      Column {
+        width: parent.width
+        visible: sc.expanded
+        spacing: Style.space(2)
+
+        PanelSeparator { width: parent.width - Style.spacing.rowPaddingX * 2; x: Style.spacing.rowPaddingX }
+
+        Repeater {
+          model: sc.expanded ? sc.items : []
+          delegate: SuggestRow {
+            required property var modelData
+            item: modelData
+            width: scCol.width
+          }
+        }
+      }
+    }
+  }
+
+  component SuggestRow: Item {
+    id: srow
+    property var item: ({})
+    readonly property bool isSecret: srow.item.kind === "secret"
+
+    // Fixed height, like every other row here: a row whose height comes from
+    // its own centred content is the parent-height/child-position loop.
+    implicitHeight: Style.space(50)
+
+    Row {
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      anchors.leftMargin: Style.spacing.rowPaddingX
+      anchors.rightMargin: Style.spacing.rowPaddingX
+      spacing: Style.space(8)
+
+      Column {
+        width: parent.width - trackBtn.width - parent.spacing
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: Style.spacing.xs
+        Text {
+          width: parent.width
+          text: srow.item.pretty || ""
+          color: root.fg
+          font.family: root.ff; font.pixelSize: Style.font.subtitle
+          elide: Text.ElideMiddle
+        }
+        Text {
+          width: parent.width
+          text: srow.item.reason || ""
+          // A file that holds a credential is not a normal suggestion: tracked
+          // as ordinary config it would sit world-readable in a git checkout.
+          color: srow.isSecret ? Color.urgent : root.dim
+          font.family: root.ff; font.pixelSize: Style.font.caption
+          elide: Text.ElideRight
+        }
+      }
+
+      Button {
+        id: trackBtn
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(96)
+        enabled: !root.busy
+        bordered: true
+        text: srow.isSecret ? "Track (600)" : "Track"
+        iconText: root.icPlus
+        foreground: root.fg
+        fontFamily: root.ff
+        tooltipText: srow.isSecret
+                     ? "Add it to your list as a secret: stored at mode 600, and its contents are never rendered"
+                     : "Add it to your list. It is saved with your next Save to GitHub."
+        onClicked: root.doTrack(srow.item.path, srow.item.kind)
+      }
+    }
+  }
+
   component ShortcutsView: Column {
     id: sv
     spacing: Style.space(2)
@@ -1838,6 +2009,8 @@ Panel {
           // contain: a kind, a mode, and for env files the names of the
           // variables. No value ever reaches the screen.
           text: frow.missing ? (frow.config.src + "  — not on this machine")
+              : frow.config.is_dir === true
+                ? (frow.config.src + "  ·  " + frow.config.nfiles + " files")
               : frow.isSecret
                 ? (frow.config.kind + "  ·  mode " + (frow.config.mode || "?")
                    + (frow.config.var_count > 0 ? "  ·  " + frow.config.var_count + " variables" : ""))
@@ -1911,6 +2084,19 @@ Panel {
           onClicked: root.ask("reset-file", frow.config.id,
                               "Replace " + frow.config.label + " with Omarchy's default?\n\nYour current version is kept as .bak.<epoch>.",
                               "Reset")
+        }
+        // Only on rows that came from the user's own list. A file the plugin
+        // ships with is switched OFF instead, which keeps both the row and the
+        // copy in the repo — untracking a shipped entry would make a file the
+        // next version tracks again vanish from the panel with no way back.
+        Button {
+          visible: frow.config.source === "user"
+          iconText: root.icUntrack; bordered: false; foreground: root.dim; fontFamily: root.ff
+          enabled: !root.busy
+          tooltipText: "Stop tracking this — it leaves your list and the copy in the repo goes with it"
+          onClicked: root.ask("untrack", frow.config.id,
+                              "Stop tracking " + frow.config.label + "?\n\nThe file on this machine is untouched. The copy in your repo is removed, and git keeps its history.",
+                              "Untrack")
         }
       }
     }

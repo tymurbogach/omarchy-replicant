@@ -28,22 +28,37 @@ LOGIND_DROPIN="${REPLICANT_LOGIND_DROPIN:-/etc/systemd/logind.conf.d/99-lid.conf
 TEMPLATES_DIR="$REPO_DIR/templates"
 GITHOOKS_DIR="$REPO_DIR/.githooks"
 
-# ─── MANIFEST — ported from ~/omarchy_thinkpad/bin/backup.sh ────────────────
-# One-way direction: system -> repo. Only your own stuff, or what differs from default.
-# Anything identical to the default isn't tracked: recover it with omarchy-refresh-config.
+# ─── CORE MANIFEST — what any Omarchy machine plausibly has ─────────────────
+# One-way direction: system -> repo. Only your own stuff, or what differs from
+# default. Anything identical to the default isn't tracked: recover it with
+# omarchy-refresh-config.
+#
+# This list is SHIPPED, in public plugin source, and is therefore only the paths
+# a stranger installing from the marketplace would recognise. It used to carry
+# one person's Claude hooks, their audit script and their fingerprint-reader
+# unit — which every installer then saw as a screenful of "missing" rows for
+# files they had never heard of, while none of their OWN files were tracked at
+# all. Anything personal now lives in the user's list (see USER_TRACK_FILE
+# below), inside their own repo, where it travels between their machines
+# without being published to everybody else's.
+#
+# A trailing slash makes an entry a DIRECTORY (see is_dir_entry). Use it only
+# for a tree of hand-written config; anything that is really a git clone
+# belongs in an inventory instead — see the theme inventory in core_backup,
+# which records a URL rather than copying 556 MB of wallpapers into a git repo.
 MANIFEST=(
   "$HOME/.bashrc:home/bashrc"
+  "$HOME/.bash_profile:home/bash_profile"
+  "$HOME/.inputrc:home/inputrc"
   "$HOME/.XCompose:home/XCompose"
   "$HOME/.ssh/config:ssh/config"
   "$HOME/.config/git/config:git/config"
   "$HOME/.claude/settings.json:claude/settings.json"
   "$HOME/.claude/settings.local.json:claude/settings.local.json"
-  "$HOME/.claude/hooks/cbm-code-discovery-gate:claude/hooks/cbm-code-discovery-gate"
-  "$HOME/.claude/hooks/cbm-session-reminder:claude/hooks/cbm-session-reminder"
-  "$HOME/.claude/hooks/cbm-subagent-reminder:claude/hooks/cbm-subagent-reminder"
   "$HOME/.claude/.mcp.json:claude/mcp.json"
   "$HOME/.config/Code/User/settings.json:vscode/settings.json"
   "$HOME/.config/mise/config.toml:mise/config.toml"
+  "$HOME/.config/nvim/:nvim/"
   "$HOME/.config/hypr/bindings.lua:hypr/bindings.lua"
   "$HOME/.config/hypr/hyprland.lua:hypr/hyprland.lua"
   "$HOME/.config/hypr/input.lua:hypr/input.lua"
@@ -53,17 +68,12 @@ MANIFEST=(
   "$HOME/.config/hypr/hyprlock.conf:hypr/hyprlock.conf"
   "$HOME/.config/hypr/hyprsunset.conf:hypr/hyprsunset.conf"
   "$HOME/.config/hypr/xdph.conf:hypr/xdph.conf"
-  "$HOME/.config/uwsm/env.d/50-local-bin-priority.sh:uwsm/env.d/50-local-bin-priority.sh"
   "$HOME/.config/xdg-terminals.list:xdg-terminals.list"
+  "$HOME/.config/mimeapps.list:mimeapps.list"
   "$HOME/.config/opencode/opencode.json:opencode/opencode.json"
   "$HOME/.config/opencode/tui.json:opencode/tui.json"
   "$HOME/.config/opencode/AGENTS.md:opencode/AGENTS.md"
-  "$HOME/dev/mise.toml:dev/mise.toml"
-  "$HOME/.local/bin/hypr-refresh-auto:bin/hypr-refresh-auto"
   "$HOME/.config/omarchy/branding/screensaver.txt:branding/screensaver.txt"
-  "$HOME/.local/bin/omarchy-audit:bin/omarchy-audit"
-  "$HOME/.config/omarchy-audit-ignore:omarchy-audit-ignore"
-  "$HOME/.config/omarchy/hooks/post-update.d/audit-config.hook:omarchy/hooks/post-update.d/audit-config.hook"
   "$HOME/.config/omarchy/shell.json:omarchy/shell.json"
   "$HOME/.config/omarchy/extensions/omarchy-menu.jsonc:omarchy/extensions/omarchy-menu.jsonc"
   "$HOME/.config/omarchy/shell.toml:omarchy/shell.toml"
@@ -75,7 +85,11 @@ MANIFEST=(
   "$HOME/.local/state/omarchy/defaults/editor:omarchy/defaults/editor"
   "$HOME/.config/alacritty/alacritty.toml:alacritty/alacritty.toml"
   "$HOME/.config/foot/foot.ini:foot/foot.ini"
-  "/etc/systemd/system/fprintd-resume.service:etc/fprintd-resume.service"
+  "$HOME/.config/kitty/kitty.conf:kitty/kitty.conf"
+  "$HOME/.config/ghostty/config:ghostty/config"
+  "$HOME/.config/starship.toml:starship.toml"
+  "$HOME/.config/btop/btop.conf:btop/btop.conf"
+  "$HOME/.config/lazygit/config.yml:lazygit/config.yml"
   "/etc/systemd/logind.conf.d/99-lid.conf:etc/99-lid.conf"
   "/etc/systemd/sleep.conf.d/99-hibernate-delay.conf:etc/99-hibernate-delay.conf"
 )
@@ -84,9 +98,145 @@ SECRETS_MANIFEST=(
   "$HOME/.ssh/id_ed25519:ssh/id_ed25519"
   "$HOME/.ssh/id_ed25519.pub:ssh/id_ed25519.pub"
   "$HOME/.config/environment.d/60-secrets.conf:env/60-secrets.conf"
+)
+
+# What the pre-0.7 core tracked that is one person's rather than everyone's.
+# Kept only so an existing repo does not silently stop tracking them the day it
+# upgrades: ensure_track_file writes whichever of these the repo or the machine
+# actually has into the user's own list, and load_user_manifest falls back to
+# the same set for reads until that migration runs. Nothing here is offered to
+# a fresh install. `~/dev/mise.toml` is deliberately absent — it is a project
+# file, not machine config, and is dropped rather than migrated.
+LEGACY_PERSONAL=(
+  "$HOME/.claude/hooks/cbm-code-discovery-gate:claude/hooks/cbm-code-discovery-gate"
+  "$HOME/.claude/hooks/cbm-session-reminder:claude/hooks/cbm-session-reminder"
+  "$HOME/.claude/hooks/cbm-subagent-reminder:claude/hooks/cbm-subagent-reminder"
+  "$HOME/.config/uwsm/env.d/50-local-bin-priority.sh:uwsm/env.d/50-local-bin-priority.sh"
+  "$HOME/.local/bin/hypr-refresh-auto:bin/hypr-refresh-auto"
+  "$HOME/.local/bin/omarchy-audit:bin/omarchy-audit"
+  "$HOME/.config/omarchy-audit-ignore:omarchy-audit-ignore"
+  "$HOME/.config/omarchy/hooks/post-update.d/audit-config.hook:omarchy/hooks/post-update.d/audit-config.hook"
+  "/etc/systemd/system/fprintd-resume.service:etc/fprintd-resume.service"
+)
+LEGACY_PERSONAL_SECRETS=(
   "$HOME/dev/portfolio/.env:env/portfolio.env"
   "$HOME/dev/lazytripz/backend/.env:env/lazytrip-backend.env"
 )
+
+# ─── THE USER'S OWN LIST ────────────────────────────────────────────────────
+# Everything above ships with the plugin. Everything a particular person wants
+# backed up on top of it lives here, in a file inside THEIR repo — the same
+# place, and for the same reason, as .replicant-sync and .replicant-profiles:
+# "back up my audit script" is a decision about the setup, not about one
+# machine, so making it once must be enough for both.
+#
+# Format, one entry per line:
+#
+#   ~/.local/bin/my-script                  a file, name in the repo derived
+#   ~/.config/foo/bar.conf = foo/bar.conf   a file, name in the repo given
+#   ~/.config/nvim/                         a directory (trailing slash)
+#   secret ~/dev/app/.env                   stored 600, contents never rendered
+#
+USER_TRACK_FILE="$REPO_DIR/.replicant-track"
+USER_MANIFEST=()
+USER_SECRETS=()
+
+# A trailing slash is the whole of the directory/file distinction, on the repo
+# side of the entry. It survives every place a rel is passed around as a string.
+is_dir_entry() { [[ "$1" == */ ]]; }
+
+# derive_rel <absolute-path> — where an entry lands in the repo when the user
+# does not say. It reproduces the naming the shipped MANIFEST already uses, so
+# a tracked ~/.config/foo/bar.conf sits next to the shipped ones rather than in
+# a parallel scheme: ~/.config/X -> X, ~/.local/bin/X -> bin/X, ~/.X -> home/X.
+derive_rel() {
+  local p="$1" rel slash=""
+  [[ "$p" == */ ]] && { slash="/"; p="${p%/}"; }
+  case "$p" in
+    "$HOME/.config/"*)     rel="${p#"$HOME"/.config/}" ;;
+    "$HOME/.local/bin/"*)  rel="bin/${p#"$HOME"/.local/bin/}" ;;
+    "$HOME/.local/share/"*) rel="share/${p#"$HOME"/.local/share/}" ;;
+    "$HOME/.local/state/"*) rel="state-files/${p#"$HOME"/.local/state/}" ;;
+    "$HOME/."*)
+      rel="${p#"$HOME"/.}"
+      # ~/.ssh/config keeps its directory (ssh/config); ~/.bashrc, which has
+      # none, would otherwise land in the repo root as a bare "bashrc".
+      [[ "$rel" == */* ]] || rel="home/$rel" ;;
+    "$HOME/"*)             rel="home/${p#"$HOME"/}" ;;
+    /etc/*)                rel="etc/${p##*/}" ;;
+    *)                     rel="misc/${p##*/}" ;;
+  esac
+  printf '%s%s\n' "$rel" "$slash"
+}
+
+read_track_lines() {
+  [[ -f "$USER_TRACK_FILE" ]] || return 0
+  sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$USER_TRACK_FILE" 2>/dev/null || true
+}
+
+# parse_track_line <line> -> "kind<TAB>src<TAB>rel", or nothing if unusable.
+parse_track_line() {
+  local line="$1" kind=config src rel
+  line="${line#"${line%%[![:space:]]*}"}"
+  if [[ "$line" == secret[[:space:]]* ]]; then kind=secret; line="${line#secret}"; fi
+  if [[ "$line" == *=* ]]; then src="${line%%=*}"; rel="${line#*=}"; else src="$line"; rel=""; fi
+  # Trim, but only at the ends: a path may legitimately contain a space.
+  src="${src#"${src%%[![:space:]]*}"}"; src="${src%"${src##*[![:space:]]}"}"
+  rel="${rel#"${rel%%[![:space:]]*}"}"; rel="${rel%"${rel##*[![:space:]]}"}"
+  [[ -n "$src" ]] || return 0
+  case "$src" in "~/"*) src="$HOME/${src#\~/}" ;; "\$HOME/"*) src="$HOME/${src#\$HOME/}" ;; esac
+  [[ "$src" == /* ]] || return 0
+  [[ -n "$rel" ]] || rel=$(derive_rel "$src")
+  # A directory on one side is a directory on both, whichever side said so.
+  if [[ "$src" == */ || "$rel" == */ ]]; then src="${src%/}/"; rel="${rel%/}/"; fi
+  printf '%s\t%s\t%s\n' "$kind" "$src" "$rel"
+}
+
+rebuild_tracked() {
+  TRACKED=("${MANIFEST[@]}" ${USER_MANIFEST[@]+"${USER_MANIFEST[@]}"})
+  TRACKED_SECRETS=("${SECRETS_MANIFEST[@]}" ${USER_SECRETS[@]+"${USER_SECRETS[@]}"})
+}
+
+# Reading has a fallback; writing needs the real migration (ensure_track_file).
+# A repo written before 0.7 has no .replicant-track, but its config/ is full of
+# files the old core tracked — so until the migration runs we read the same set
+# the migration is going to write. Without this, the first command after an
+# upgrade would see those files as untracked and core_backup's prune pass would
+# delete every one of them from the repo.
+load_user_manifest() {
+  local line kind src rel
+  USER_MANIFEST=(); USER_SECRETS=()
+  if [[ -f "$USER_TRACK_FILE" ]]; then
+    while IFS= read -r line; do
+      IFS=$'\t' read -r kind src rel < <(parse_track_line "$line")
+      [[ -n "${rel:-}" ]] || continue
+      if [[ "$kind" == secret ]]; then USER_SECRETS+=("$src:$rel"); else USER_MANIFEST+=("$src:$rel"); fi
+    done < <(read_track_lines)
+  else
+    local entry
+    for entry in "${LEGACY_PERSONAL[@]}"; do
+      legacy_personal_present "$entry" && USER_MANIFEST+=("$entry")
+    done
+    for entry in "${LEGACY_PERSONAL_SECRETS[@]}"; do
+      [[ -f "${entry%%:*}" || -f "$SECRETS_DIR/${entry##*:}" ]] && USER_SECRETS+=("$entry")
+    done
+  fi
+  rebuild_tracked
+}
+
+# A pre-0.7 entry counts as this user's only if the repo already holds a copy or
+# the machine still has the file. Deliberately blunt about where the copy might
+# be: this runs before scope_for is defined, so it looks under both roots rather
+# than asking repo_path_for which one applies.
+legacy_personal_present() {
+  local src="${1%%:*}" rel="${1##*:}" p
+  [[ -e "$src" ]] && return 0
+  [[ -e "$CONFIG_DIR/$rel" ]] && return 0
+  for p in "$REPO_DIR"/profiles/*/config/"$rel"; do [[ -e "$p" ]] && return 0; done
+  return 1
+}
+
+load_user_manifest
 
 # ─── CATEGORIES — how the panel files everything, and how each is put back ───
 # The panel shows one collapsed card per category instead of one long list of
@@ -131,11 +281,13 @@ category_for_rel() {
     omarchy/shell.json|omarchy/extensions/*)           echo desktop ;;
     hypr/*)                                            echo hyprland ;;
     alacritty/*|foot/*|kitty/*|ghostty/*|xdg-terminals.list|home/*) echo terminal ;;
-    git/*|vscode/*|mise/*|claude/*|opencode/*|dev/*|omarchy/defaults/*) echo development ;;
+    git/*|vscode/*|mise/*|claude/*|opencode/*|dev/*|nvim/*|nvim/|omarchy/defaults/*) echo development ;;
     ssh/*|env/*)                                       echo secrets ;;
     plugins/*)                                         echo plugins ;;
     bin/*|omarchy/hooks/*|omarchy-audit-ignore)        echo scripts ;;
-    etc/*|uwsm/*)                                      echo system ;;
+    etc/*|uwsm/*|systemd/*)                            echo system ;;
+    mimeapps.list)                                     echo desktop ;;
+    starship.toml|btop/*|lazygit/*)                    echo terminal ;;
     *)                                                 echo other ;;
   esac
 }
@@ -389,6 +541,280 @@ core_sync() {
   esac
 }
 
+# ─── The user's list: writing it ────────────────────────────────────────────
+write_track_file() {
+  local -a keep=("$@")
+  {
+    echo "# Files and directories YOU want backed up, on top of the ones the"
+    echo "# plugin ships with. One per line:"
+    echo "#"
+    echo "#   ~/.local/bin/my-script                  name in the repo derived"
+    echo "#   ~/.config/foo/bar.conf = foo/bar.conf   name in the repo given"
+    echo "#   ~/.config/nvim/                         a directory (trailing slash)"
+    echo "#   secret ~/dev/app/.env                   stored 600, never rendered"
+    echo "#"
+    echo "# This file lives in the repo, so both your machines honour it."
+    echo "# Written by the panel and by 'omarchy-replicant track'; safe to edit."
+    (( ${#keep[@]} )) && printf '%s\n' "${keep[@]}"
+  } > "$USER_TRACK_FILE"
+}
+
+# Same contract as ensure_scope_file, for the same reason: load_user_manifest
+# has a read-only fallback so nothing stops being tracked the moment you
+# upgrade, but a read-modify-write against a list the fallback invented would
+# be a delete. Every writer calls this first.
+ensure_track_file() {
+  [[ -f "$USER_TRACK_FILE" ]] && return 0
+  mkdir -p "$(dirname "$USER_TRACK_FILE")" 2>/dev/null || true
+  local -a seed=() entry
+  for entry in "${LEGACY_PERSONAL[@]}"; do
+    legacy_personal_present "$entry" && seed+=("$(track_line_for "${entry%%:*}" "${entry##*:}" config)")
+  done
+  for entry in "${LEGACY_PERSONAL_SECRETS[@]}"; do
+    [[ -f "${entry%%:*}" || -f "$SECRETS_DIR/${entry##*:}" ]] &&
+      seed+=("$(track_line_for "${entry%%:*}" "${entry##*:}" secret)")
+  done
+  write_track_file ${seed[@]+"${seed[@]}"}
+  (( ${#seed[@]} )) &&
+    echo "  · ${#seed[@]} entry(ies) that used to be hardcoded are now yours, in .replicant-track" >&2
+  load_user_manifest
+  return 0
+}
+
+# One line of .replicant-track, written the way a human would: the derived name
+# is left implicit, so the file only ever states what it has to.
+track_line_for() {
+  local src="$1" rel="$2" kind="${3:-config}" pretty="${1/#$HOME/\~}" line
+  line="$pretty"
+  [[ "$(derive_rel "$src")" == "$rel" ]] || line="$pretty = $rel"
+  [[ "$kind" == secret ]] && line="secret $line"
+  printf '%s\n' "$line"
+}
+
+is_user_entry() {
+  local rel="$1" entry
+  for entry in ${USER_MANIFEST[@]+"${USER_MANIFEST[@]}"} ${USER_SECRETS[@]+"${USER_SECRETS[@]}"}; do
+    [[ "${entry##*:}" == "$rel" ]] && return 0
+  done
+  return 1
+}
+
+# core_track <path> [rel] [--secret] — add one path to the user's list.
+core_track() {
+  local path="" rel="" kind=config arg
+  for arg in "$@"; do
+    case "$arg" in
+      --secret) kind=secret ;;
+      -*) ;;
+      *) if [[ -z "$path" ]]; then path="$arg"; else rel="$arg"; fi ;;
+    esac
+  done
+  [[ -n "$path" ]] || { echo "track: usage: track <path> [name-in-repo] [--secret]" >&2; return 1; }
+  case "$path" in "~/"*) path="$HOME/${path#\~/}" ;; esac
+  [[ "$path" == /* ]] || path="$PWD/$path"
+  # A trailing slash is how the user says "directory", but so is the file
+  # system: asking it means `track ~/.config/nvim` does the obvious thing.
+  [[ -d "${path%/}" ]] && path="${path%/}/"
+  [[ -e "${path%/}" ]] || { echo "track: $path does not exist on this machine" >&2; return 1; }
+  [[ -L "${path%/}" ]] && { echo "track: $path is a symlink — track what it points at instead" >&2; return 1; }
+  [[ -n "$rel" ]] || rel=$(derive_rel "$path")
+  if [[ "$path" == */ ]]; then rel="${rel%/}/"; fi
+
+  local entry
+  for entry in "${TRACKED[@]}" "${TRACKED_SECRETS[@]}"; do
+    if [[ "${entry%%:*}" == "$path" || "${entry##*:}" == "$rel" ]]; then
+      echo "track: already tracked as '${entry##*:}'" >&2; return 0
+    fi
+  done
+
+  ensure_track_file
+  local -a keep=()
+  while IFS= read -r entry; do keep+=("$entry"); done < <(read_track_lines)
+  keep+=("$(track_line_for "$path" "$rel" "$kind")")
+  write_track_file ${keep[@]+"${keep[@]}"}
+  load_user_manifest
+  echo "tracking ${path/#$HOME/\~} as $rel" >&2
+}
+
+# core_untrack <rel> — drop one entry from the user's list. Only the user's:
+# a shipped core entry is switched off with `scope <rel> off`, which keeps the
+# row (and the copy the repo holds) instead of making both disappear.
+core_untrack() {
+  local rel="$1" entry k line
+  [[ -n "$rel" ]] || { echo "untrack: usage: untrack <id>" >&2; return 1; }
+  if ! is_user_entry "$rel"; then
+    for entry in "${MANIFEST[@]}" "${SECRETS_MANIFEST[@]}"; do
+      [[ "${entry##*:}" == "$rel" ]] && {
+        echo "untrack: $rel is one of the files the plugin ships with — use 'scope $rel off' to stop syncing it" >&2
+        return 1; }
+    done
+    echo "untrack: $rel is not in your list" >&2; return 1
+  fi
+  ensure_track_file
+  local -a keep=()
+  while IFS= read -r line; do
+    IFS=$'\t' read -r k _ entry < <(parse_track_line "$line")
+    [[ "${entry:-}" == "$rel" ]] || keep+=("$line")
+  done < <(read_track_lines)
+  write_track_file ${keep[@]+"${keep[@]}"}
+  load_user_manifest
+  # The repo copy goes with it — core_backup's prune pass would remove it on
+  # the next save anyway, and leaving it until then means the panel shows a row
+  # for a file nothing tracks.
+  local copy; copy=$(repo_copy_for_rel "$rel")
+  [[ -e "$copy" ]] && rm -rf -- "$copy"
+  echo "$rel is no longer tracked (the copy in your repo was removed too)" >&2
+}
+
+# ─── suggest — the part that makes adding easy ──────────────────────────────
+# The manifest is deliberately not auto-discovery: the guarantee that only what
+# a human decided to track gets tracked is the point of the whole thing. But
+# "you may add anything you like" is worthless if finding it means remembering
+# every path you ever edited. So this proposes, and the user disposes: it walks
+# the few places hand-written config actually lives and prints what is not
+# tracked yet, with the reason it is worth a second look.
+#
+# Everything it refuses to suggest, it refuses for a mechanical reason, never
+# a guess about taste:
+SUGGEST_MAX_BYTES=262144   # a config file people wrote by hand; not a database
+
+# What a config file looks like. A positive list rather than a blocklist,
+# because the things under ~/.config that are NOT config outnumber the things
+# that are, and they are invented faster than anyone can exclude them.
+SUGGEST_EXTENSIONS="conf toml ini yml yaml lua json jsonc rc list css scss sh bash fish zsh service timer socket desktop kdl nix editorconfig theme vim"
+
+# An Electron or Chromium application keeps its entire state in ~/.config/<app>,
+# and every file in there is machine-generated: "Local State", "Preferences",
+# "TransportSecurity", a machine id. Suggesting them would bury the handful of
+# files a person actually wrote, and restoring one onto another machine would
+# be actively wrong. The tell is reliable and cheap — these names are the
+# Chromium profile layout, and nothing hand-written is called any of them.
+APP_STATE_MARKERS=("Local State" "Preferences" "TransportSecurity" "machineid" "Cookies" "History" "Network Persistent State" "Session Storage" "blob_storage" "Service Worker")
+
+is_app_state_dir() {
+  local d="$1" m
+  for m in "${APP_STATE_MARKERS[@]}"; do [[ -e "$d/$m" ]] && return 0; done
+  return 1
+}
+
+suggest_skip_reason() {
+  local f="$1" base="${f##*/}" ext="${f##*.}"
+  [[ -L "$f" ]]                             && { echo "a symlink"; return 0; }
+  [[ "$base" == *.bak.* || "$base" == *~ ]] && { echo "a backup"; return 0; }
+  [[ $(stat -c%s "$f" 2>/dev/null || echo 0) -gt $SUGGEST_MAX_BYTES ]] && { echo "too big to be hand-written"; return 0; }
+  grep -Iq . "$f" 2>/dev/null || { echo "not a text file"; return 0; }
+  is_app_state_dir "$(dirname "$f")" && { echo "an application's own state"; return 0; }
+  # Already picked up on its own: a plugin config next to its manifest is found
+  # by discover_plugin_entries and saved without anybody listing it.
+  is_discovered_plugin_config "$f" && { echo "already saved as a plugin config"; return 0; }
+  case "$base" in
+    package.json|package-lock.json|yarn.lock|pnpm-lock.yaml|composer.lock)
+      { echo "a package manager's file"; return 0; } ;;
+    *session*|*state*|*.log|*.pid|*.sock*|*.db|*.lock)
+      { echo "runtime state, not config"; return 0; } ;;
+  esac
+  # A script has no extension to go by, so it is judged by being executable and
+  # living where you put scripts. Everything else must look like config.
+  if [[ "$f" != "$HOME/.local/bin/"* ]]; then
+    [[ "$ext" != "$base" ]] || { echo "no extension — not obviously config"; return 0; }
+    [[ " $SUGGEST_EXTENSIONS " == *" ${ext,,} "* ]] || { echo ".$ext is not a config format"; return 0; }
+  fi
+  # A mise shim is generated, identical on every machine, and recreated by
+  # `mise use -g` — nine of them in ~/.local/bin would drown the real scripts.
+  grep -qE '^exec mise x ' "$f" 2>/dev/null && { echo "a mise shim"; return 0; }
+  # Installed by another plugin, which is what reinstalls it. The tell is the
+  # uninstaller every Omarchy plugin installer drops beside its script.
+  [[ -e "${f}-uninstall" ]] && { echo "installed by a plugin"; return 0; }
+  [[ "$base" == *-uninstall ]] && [[ -e "${f%-uninstall}" ]] && { echo "installed by a plugin"; return 0; }
+  # Byte-identical to what Omarchy ships: nothing of yours is in it, and
+  # `omarchy refresh config` already puts it back.
+  is_default_file "$f" 2>/dev/null && { echo "identical to Omarchy's default"; return 0; }
+  return 1
+}
+
+# owning_rel <repo-relative-path> — the tracked id a repo path belongs to. For
+# a plain file that is the path itself; for a file inside a tracked directory
+# it is the directory's id, which is where its scope is recorded. The prune
+# pass needs it: "is this switched off" is a question about the entry, and a
+# file three levels inside a tracked tree has no entry of its own.
+owning_rel() {
+  local p="$1" entry erel
+  for entry in "${TRACKED[@]}"; do
+    erel="${entry##*:}"
+    [[ "$erel" == */ && "$p" == "$erel"* ]] && { printf '%s\n' "$erel"; return 0; }
+  done
+  printf '%s\n' "$p"
+}
+
+is_discovered_plugin_config() {
+  local p="$1" psrc _prel _pname
+  while IFS=$'\t' read -r psrc _prel _pname; do
+    [[ "$psrc" == "$p" ]] && return 0
+  done < <(discover_plugin_entries)
+  return 1
+}
+
+# Some config files hold a credential. gh/hosts.yml carries an OAuth token, a
+# .netrc carries a password. They are perfectly reasonable things to back up
+# into a private repo — but as secrets, at mode 600, with their contents never
+# rendered in the panel. Suggesting one as ordinary config is how a token ends
+# up world-readable in a git checkout, so it is named here.
+suggest_kind() {
+  case "${1##*/}" in
+    hosts.yml|hosts.yaml|.netrc|netrc|credentials|credentials.*|*token*|*secret*|*.pem|*.key)
+      echo secret ;;
+    *) echo config ;;
+  esac
+}
+
+is_tracked_path() {
+  local p="$1" entry esrc
+  for entry in "${TRACKED[@]}" "${TRACKED_SECRETS[@]}"; do
+    esrc="${entry%%:*}"
+    [[ "$esrc" == "$p" ]] && return 0
+    # A file inside a tracked directory is tracked by it.
+    [[ "$esrc" == */ && "$p" == "$esrc"* ]] && return 0
+  done
+  return 1
+}
+
+# core_suggest [--json] — "path<TAB>rel<TAB>reason" per line, or the same as
+# JSON for the panel's checklist.
+core_suggest() {
+  local as_json=0; [[ "${1:-}" == "--json" ]] && as_json=1
+  {
+    local f reason kind
+    # Top level of ~/.config and one directory down: deep trees are libraries
+    # and caches, and the config people actually edit is never four levels in.
+    while IFS= read -r f; do
+      is_tracked_path "$f" && continue
+      case "$f" in
+        */omarchy/themes/*|*/omarchy/backgrounds/*) continue ;;  # inventoried, not copied
+        */.git/*|*/node_modules/*|*/cache/*|*/Cache/*) continue ;;
+      esac
+      suggest_skip_reason "$f" >/dev/null && continue
+      reason="config you edited by hand"
+      case "$f" in
+        */systemd/user/*) reason="a user service you added" ;;
+        "$HOME/.local/bin/"*) reason="a script you wrote" ;;
+      esac
+      kind=$(suggest_kind "$f")
+      [[ "$kind" == secret ]] && reason="holds a credential — track it as a secret"
+      printf '%s\t%s\t%s\t%s\n' "$f" "$(derive_rel "$f")" "$reason" "$kind"
+    done < <({
+      find "$HOME/.config" -maxdepth 2 -type f 2>/dev/null
+      find "$HOME/.config/systemd/user" -maxdepth 1 -type f 2>/dev/null
+      find "$HOME/.local/bin" -maxdepth 1 -type f -executable 2>/dev/null
+    } | sort -u)
+  } | if (( as_json )); then
+    jq -Rsc 'def home: sub("^"+$ENV.HOME; "~");
+      split("\n") | map(select(length > 0) | split("\t")
+      | {path: .[0], pretty: (.[0]|home), id: .[1], reason: .[2], kind: .[3]})'
+  else
+    cat
+  fi
+}
+
 # install helpers — install_file() writes with a .bak.<epoch> of whatever it overwrites
 DRY=${DRY:-0}
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$1" >&2; }
@@ -414,6 +840,117 @@ install_file() {
   ok "$short_path ($mode)"
 }
 
+# ─── Directory entries ──────────────────────────────────────────────────────
+# A handful of things people configure are a small tree rather than one file —
+# ~/.config/nvim is the obvious one. What is deliberately NOT here is anything
+# that is really a git clone: the eight custom themes on the machine this was
+# written on come to 556 MB, 400 of it inside their own .git directories, and
+# copying that into a git repo would be both enormous and worse than the thing
+# it replaced. Those get an inventory and `omarchy theme install` instead.
+#
+# .git is skipped inside a tracked tree for the same reason, one size down: a
+# repo nested in a repo is not backed up by copying its objects around.
+TREE_EXCLUDES=(".git" "node_modules" "__pycache__" ".cache")
+
+tree_find() {
+  local root="${1%/}" e
+  local -a prune=()
+  for e in "${TREE_EXCLUDES[@]}"; do prune+=(-name "$e" -o); done
+  find "$root" \( "${prune[@]}" -false \) -prune -o -type f -print 2>/dev/null
+}
+
+# tree_files <root> — paths inside the tree, relative to it, sorted.
+tree_files() {
+  local root="${1%/}"
+  tree_find "$root" | sed "s|^$root/||" | sort
+}
+
+tree_count() { tree_find "${1%/}" | wc -l | tr -d ' '; }
+
+# Do the two trees hold the same files with the same contents?
+tree_same() {
+  local a="${1%/}" b="${2%/}"
+  [[ -d "$a" && -d "$b" ]] || return 1
+  [[ "$(tree_files "$a")" == "$(tree_files "$b")" ]] || return 1
+  local f
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    cmp -s "$a/$f" "$b/$f" || return 1
+  done < <(tree_files "$a")
+  return 0
+}
+
+# tree_diff_summary <from-dir> <to-dir> — what restoring would change, named
+# but never quoted. A tree is too big to show as a unified diff in a terminal
+# or a panel, and the question at restore time is which files move, not which
+# bytes.
+tree_diff_summary() {
+  local a="${1%/}" b="${2%/}" f n_add=0 n_chg=0 n_del=0
+  local -a add=() chg=() del=()
+  if [[ ! -d "$b" ]]; then
+    echo "(doesn't exist: would be created with $(tree_count "$a") files)"
+    return 0
+  fi
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    if [[ ! -e "$b/$f" ]]; then add+=("$f"); n_add=$((n_add+1))
+    elif ! cmp -s "$a/$f" "$b/$f"; then chg+=("$f"); n_chg=$((n_chg+1)); fi
+  done < <(tree_files "$a")
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    [[ -e "$a/$f" ]] || { del+=("$f"); n_del=$((n_del+1)); }
+  done < <(tree_files "$b")
+  printf '%d added, %d changed, %d only on this machine\n' "$n_add" "$n_chg" "$n_del"
+  for f in ${add[@]+"${add[@]}"}; do echo "  + $f"; done | head -n 20
+  for f in ${chg[@]+"${chg[@]}"}; do echo "  ~ $f"; done | head -n 20
+  # Restoring never deletes: install_tree writes what the repo has and leaves
+  # the rest, so these are listed as information, not as a pending removal.
+  for f in ${del[@]+"${del[@]}"}; do echo "  · $f (left alone)"; done | head -n 10
+}
+
+# copy_tree_into_repo <src-dir> <dst-dir> — mirror one tree into the repo, in
+# both directions: a file deleted on the machine goes from the repo too, or a
+# tracked directory would only ever grow. The destination is required to be
+# inside the repo, because this is the one place the plugin removes a tree.
+copy_tree_into_repo() {
+  local src="${1%/}" dst="${2%/}" f
+  case "$dst/" in "$REPO_DIR"/*) ;; *) echo "refusing to mirror outside the repo: $dst" >&2; return 1 ;; esac
+  mkdir -p "$dst"
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    mkdir -p "$dst/$(dirname "$f")"
+    cp -f "$src/$f" "$dst/$f"
+  done < <(tree_files "$src")
+  # Prune what the source no longer has.
+  local keep; keep=$(tree_files "$src")
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    grep -qxF "$f" <<<"$keep" || rm -f -- "$dst/$f"
+  done < <(tree_files "$dst")
+  find "$dst" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+}
+
+# install_tree <repo-dir> <dst-dir> <mode> — the restore side, with the same
+# .bak.<epoch> of the whole directory that install_file makes of one file.
+install_tree() {
+  local src="${1%/}" dst="${2%/}" mode="$3" f
+  local short_path=${dst/#$HOME/\~}
+  if [[ ! -d $src ]]; then skip "$short_path/ — not in the repo"; return; fi
+  if [[ -d $dst ]] && tree_same "$src" "$dst"; then
+    ok "$short_path/ (already matches, $(tree_count "$src") files)"
+    return
+  fi
+  if [[ -e $dst ]]; then
+    run cp -a "$dst" "$dst.bak.$(date +%s)"
+    skip "$short_path/ — previous version saved as .bak.<epoch>"
+  fi
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    run install -D -m "$mode" "$src/$f" "$dst/$f"
+  done < <(tree_files "$src")
+  ok "$short_path/ ($(tree_count "$src") files, $mode)"
+}
+
 ensure_repo_layout() {
   mkdir -p "$CONFIG_DIR" "$STATE_DIR" "$TEMPLATES_DIR"
   # A repo written before state/ was scoped by machine has its inventory flat in
@@ -435,6 +972,7 @@ ensure_repo_layout() {
     fi
   done
   ensure_scope_file
+  ensure_track_file
   mkdir -p "$REPO_DIR/profiles/$(current_profile)/config" 2>/dev/null || true
   install -d -m 700 "$SECRETS_DIR" 2>/dev/null || mkdir -p "$SECRETS_DIR"
   # templates placeholder
@@ -512,7 +1050,7 @@ core_backup() {
   echo "→ Copying configuration (fixed MANIFEST, savegame)" >&2
   copied=0; missing=0
   local skipped=0
-  for entry in "${MANIFEST[@]}"; do
+  for entry in "${TRACKED[@]}"; do
     src=${entry%%:*}
     rel="${entry##*:}"
     dst=$(repo_path_for "$rel")
@@ -522,7 +1060,15 @@ core_backup() {
       skipped=$((skipped + 1))
       continue
     fi
-    if [[ -f $src ]]; then
+    if is_dir_entry "$rel"; then
+      if [[ -d "${src%/}" ]]; then
+        copy_tree_into_repo "$src" "$dst"
+        ((copied++)) || true
+      else
+        echo "  · missing: ${src/#$HOME/\~}" >&2
+        ((missing++)) || true
+      fi
+    elif [[ -f $src ]]; then
       mkdir -p "$(dirname "$dst")"
       cp -f "$src" "$dst"
       ((copied++)) || true
@@ -558,7 +1104,7 @@ core_backup() {
   # moved between scopes is cleaned up at its old path by core_scope(), not here.
   local -a expected=()
   local _e
-  for entry in "${MANIFEST[@]}"; do
+  for entry in "${TRACKED[@]}"; do
     _e="${entry##*:}"
     is_excluded "$_e" && continue
     expected+=("$(repo_path_for "$_e")")
@@ -574,7 +1120,14 @@ core_backup() {
   [[ -d "$REPO_DIR/profiles/$(current_profile)/config" ]] && sweep+=("$REPO_DIR/profiles/$(current_profile)/config")
   while IFS= read -r -d '' f; do
     found=0
-    for e in "${expected[@]}"; do [[ "$e" == "$f" ]] && { found=1; break; }; done
+    for e in "${expected[@]}"; do
+      # A directory entry claims everything under it. Its own mirroring already
+      # pruned what the machine no longer has, so this pass must not second-
+      # guess it — without the prefix case it would delete the whole tree on
+      # the next save, one file at a time.
+      if [[ "$e" == */ ]]; then [[ "$f" == "$e"* ]] && { found=1; break; }
+      else [[ "$e" == "$f" ]] && { found=1; break; }; fi
+    done
     (( found )) && continue
     # A file that is switched off keeps its last saved copy, by design —
     # wherever that copy happens to sit. Strip whichever sweep root it is under
@@ -582,7 +1135,7 @@ core_backup() {
     local candrel="$f"
     candrel="${candrel#"$REPO_DIR/profiles/$(current_profile)/config/"}"
     candrel="${candrel#"$CONFIG_DIR/"}"
-    is_excluded "$candrel" && continue
+    is_excluded "$(owning_rel "$candrel")" && continue
     rm -f -- "$f"
     echo "  · no longer tracked, removed from the repo: ${f#"$REPO_DIR"/}" >&2
     pruned=$((pruned+1))
@@ -594,7 +1147,7 @@ core_backup() {
   echo "→ Copying secrets (private repo, 600)" >&2
   install -d -m 700 "$SECRETS_DIR" 2>/dev/null || true
   scopied=0
-  for entry in "${SECRETS_MANIFEST[@]}"; do
+  for entry in "${TRACKED_SECRETS[@]}"; do
     src=${entry%%:*}
     rel="${entry##*:}"
     dst="$SECRETS_DIR/$rel"
@@ -670,6 +1223,28 @@ core_backup() {
       printf '%s\t%s\t%s\t%s\n' "$pid" "$pver" "$porigin" "$pmethod"
     done
   } > "$STATE_DIR/omarchy-plugins.txt"
+
+  # Themes, on exactly the same principle as plugins, and for a much louder
+  # reason. theme.name has always been tracked and replayed with
+  # `omarchy theme set` — but on a machine that does not HAVE the theme that
+  # command fails, so the one thing the panel shows off restored to nothing.
+  # The obvious fix, tracking ~/.config/omarchy/themes/ as a directory, is a
+  # trap: the eight installed here are 556 MB, 400 of it their own .git. Every
+  # user theme Omarchy knows about is a git clone, so what travels is the URL.
+  {
+    echo "# name<TAB>origin — user-installed themes, reinstalled with:"
+    echo "#   omarchy theme install <origin>"
+    echo "# Local edits to a theme are NOT here: this reinstalls the upstream copy."
+    local tdir tname torigin
+    for tdir in "$HOME/.config/omarchy/themes"/*/; do
+      [[ -d "$tdir" ]] || continue
+      tname=$(basename "${tdir%/}")
+      torigin=$(git -C "${tdir%/}" remote get-url origin 2>/dev/null || true)
+      [[ -n "$torigin" ]] || torigin="-"
+      printf '%s\t%s\n' "$tname" "$torigin"
+    done
+  } > "$STATE_DIR/omarchy-themes.txt"
+
   mise ls 2>/dev/null > "$STATE_DIR/mise.txt" || true
   npm ls -g --depth=0 2>/dev/null > "$STATE_DIR/npm-global.txt" || true
   systemctl list-unit-files --state=enabled --no-pager --no-legend 2>/dev/null | awk '{print $1}' > "$STATE_DIR/system-services.txt" || true
@@ -1272,7 +1847,7 @@ human_value() {
 # to what the repo has without restoring the whole file.
 rel_for_src() {
   local src="$1" entry
-  for entry in "${MANIFEST[@]}" "${SECRETS_MANIFEST[@]}"; do
+  for entry in "${TRACKED[@]}" "${TRACKED_SECRETS[@]}"; do
     [[ "${entry%%:*}" == "$src" ]] && { printf '%s\n' "${entry##*:}"; return 0; }
   done
   return 1
@@ -1487,15 +2062,23 @@ build_configs_json() {
   # One jq for the whole list. Same reason as build_settings_json: this runs on
   # every panel refresh and there are forty-odd rows.
   local entry src rel label category exists is_default has_default default_src config_rel
-  local dirty unpushed sync_state saved synced source scope repo_path git_rel unsaved
+  local dirty unpushed sync_state saved synced source scope repo_path git_rel unsaved is_dir nfiles
   {
-  for entry in "${MANIFEST[@]}"; do
+  for entry in "${TRACKED[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"; label="$rel"
     category=$(category_for_rel "$rel")
-    [[ -f "$src" ]] && exists=true || exists=false
+    is_dir=false; nfiles=0
+    is_dir_entry "$rel" && is_dir=true
+    if [[ "$is_dir" == true ]]; then
+      [[ -d "${src%/}" ]] && exists=true || exists=false
+      [[ "$exists" == true ]] && nfiles=$(tree_count "$src")
+    else
+      [[ -f "$src" ]] && exists=true || exists=false
+    fi
     has_default=false; default_src=""
-    if default_src=$(default_for_src "$src" 2>/dev/null) && [[ -n "$default_src" ]]; then has_default=true; fi
-    config_rel=$(config_rel_for_src "$src" 2>/dev/null || true)
+    if [[ "$is_dir" == false ]] && default_src=$(default_for_src "$src" 2>/dev/null) && [[ -n "$default_src" ]]; then has_default=true; fi
+    config_rel=""
+    [[ "$is_dir" == false ]] && config_rel=$(config_rel_for_src "$src" 2>/dev/null || true)
     if [[ "$exists" == true && "$has_default" == true ]] && cmp -s "$src" "$default_src" 2>/dev/null; then
       is_default=true
     else
@@ -1505,7 +2088,11 @@ build_configs_json() {
     repo_path=$(repo_path_for "$rel")
     git_rel="${repo_path#"$REPO_DIR"/}"
     saved=false
-    [[ -f "$repo_path" ]] && saved=true
+    if [[ "$is_dir" == true ]]; then
+      [[ -d "${repo_path%/}" ]] && saved=true
+    else
+      [[ -f "$repo_path" ]] && saved=true
+    fi
     # "Unsaved" is a question about CONTENT: does the file on this machine differ
     # from the copy the repo holds? Asking git instead only ever sees files
     # core_backup has already copied in, so a file edited on the machine and
@@ -1515,9 +2102,15 @@ build_configs_json() {
     # Comparing content is also what makes the warning self-healing: edit a file
     # and put it back, and cmp matches again, so the badge clears on its own with
     # no flag to go stale.
+    #
+    # A directory answers the same question the same way, file by file:
+    # tree_same is cmp over the whole tree, so adding, editing or deleting
+    # anything inside a tracked directory shows up, and undoing it clears.
     unsaved=false
     if [[ "$exists" == true ]]; then
-      if [[ "$saved" == false ]] || ! cmp -s "$src" "$repo_path" 2>/dev/null; then
+      if [[ "$is_dir" == true ]]; then
+        tree_same "$src" "$repo_path" || unsaved=true
+      elif [[ "$saved" == false ]] || ! cmp -s "$src" "$repo_path" 2>/dev/null; then
         unsaved=true
       fi
     fi
@@ -1549,9 +2142,20 @@ build_configs_json() {
     elif [[ "$unpushed" == true ]]; then sync_state="unpushed"
     else sync_state="saved"
     fi
-    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+    # A shipped entry this machine has never had, and the repo has never held,
+    # is not a row worth drawing. The core list is written for every Omarchy
+    # user, so any one machine is expected to be missing part of it — showing
+    # ghost rows for a terminal you don't use buries the files you do. It stays
+    # in the list, so the day you create the file it appears; and one the repo
+    # HAS a copy of always shows, because "it was here and now it isn't" is
+    # exactly the kind of thing a backup tool must not hide.
+    source=manifest
+    is_user_entry "$rel" && source=user
+    if [[ "$source" == manifest && "$exists" == false && "$saved" == false ]]; then continue; fi
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
       "$rel" "$label" "$src" "$category" "$exists" "$is_default" "$has_default" \
-      "$config_rel" "$dirty" "$unpushed" "$sync_state" "$saved" "$synced" "manifest" "$scope" "$unsaved"
+      "$config_rel" "$dirty" "$unpushed" "$sync_state" "$saved" "$synced" "$source" "$scope" "$unsaved" \
+      "$is_dir" "$nfiles"
   done
   # Auto-detected entries from other plugins. No Omarchy default ships for
   # these, so they can never read as "default".
@@ -1574,9 +2178,10 @@ build_configs_json() {
     elif [[ "$unpushed" == true ]]; then sync_state="unpushed"
     else sync_state="saved"
     fi
-    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
       "$prel" "$pname" "$psrc" "plugins" "true" "false" "false" \
-      "omarchy/${psrc##*/}" "$dirty" "$unpushed" "$sync_state" "$saved" "$synced" "auto" "$(scope_for "$prel")" "$unsaved"
+      "omarchy/${psrc##*/}" "$dirty" "$unpushed" "$sync_state" "$saved" "$synced" "auto" "$(scope_for "$prel")" "$unsaved" \
+      "false" "0"
   done < <(discover_plugin_entries)
   } | jq -Rsc '
     def flag: . == "true";
@@ -1586,7 +2191,8 @@ build_configs_json() {
       exists: (.[4]|flag), is_default: (.[5]|flag), has_default: (.[6]|flag),
       config_rel: .[7], dirty: (.[8]|flag), unpushed: (.[9]|flag),
       sync_state: .[10], saved: (.[11]|flag), synced: (.[12]|flag),
-      source: .[13], scope: .[14], unsaved: (.[15]|flag)
+      source: .[13], scope: .[14], unsaved: (.[15]|flag),
+      is_dir: (.[16]|flag), nfiles: (.[17]|tonumber? // 0)
     })'
 }
 
@@ -1598,7 +2204,7 @@ build_configs_json() {
 build_secrets_json() {
   local entry src rel exists mode kind dirty unpushed saved synced sync_state vars nvars unsaved
   {
-  for entry in "${SECRETS_MANIFEST[@]}"; do
+  for entry in "${TRACKED_SECRETS[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"
     [[ -f "$src" ]] && exists=true || exists=false
     mode=""
@@ -1815,7 +2421,7 @@ core_status() {
 # on one answer; auto-detected plugin configs resolve too.
 resolve_manifest_src() {
   local id="$1" entry rel psrc prel _pname
-  for entry in "${MANIFEST[@]}" "${SECRETS_MANIFEST[@]}"; do
+  for entry in "${TRACKED[@]}" "${TRACKED_SECRETS[@]}"; do
     rel="${entry##*:}"
     [[ "$rel" == "$id" ]] && { printf '%s\n' "${entry%%:*}"; return 0; }
   done
@@ -1849,18 +2455,25 @@ restore_mode_for() {
 # theme.name (a theme is replayed through omarchy-theme-set, not copied).
 plan_for_category() {
   local want="$1" entry src rel cat repo_path mode
-  for entry in "${MANIFEST[@]}"; do
+  for entry in "${TRACKED[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"
     [[ "$rel" == "omarchy/theme.name" ]] && continue
     cat=$(category_for_rel "$rel")
     [[ "$cat" == "$want" ]] || continue
     is_excluded "$rel" && continue
     repo_path=$(repo_path_for "$rel")
+    # A directory keeps its trailing slash all the way through the plan, which
+    # is how the restore loop knows to walk a tree instead of copying a file.
+    if is_dir_entry "$rel"; then
+      [[ -d "${repo_path%/}" ]] || continue
+      printf '%s|%s|%s\n' "${repo_path%/}/" "${src%/}/" "$(restore_mode_for "$rel")"
+      continue
+    fi
     [[ -f "$repo_path" ]] || continue
     printf '%s|%s|%s\n' "$repo_path" "$src" "$(restore_mode_for "$rel")"
   done
   [[ "$want" == "secrets" ]] || return 0
-  for entry in "${SECRETS_MANIFEST[@]}"; do
+  for entry in "${TRACKED_SECRETS[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"
     is_excluded "$rel" && continue
     repo_path="$SECRETS_DIR/$rel"
@@ -1888,6 +2501,16 @@ core_restore_file() {
   local rel="$1" src repo_path mode
   src=$(resolve_manifest_src "$rel") || { echo "unknown id: $rel" >&2; return 1; }
   repo_path=$(repo_copy_for_rel "$rel")
+  if is_dir_entry "$rel"; then
+    [[ -d "${repo_path%/}" ]] || { echo "$rel is not saved in your repo yet" >&2; return 1; }
+    if tree_same "$repo_path" "$src"; then
+      echo "$rel already matches the copy in your repo" >&2; return 0
+    fi
+    DRY=0 install_tree "$repo_path" "$src" "$(restore_mode_for "$rel")"
+    local dapply; dapply=$(apply_for_category "$(category_for_rel "$rel")")
+    [[ -n "$dapply" ]] && bash -c "$dapply" >/dev/null 2>&1 || true
+    return 0
+  fi
   [[ -f "$repo_path" ]] || { echo "$rel is not saved in your repo yet" >&2; return 1; }
   if [[ -f "$src" ]] && cmp -s "$repo_path" "$src"; then
     echo "$rel already matches the copy in your repo" >&2
@@ -1993,6 +2616,37 @@ missing_plugins() {
   done < "$inv"
 }
 
+# The same question about themes: which of the ones recorded in the repo is not
+# on this machine, and where does it come from. Any machine's inventory will
+# do — unlike a package list, a theme is not machine-specific, and the whole
+# point is that the laptop can install what the desktop had.
+missing_themes() {
+  local inv tname torigin
+  for inv in "$STATE_DIR/omarchy-themes.txt" "$STATE_ROOT"/*/omarchy-themes.txt; do
+    [[ -f "$inv" ]] || continue
+    while IFS=$'\t' read -r tname torigin; do
+      [[ -n "$tname" && "$tname" != \#* ]] || continue
+      [[ -d "$HOME/.config/omarchy/themes/$tname" ]] && continue
+      [[ "$torigin" == "-" || -z "$torigin" ]] && continue
+      printf '%s\t%s\n' "$tname" "$torigin"
+    done < "$inv"
+  done | sort -u
+}
+
+# A theme installed here that no origin can be worked out for — a hand-made one
+# in ~/.config/omarchy/themes. Nothing reinstalls it, so `doctor` says so and
+# the answer is to track that directory in .replicant-track.
+local_only_themes() {
+  local tdir tname
+  for tdir in "$HOME/.config/omarchy/themes"/*/; do
+    [[ -d "$tdir" ]] || continue
+    tname=$(basename "${tdir%/}")
+    git -C "${tdir%/}" remote get-url origin >/dev/null 2>&1 && continue
+    is_tracked_path "${tdir%/}/" && continue
+    printf '%s\n' "$tname"
+  done
+}
+
 # core_diff <id> [default|repo|auto] — plain unified diff on stdout, for the
 # panel to render inline. The panel used to shell out to a floating terminal
 # for this; a diff is something you read, not something you interact with, so
@@ -2020,6 +2674,20 @@ core_diff() {
       fi
       return 0 ;;
   esac
+  # A directory's "diff" is which files moved, not which bytes: a tree is too
+  # big to render in the panel, and the useful answer is the file list.
+  if is_dir_entry "$id"; then
+    repo_copy=$(repo_copy_for_rel "$id")
+    [[ -d "${src%/}" ]] || { echo "$src does not exist on this machine"; return 0; }
+    [[ -d "${repo_copy%/}" ]] || { echo "not saved in the repo yet — press Save to GitHub to add it"; return 0; }
+    if tree_same "$repo_copy" "$src"; then
+      echo "identical to the copy in your repo — $(tree_count "$src") files"; return 0
+    fi
+    echo "# what is in your repo, next to what is on this machine"
+    echo
+    tree_diff_summary "$repo_copy" "$src"
+    return 0
+  fi
   [[ -f "$src" ]] || { echo "$src does not exist on this machine"; return 0; }
   repo_copy="$CONFIG_DIR/$id"
   [[ "$id" == ssh/* || "$id" == env/* ]] && repo_copy="$SECRETS_DIR/$id"
@@ -2068,4 +2736,8 @@ elif [[ "${1:-}" == "profile-set" ]]; then core_profile_set "${2:-}"
 elif [[ "${1:-}" == "profile-get" ]]; then current_profile
 elif [[ "${1:-}" == "profile-list" ]]; then list_profiles
 elif [[ "${1:-}" == "local-only-plugins" ]]; then local_only_plugins
+elif [[ "${1:-}" == "local-only-themes" ]]; then local_only_themes
+elif [[ "${1:-}" == "track" ]]; then shift; core_track "$@"
+elif [[ "${1:-}" == "untrack" ]]; then core_untrack "${2:-}"
+elif [[ "${1:-}" == "suggest" ]]; then core_suggest "${2:-}"
 fi

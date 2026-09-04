@@ -333,6 +333,30 @@ cmd_restore() {
   # hand-written list right here, which meant adding a file to the manifest
   # backed it up but never restored it — a bug you only find on the day you need
   # the backup.
+  # A theme that is not installed cannot be applied, and until now that was the
+  # whole story: theme.name was restored faithfully onto a machine that had
+  # never heard of "enter-the-matrix", omarchy-theme-set failed, and the single
+  # most visible thing about the setup came back as nothing. Themes are git
+  # clones, so they are reinstalled the way plugins are — by URL, from the
+  # inventory — and this has to happen BEFORE the name is applied.
+  restore_themes() {
+    local dry="$1" tname torigin n=0
+    while IFS=$'\t' read -r tname torigin; do
+      [[ -n "$tname" ]] || continue
+      n=$((n + 1))
+      if (( dry )); then
+        skip "dry-run: would run omarchy theme install $torigin  ($tname)" >&2
+      else
+        echo "  → omarchy theme install $torigin" >&2
+        omarchy theme install "$torigin" >/dev/null 2>&1 \
+          && ok "$tname installed" >&2 \
+          || warn "$tname — omarchy theme install failed ($torigin)" >&2
+      fi
+    done < <(missing_themes)
+    (( n == 0 )) && skip "every theme in the inventory is already installed" >&2
+    return 0
+  }
+
   restore_theme() {
     local dry="$1" want current
     # Through repo_path_for, never a hardcoded config/ path: if theme.name is
@@ -342,9 +366,14 @@ cmd_restore() {
     want=$(head -n1 "$(repo_path_for omarchy/theme.name)" 2>/dev/null | tr -d '\r' || true)
     if [[ -z "$want" ]]; then skip "no theme recorded in the repo" >&2; return 0; fi
     current=$(omarchy-theme-current 2>/dev/null || echo "")
-    # omarchy-theme-current answers "Everforest"; the file records "everforest".
-    # Comparing them raw made every restore claim the theme needed re-applying.
-    if [[ "${want,,}" == "${current,,}" ]]; then ok "$want (already applied)" >&2; return 0; fi
+    # omarchy-theme-current answers "Enter The Matrix"; the file records
+    # "enter-the-matrix". They differ in case AND in separator, so comparing
+    # them raw — or only case-folded — made every restore claim the theme
+    # needed re-applying, on a machine already wearing it.
+    local wnorm cnorm
+    wnorm=$(tr -cd '[:alnum:]' <<<"${want,,}")
+    cnorm=$(tr -cd '[:alnum:]' <<<"${current,,}")
+    if [[ -n "$wnorm" && "$wnorm" == "$cnorm" ]]; then ok "$want (already applied)" >&2; return 0; fi
     if (( dry )); then skip "dry-run: would apply theme '$want' (currently '${current:-unknown}')" >&2; return 0; fi
     if command -v omarchy-theme-set >/dev/null 2>&1; then
       omarchy-theme-set "$want" >/dev/null 2>&1 && ok "theme -> $want" >&2 || warn "could not apply theme '$want' — is it installed?" >&2
@@ -395,7 +424,10 @@ cmd_restore() {
 
     if [[ "$cat" == "appearance" ]]; then
       # The theme rides with appearance, because that is where a user looks for
-      # it — but it is applied, never copied (see restore_theme).
+      # it — but it is installed and then applied, never copied (see
+      # restore_themes / restore_theme). Order matters: applying a theme that
+      # is not on the machine yet is the bug this pair exists to close.
+      restore_themes "$DRY"
       restore_theme "$DRY"
     fi
     if [[ "$cat" == "plugins" ]]; then
@@ -404,6 +436,18 @@ cmd_restore() {
 
     pending=()
     while IFS='|' read -r src dst mode; do
+      # A trailing slash means a tree. It answers the same three questions a
+      # file does — is it here, does it already match, what would change — just
+      # over every file under it.
+      if [[ "$src" == */ ]]; then
+        [[ -d "${src%/}" ]] || continue
+        if tree_same "$src" "$dst"; then
+          ok "${dst/#$HOME/\~} (already matches, $(tree_count "$src") files)" >&2
+        else
+          pending+=("$src|$dst|$mode")
+        fi
+        continue
+      fi
       [[ -f "$src" ]] || continue
       if [[ "$dst" != "$HOME"/* ]]; then
         # Anything outside $HOME needs root, and a backup tool silently asking
@@ -426,7 +470,9 @@ cmd_restore() {
     for e in "${pending[@]}"; do
       IFS='|' read -r src dst mode <<<"$e"
       echo "  ── ${dst/#$HOME/\~}" >&2
-      if [[ -f $dst ]]; then
+      if [[ "$src" == */ ]]; then
+        tree_diff_summary "$src" "$dst" | sed 's/^/      /' >&2
+      elif [[ -f $dst ]]; then
         diff -u --label system --label repo "$dst" "$src" 2>/dev/null | sed -n '3,40p' | sed 's/^/      /' >&2 || true
       else
         echo "      (doesn't exist: would be created)" >&2
@@ -440,7 +486,8 @@ cmd_restore() {
     changed=0
     for e in "${pending[@]}"; do
       IFS='|' read -r src dst mode <<<"$e"
-      install_file "$src" "$dst" "$mode" 2>&1
+      if [[ "$src" == */ ]]; then install_tree "$src" "$dst" "$mode" 2>&1
+      else install_file "$src" "$dst" "$mode" 2>&1; fi
       changed=$((changed + 1))
     done
     total_changed=$((total_changed + changed))
@@ -479,7 +526,7 @@ cmd_reset_all() {
   source "$CORE" 2>/dev/null || true
   local -a candidates=() rels=()
   local entry src rel crel
-  for entry in "${MANIFEST[@]}"; do
+  for entry in "${TRACKED[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"
     [[ -f "$src" ]] || continue
     # exactly the scope of cmd_reset: a default exists to go back to, and the
@@ -640,6 +687,61 @@ cmd_scope() {
 
 # cmd_profile [name] — which profile this machine belongs to. With no argument
 # it prints the current one and every profile the repo knows about.
+# ─── track / untrack / suggest — the user's own list ────────────────────────
+# Adding a file has to be one step, or the list stays whatever the plugin
+# shipped with. These three are that step, from a terminal; the panel drives
+# the same core functions.
+cmd_track() {
+  [[ $# -gt 0 ]] || fail "usage: omarchy-replicant track <path> [name-in-repo] [--secret]"
+  ensure_core
+  # shellcheck disable=SC1090
+  source "$CORE" 2>/dev/null || true
+  local before; before=$(cat "$USER_TRACK_FILE" 2>/dev/null || true)
+  core_track "$@" || exit 1
+  [[ "$(cat "$USER_TRACK_FILE" 2>/dev/null || true)" == "$before" ]] && return 0
+  # Only the list itself. The copy of the file arrives with the next save, in a
+  # commit about the file — this one is about the decision.
+  commit_repo_shape "track: $1" .replicant-track
+  info "saved with the next 'omarchy-replicant savegame'"
+}
+
+cmd_untrack() {
+  local id="${1:-}"
+  [[ -n "$id" ]] || fail "usage: omarchy-replicant untrack <id>"
+  ensure_core
+  # shellcheck disable=SC1090
+  source "$CORE" 2>/dev/null || true
+  core_untrack "$id" || exit 1
+  commit_repo_shape "untrack: $id" \
+    .replicant-track \
+    "config/$id" \
+    "profiles/$(current_profile)/config/$id" \
+    "secrets/$id"
+}
+
+cmd_suggest() {
+  local as_json=0
+  while (( $# )); do case "$1" in --json) as_json=1; shift;; *) shift;; esac; done
+  ensure_core
+  # shellcheck disable=SC1090
+  source "$CORE" 2>/dev/null || true
+  if (( as_json )); then core_suggest --json; return 0; fi
+  local path rel reason kind flag n=0
+  while IFS=$'\t' read -r path rel reason kind; do
+    [[ -n "$path" ]] || continue
+    n=$((n + 1))
+    flag=""; [[ "$kind" == secret ]] && flag=" --secret"
+    printf '  \033[36m%s\033[0m\n      %s · track it with: omarchy-replicant track %s%s\n' \
+      "${path/#$HOME/\~}" "$reason" "${path/#$HOME/\~}" "$flag"
+  done < <(core_suggest)
+  if (( n == 0 )); then
+    ok "nothing to suggest — everything worth tracking here already is"
+  else
+    echo
+    info "$n file(s) not tracked yet. Nothing is added until you say so."
+  fi
+}
+
 cmd_profile() {
   ensure_core
   # shellcheck disable=SC1090
@@ -759,6 +861,22 @@ cmd_doctor() {
     printf '      push them to a git remote, or they are lost with this machine\n' >&2
   fi
 
+  echo "Themes"
+  # The same question, for the thing a person actually looks at. A theme is a
+  # git clone, so the inventory records its URL and `omarchy theme install`
+  # rebuilds it — but a theme written by hand has no URL, and nothing puts it
+  # back unless its directory is in the tracked list.
+  local lt n_lt n_inv
+  lt=$(local_only_themes 2>/dev/null || true)
+  n_lt=$(printf '%s' "$lt" | grep -c . || true)
+  n_inv=$(awk -F'\t' '!/^#/ && NF>=2 && $2 != "-" {n++} END{print n+0}' "$STATE_DIR/omarchy-themes.txt" 2>/dev/null || echo 0)
+  chk_ok "$n_inv user theme(s) recorded with an origin — reinstalled with 'omarchy theme install'"
+  if (( n_lt > 0 )); then
+    chk_warn "$n_lt theme(s) have no origin and are not tracked either:"
+    printf '%s\n' "$lt" | sed 's/^/      /' >&2
+    printf '      track the directory to back one up: omarchy-replicant track ~/.config/omarchy/themes/<name>\n' >&2
+  fi
+
   echo "GitHub"
   if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
     chk_ok "logged in as $(gh api user --jq .login 2>/dev/null || echo '?')"
@@ -803,12 +921,19 @@ cmd_doctor() {
 
   echo "Tracked files"
   local entry src missing=0 total=0
-  for entry in "${MANIFEST[@]}"; do
+  for entry in "${TRACKED[@]}"; do
     src="${entry%%:*}"; total=$((total+1))
-    [[ -f "$src" ]] || missing=$((missing+1))
+    # -e and the trailing slash stripped: a tracked directory is present too,
+    # and -f reported every one of them as missing.
+    [[ -e "${src%/}" ]] || missing=$((missing+1))
   done
-  chk_ok "$((total - missing)) of $total manifest files present on this machine"
-  (( missing > 0 )) && printf '    (%d listed in MANIFEST do not exist here — normal on a fresh machine)\n' "$missing"
+  chk_ok "$((total - missing)) of $total tracked files present on this machine"
+  (( missing > 0 )) && printf '    (%d not on this machine — normal on a fresh install)\n' "$missing"
+  local n_user n_sugg
+  n_user=$(( ${#USER_MANIFEST[@]} + ${#USER_SECRETS[@]} ))
+  chk_ok "$n_user of them are yours, in .replicant-track — the rest ship with the plugin"
+  n_sugg=$(core_suggest 2>/dev/null | grep -c . || true)
+  (( n_sugg > 0 )) && chk_warn "$n_sugg more file(s) here are not tracked — see 'omarchy-replicant suggest'"
 
   echo "Settings"
   local unavailable=0 implicit=0 sid fb
@@ -896,7 +1021,7 @@ cmd_purge() {
   ensure_core
   # shellcheck disable=SC1090
   source "$CORE" 2>/dev/null || true
-  for entry in "${MANIFEST[@]}"; do
+  for entry in "${TRACKED[@]}"; do
     src="${entry%%:*}"
     while IFS= read -r b; do [[ -n "$b" ]] && backups+=("$b"); done < <(ls -1 "$src".bak.* 2>/dev/null || true)
   done
@@ -946,6 +1071,9 @@ Usage:
   omarchy-replicant revert <id> [--to default|repo]   put ONE setting back
   omarchy-replicant scope <id> <scope>    shared | profile | off, per file
   omarchy-replicant sync <id> on|off      the older two-state form of scope
+  omarchy-replicant suggest [--json]      config on this machine that is not tracked yet
+  omarchy-replicant track <path> [name] [--secret]   add one file or directory to YOUR list
+  omarchy-replicant untrack <id>          drop one of your own entries (and its copy)
   omarchy-replicant profile [name]        which profile this machine is in
   omarchy-replicant shortcuts [--json]    your keybinding overrides, and what is bound now
   omarchy-replicant edit <id>             open id in your editor (e.g. hypr/input.lua)
@@ -981,7 +1109,7 @@ main() {
   # Anything that writes to the repo takes the lock first; read-only commands
   # (status/get/diff/edit) stay lock-free so the panel's polling never blocks.
   case "$cmd" in
-    init|create|backup|savegame|set|save-file|reset|reset-all|push|pull|clone|restore|sync|scope|profile|revert|restore-file) acquire_repo_lock ;;
+    init|create|backup|savegame|set|save-file|reset|reset-all|push|pull|clone|restore|sync|scope|track|untrack|profile|revert|restore-file) acquire_repo_lock ;;
   esac
   case "$cmd" in
     -h|--help|help) usage; exit 0;;
@@ -1004,6 +1132,9 @@ main() {
     doctor) shift; cmd_doctor "$@";;
     sync) shift; cmd_sync "$@";;
     scope) shift; cmd_scope "$@";;
+    track) shift; cmd_track "$@";;
+    untrack) shift; cmd_untrack "$@";;
+    suggest) shift; cmd_suggest "$@";;
     profile) shift; cmd_profile "$@";;
     revert) shift; cmd_revert "$@";;
     restore-file) shift; cmd_restore_file "$@";;

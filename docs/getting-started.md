@@ -92,6 +92,45 @@ overwriting each other. Overview lists every machine, its profile, and when it l
 > save, and every file you had switched off stays off — nothing is reinterpreted. If you switched
 > `monitors.lua` off, consider moving it to *profile* instead: you get a backup of it again.
 
+## 3b-2. Backing up files the plugin doesn't ship with
+
+The tracked list has two halves. The plugin ships the paths any Omarchy machine plausibly has; your
+own additions live in `.replicant-track` **inside your repo**, so they travel to your second machine
+like every other decision here.
+
+Open **Configs** and scroll to the bottom: **Add more files** lists what is on this machine and not
+tracked yet, each with the reason it is worth a look, and a **Track** button. From a terminal:
+
+```bash
+omarchy-replicant suggest                        # the same list
+omarchy-replicant track ~/.local/bin/my-script   # a file
+omarchy-replicant track ~/.config/nvim/          # a whole directory
+omarchy-replicant track ~/.config/gh/hosts.yml --secret
+omarchy-replicant untrack bin/my-script          # drop it, and its copy in the repo
+```
+
+`suggest` will not propose a symlink, a mise shim, an application's own state, a file another plugin
+installed, or something identical to Omarchy's default. When a file holds a credential it says so
+and suggests `--secret`, which stores it at mode 600 and never renders its contents.
+
+**Untrack is for your own entries only.** A file the plugin ships with is switched **Off** instead
+(the scope button) — that keeps the row and the copy in your repo, where untracking would remove both.
+
+> Upgrading from 0.6? Anything the old version hardcoded that this machine or your repo actually has
+> is moved into your `.replicant-track` on the next save, so nothing stops being backed up. You will
+> see a line saying how many entries moved.
+
+## 3b-3. Themes
+
+Your themes are not copied — they are reinstalled. Replicant records each user theme's name and git
+origin in the inventory, and on a restore it runs `omarchy theme install` for the ones this machine
+does not have **before** applying your theme. That order is the whole point: applying a theme that
+is not installed yet fails, and the most visible thing about your setup comes back as nothing.
+
+A theme you wrote by hand has no origin, so nothing can reinstall it. `omarchy-replicant doctor`
+names those, and the answer is to track its directory:
+`omarchy-replicant track ~/.config/omarchy/themes/<name>`.
+
 ## 3c. Lid behaviour, on a laptop
 
 **Settings → Lid & sleep** sets what closing the lid does — on battery, on AC, and when docked to
@@ -118,7 +157,8 @@ a time from the list underneath.
 Restoring is not just copying. Each area is put back the way Omarchy expects it: the theme is
 re-applied with `omarchy theme set` (which rewrites every terminal, editor and GTK colour, not
 just a file), Hyprland is reloaded and then checked with `hyprctl configerrors`, terminals are
-restarted, and plugins recorded in the inventory are reinstalled with `omarchy plugin add`.
+restarted, themes and plugins recorded in the inventory are reinstalled with
+`omarchy theme install` and `omarchy plugin add`.
 Anything outside `$HOME` is never written behind your back — you get the exact `sudo` command.
 
 Everything it overwrites is kept as `<file>.bak.<epoch>` first.

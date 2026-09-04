@@ -244,6 +244,16 @@ rm -f "$PATH_LINK"
 
 section "purge is a dry run by default and never touches the remote"
 run link >/dev/null 2>&1
+# A directory restore leaves its backup as a whole TREE beside the original.
+# Hard rule 8 is that purge can name everything this plugin leaves behind, and
+# a restored tree sitting next to the real one is not a small thing to miss:
+# globbing "$src".bak.* on a tracked directory looked INSIDE it, and the
+# removal used rm -f, which silently does nothing to a directory.
+mkdir -p "$HOME/.config/nvim.bak.1700000000"
+printf 'old\n' > "$HOME/.config/nvim.bak.1700000000/init.lua"
+out=$(run purge)
+check_contains "a directory backup is listed too" ".bak.<epoch> backup(s)" "$out"
+check "…and the dry run leaves it alone" "1" "$(ls -d "$HOME/.config/nvim.bak.1700000000" 2>/dev/null | wc -l)"
 out=$(run purge)
 check_contains "lists what it would remove" "would remove" "$out"
 check "purge --dry-run removes nothing"   "1" "$(ls "$PATH_LINK" 2>/dev/null | wc -l)"
@@ -254,6 +264,8 @@ check "purge --apply removes the symlink" "0" "$(ls "$PATH_LINK" 2>/dev/null | w
 check "…and still keeps the repo"         "1" "$(ls -d "$REPO" 2>/dev/null | wc -l)"
 check "…and the lock file is gone"        "0" "$(ls "$OMARCHY_REPLICANT_HOME/.replicant.lock" 2>/dev/null | wc -l)"
 run purge --apply --yes --repo >/dev/null 2>&1
+check "…and the directory backup is really gone, not just listed" "0" \
+  "$(ls -d "$HOME/.config/nvim.bak.1700000000" 2>/dev/null | wc -l)"
 check "purge --repo removes the local clone" "0" "$(ls -d "$REPO" 2>/dev/null | wc -l)"
 
 section "concurrent writes are serialized, not corrupted"

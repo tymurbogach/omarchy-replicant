@@ -1050,9 +1050,16 @@ cmd_purge() {
   ensure_core
   # shellcheck disable=SC1090
   source "$CORE" 2>/dev/null || true
-  for entry in "${TRACKED[@]}"; do
-    src="${entry%%:*}"
-    while IFS= read -r b; do [[ -n "$b" ]] && backups+=("$b"); done < <(ls -1 "$src".bak.* 2>/dev/null || true)
+  for entry in "${TRACKED[@]}" "${TRACKED_SECRETS[@]}"; do
+    # Strip the trailing slash first. install_tree backs a directory up as
+    # `<dir>.bak.<epoch>` beside it, so globbing "$src".bak.* on a tracked
+    # directory looked for `~/.config/nvim/.bak.*` — INSIDE the directory —
+    # and found nothing. Hard rule 8 says purge must be able to name
+    # everything this plugin leaves on the machine; a whole restored tree
+    # sitting next to the original is not a small thing to miss.
+    src="${entry%%:*}"; src="${src%/}"
+    while IFS= read -r b; do [[ -n "$b" ]] && backups+=("$b"); done \
+      < <(ls -1d "$src".bak.* 2>/dev/null || true)
   done
 
   if (( ${#targets[@]} == 0 && ${#backups[@]} == 0 )); then
@@ -1066,7 +1073,7 @@ cmd_purge() {
   echo "── would remove ──" >&2
   local t
   for t in "${targets[@]}"; do echo "  · ${t/#$HOME/\~}" >&2; done
-  (( ${#backups[@]} > 0 )) && echo "  · ${#backups[@]} .bak.<epoch> file(s) next to your configs" >&2
+  (( ${#backups[@]} > 0 )) && echo "  · ${#backups[@]} .bak.<epoch> backup(s) next to your configs" >&2
   if (( KEEP_REPO )) && [[ -d "$REPLICANT_HOME" ]]; then
     echo >&2; info "keeping your backup repo at $REPLICANT_HOME — pass --repo to remove that too"
   fi
@@ -1077,7 +1084,9 @@ cmd_purge() {
     [[ $resp == [yY] ]] || { warn "purge cancelled"; return 0; }
   fi
   for t in "${targets[@]}"; do rm -rf -- "$t" && ok "removed ${t/#$HOME/\~}"; done
-  (( ${#backups[@]} > 0 )) && { rm -f -- "${backups[@]}"; ok "removed ${#backups[@]} backup file(s)"; }
+  # -rf, not -f: a restored directory's backup is a whole tree, and rm -f on a
+  # directory silently does nothing — purge listed it and then left it there.
+  (( ${#backups[@]} > 0 )) && { rm -rf -- "${backups[@]}"; ok "removed ${#backups[@]} backup(s)"; }
   ok "purged. Remove the plugin itself with: omarchy plugin remove $PLUGIN_ID"
 }
 

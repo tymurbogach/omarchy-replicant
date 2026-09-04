@@ -57,7 +57,13 @@ machine- or user-specific except through `MANIFEST`/`SECRETS_MANIFEST` in
    entry points resolve it with `Qt.resolvedUrl("bin/omarchy-replicant")`, which is correct even
    for a symlinked dev checkout. `link`/`unlink` are the opt-in for terminal use.
    `tests/run-all.sh` fails if a `.qml` mentions `local/bin` or drops the `Qt.resolvedUrl` form.
-8. **The plugin writes nothing outside its own folder and `~/.local/share/omarchy-replicant/`.**
+8. **The plugin writes nothing outside its own folder and `~/.local/share/omarchy-replicant/`, and
+   `purge` can name every trace of it.** That includes the `.bak.<epoch>` copies it leaves beside
+   the files it overwrites — and a *directory* entry's backup is a whole tree next to the original
+   (`~/.config/nvim.bak.<epoch>`). Globbing `"$src".bak.*` on an entry whose src ends in `/` looks
+   *inside* the directory and finds nothing, and `rm -f` on a directory silently does nothing, so
+   purge listed the tree and then left it. Strip the trailing slash, glob with `ls -1d`, remove
+   with `rm -rf`. `tests/test-cli.sh` plants a directory backup and fails on both halves.
    Anything a future feature leaves elsewhere must be listed in `cmd_purge`, so removing the
    plugin can never leave a user guessing what is still on disk. `purge` is dry-run by default
    and never touches the GitHub repo.

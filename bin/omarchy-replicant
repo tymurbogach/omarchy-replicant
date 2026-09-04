@@ -33,6 +33,11 @@ fail() { echo "omarchy-replicant: $*" >&2; exit 1; }
 info() { echo -e "\e[36m$*\e[0m" >&2; }
 warn() { echo -e "\e[33m$*\e[0m" >&2; }
 ok()   { echo -e "\e[32m$*\e[0m" >&2; }
+# "1 file", "4 files". Every count this tool printed used to read "4 file(s)" —
+# twenty of them across the CLI and eleven on one screen of the panel — and the
+# parenthesis never carried information the number next to it did not.
+plural() { local n="$1" one="$2" many="${3:-$2s}"
+           if [[ "$n" == 1 ]]; then printf '%s %s\n' "$n" "$one"; else printf '%s %s\n' "$n" "$many"; fi; }
 
 git_repo() { git -C "$REPO_DIR" "$@"; }
 
@@ -396,19 +401,61 @@ cmd_push() {
       echo "  there are uncommitted changes — 'savegame --auto' commits and pushes them" >&2
     return 0
   fi
-  echo "→ Pushing $ahead commit(s) to $(git_repo config --get remote.origin.url 2>/dev/null)" >&2
+  echo "→ Pushing $(plural "$ahead" commit) to $(git_repo config --get remote.origin.url 2>/dev/null)" >&2
   git_repo push origin HEAD || fail "push failed"
   ok "pushed"
 }
 
+# Bringing down what another machine saved. Three things went wrong here and
+# all three of them are about the same thing — a command that reports success
+# it did not have:
+#
+#   * it stashed whatever was uncommitted and never popped it. Copied-in-but-
+#     uncommitted is the NORMAL state after `backup`, so an ordinary pull moved
+#     the user's pending work into a stash nobody was ever told to look in.
+#   * `... || warn "conflicts"` and then `ok "pull OK"` unconditionally. A pull
+#     that failed said it worked, in green.
+#   * it never said what it brought. "pull OK" is the answer to a question
+#     nobody asked; which of your files another machine changed is the answer
+#     you came for — and it is also the only moment anything can know which
+#     DIRECTION a difference points in, which is what record_incoming keeps.
 cmd_pull() {
   [[ -d "$REPO_DIR/.git" ]] || fail "no repo — clone first"
-  git_repo fetch --all --prune 2>&1
-  local dirty; dirty=$(git_repo status --porcelain 2>/dev/null | wc -l | tr -d ' ')
-  if (( dirty > 0 )); then warn "$dirty dirty — stashing"; git_repo stash push -m "replicant auto-stash $(date -Is)" 2>/dev/null || true; fi
+  ensure_core
+  git_repo fetch --all --prune >/dev/null 2>&1 || warn "could not reach the remote — using what is already here"
+  local before; before=$(git_repo rev-parse HEAD 2>/dev/null || echo "")
+  local stashed=0
+  if [[ -n $(git_repo status --porcelain 2>/dev/null) ]]; then
+    if git_repo stash push -u -q -m "replicant pull $(date -Is)" 2>/dev/null; then stashed=1; fi
+  fi
   local br; br=$(git_repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)
-  git_repo pull --rebase origin "$br" 2>&1 || git_repo pull --rebase 2>&1 || warn "conflicts — check $REPO_DIR"
-  ok "pull OK"
+  if ! git_repo pull --rebase --quiet origin "$br" 2>&1; then
+    git_repo rebase --abort >/dev/null 2>&1 || true
+    (( stashed )) && { git_repo stash pop -q >/dev/null 2>&1 || true; }
+    fail "pull failed — nothing was changed; look at $REPO_DIR"
+  fi
+  if (( stashed )); then
+    git_repo stash pop -q >/dev/null 2>&1 || \
+      warn "your uncommitted copies clashed with what came down — they are safe in 'git -C $REPO_DIR stash list'"
+  fi
+  local after; after=$(git_repo rev-parse HEAD 2>/dev/null || echo "")
+  if [[ -z "$before" || "$before" == "$after" ]]; then
+    ok "already up to date"
+    return 0
+  fi
+
+  # Which tracked entries moved, mapped back to the rows a person can press a
+  # button on, and written down so the panel can tell an incoming difference
+  # from an outgoing one. The mapping is core business logic, not terminal UX.
+  local moved; moved=$(bash "$CORE" incoming "$before" "$after" 2>/dev/null)
+  if [[ -z "$moved" ]]; then
+    ok "pulled — nothing of yours changed"
+    return 0
+  fi
+  local n; n=$(printf '%s\n' "$moved" | grep -c .)
+  ok "pulled — $n file$( (( n == 1 )) || echo s ) changed on another machine"
+  printf '%s\n' "$moved" | sed 's/^/  /' >&2
+  echo "  'restore --apply' brings them onto this machine; until then they show as ↓ to restore" >&2
 }
 
 cmd_clone() {
@@ -607,7 +654,7 @@ cmd_restore() {
         echo "      (doesn't exist: would be created)" >&2
       fi
     done
-    if (( DRY )); then skip "dry-run: ${#pending[@]} file(s) untouched. Repeat with --apply" >&2; continue; fi
+    if (( DRY )); then skip "dry-run: $(plural "${#pending[@]}" file) untouched. Repeat with --apply" >&2; continue; fi
     # --yes means yes here too. It used to be honoured only through --all, so
     # `restore --apply --only hyprland --yes` still stopped to ask — and with no
     # terminal to ask on it died on /dev/tty and silently skipped the category,
@@ -647,7 +694,7 @@ cmd_restore() {
   if (( DRY )); then
     echo "Dry-run — nothing was written. To apply: omarchy-replicant restore --apply" >&2
   else
-    ok "restore complete — $total_changed file(s) written, previous versions kept as .bak.<epoch>" >&2
+    ok "restore complete — $(plural "$total_changed" file) written, previous versions kept as .bak.<epoch>" >&2
   fi
 }
 
@@ -678,19 +725,19 @@ cmd_reset_all() {
     candidates+=("$rel"); rels+=("$crel")
   done
   if (( ${#candidates[@]} == 0 )); then ok "reset-all: nothing to reset (everything is already default, or has no known default)"; return 0; fi
-  echo "── reset-all: ${#candidates[@]} non-default file(s) with a known Omarchy default ──" >&2
+  echo "── reset-all: $(plural "${#candidates[@]}" "non-default file") with a known Omarchy default ──" >&2
   local rel
   for rel in "${candidates[@]}"; do echo "  · $rel" >&2; done
   if (( DRY )); then echo >&2; echo "Dry-run — nothing touched. Repeat with --apply" >&2; return 0; fi
   if (( ! YES )); then
-    read -rp "Restore ${#candidates[@]} file(s) to Omarchy defaults? .bak.<epoch> backups will be made [y/N] " resp </dev/tty 2>&1 || resp=""
+    read -rp "Restore $(plural "${#candidates[@]}" file) to Omarchy defaults? .bak.<epoch> backups will be made [y/N] " resp </dev/tty 2>&1 || resp=""
     [[ $resp == [yY] ]] || { warn "reset-all cancelled"; return 0; }
   fi
   local failures=0 i
   for i in "${!rels[@]}"; do
     omarchy refresh config "${rels[$i]}" 2>&1 && ok "reset ${candidates[$i]}" || { warn "failed: ${candidates[$i]}"; failures=$((failures+1)); }
   done
-  if (( failures > 0 )); then warn "reset-all: $failures failure(s) — see above"; else ok "reset-all complete — check .bak.<epoch>"; fi
+  if (( failures > 0 )); then warn "reset-all: $(plural "$failures" failure) — see above"; else ok "reset-all complete — check .bak.<epoch>"; fi
 }
 
 # get/set — curated per-field settings (SETTINGS registry in replicant-core.sh),
@@ -879,7 +926,7 @@ cmd_suggest() {
     ok "nothing to suggest — everything worth tracking here already is"
   else
     echo
-    info "$n file(s) not tracked yet. Nothing is added until you say so."
+    info "$(plural "$n" file) not tracked yet. Nothing is added until you say so."
   fi
 }
 
@@ -899,8 +946,8 @@ cmd_profile() {
       # and under `set -o pipefail` that fails the whole assignment and, with
       # `set -e`, this function — the same trap as `grep -q` in a pipeline.
       n=$(find "$REPO_DIR/profiles/$pr/config" -type f 2>/dev/null | wc -l || true)
-      if [[ "$pr" == "$cur" ]]; then printf '  * %-14s %s file(s)   <- this machine\n' "$pr" "$n"
-      else printf '    %-14s %s file(s)\n' "$pr" "$n"; fi
+      if [[ "$pr" == "$cur" ]]; then printf '  * %-14s %-12s <- this machine\n' "$pr" "$(plural "$n" file)"
+      else printf '    %-14s %s\n' "$pr" "$(plural "$n" file)"; fi
     done < <(list_profiles)
     printf '\nMachines:\n'
     read_profile_map | sed 's/^/    /'
@@ -993,11 +1040,11 @@ cmd_doctor() {
   local inv_path n_pathy
   inv_path="$STATE_DIR/omarchy-plugins.txt"
   n_pathy=$(awk -F'\t' '!/^#/ && NF>=3 && $3 ~ /^\// {n++} END{print n+0}' "$inv_path" 2>/dev/null || echo 0)
-  (( n_pathy > 0 )) && chk_warn "$n_pathy plugin origin(s) are local paths — they may not exist on your other machine"
+  (( n_pathy > 0 )) && chk_warn "$(plural "$n_pathy" "plugin origin") are local paths — they may not exist on your other machine"
   if (( n_lo == 0 )); then
     chk_ok "every installed plugin can be reinstalled from its origin"
   else
-    chk_warn "$n_lo plugin(s) exist only on this machine and cannot be reinstalled:"
+    chk_warn "$(plural "$n_lo" plugin) exist only on this machine and cannot be reinstalled:"
     printf '%s\n' "$lo" | sed 's/^/      /' >&2
     printf '      push them to a git remote, or they are lost with this machine\n' >&2
   fi
@@ -1024,9 +1071,9 @@ cmd_doctor() {
   lt=$(local_only_themes 2>/dev/null || true)
   n_lt=$(printf '%s' "$lt" | grep -c . || true)
   n_inv=$(awk -F'\t' '!/^#/ && NF>=2 && $2 != "-" {n++} END{print n+0}' "$STATE_DIR/omarchy-themes.txt" 2>/dev/null || echo 0)
-  chk_ok "$n_inv user theme(s) recorded with an origin — reinstalled with 'omarchy theme install'"
+  chk_ok "$(plural "$n_inv" "user theme") recorded with an origin — reinstalled with 'omarchy theme install'"
   if (( n_lt > 0 )); then
-    chk_warn "$n_lt theme(s) have no origin and are not tracked either:"
+    chk_warn "$(plural "$n_lt" theme) have no origin and are not tracked either:"
     printf '%s\n' "$lt" | sed 's/^/      /' >&2
     printf '      track the directory to back one up: omarchy-replicant track ~/.config/omarchy/themes/<name>\n' >&2
   fi
@@ -1087,7 +1134,7 @@ cmd_doctor() {
   n_user=$(( ${#USER_MANIFEST[@]} + ${#USER_SECRETS[@]} ))
   chk_ok "$n_user of them are yours, in .replicant-track — the rest ship with the plugin"
   n_sugg=$(core_suggest 2>/dev/null | grep -c . || true)
-  (( n_sugg > 0 )) && chk_warn "$n_sugg more file(s) here are not tracked — see 'omarchy-replicant suggest'"
+  (( n_sugg > 0 )) && chk_warn "$(plural "$n_sugg" "more file") here are not tracked — see 'omarchy-replicant suggest'"
 
   echo "Settings"
   local unavailable=0 implicit=0 sid fb
@@ -1102,7 +1149,7 @@ cmd_doctor() {
   true
 
   echo
-  if (( problems == 0 )); then ok "No problems found."; else warn "$problems thing(s) to look at above."; fi
+  if (( problems == 0 )); then ok "No problems found."; else warn "$(plural "$problems" thing) to look at above."; fi
 }
 
 # ── PATH convenience, opt-in and reversible ─────────────────────────────────
@@ -1159,6 +1206,11 @@ cmd_purge() {
   [[ -L "$LINK_PATH" ]] && targets+=("$LINK_PATH")
   [[ -f "$REPLICANT_HOME/.replicant.lock" ]] && targets+=("$REPLICANT_HOME/.replicant.lock")
   [[ -f "$REPLICANT_HOME/.last-fetch" ]] && targets+=("$REPLICANT_HOME/.last-fetch")
+  # Written by `pull`: which entries another machine has a newer copy of. Named
+  # here literally rather than through the core's $INCOMING_FILE, because purge
+  # runs in the CLI's own shell and an unbound variable here kills the one
+  # command whose job is to leave nothing behind.
+  [[ -f "$REPLICANT_HOME/incoming" ]] && targets+=("$REPLICANT_HOME/incoming")
   if (( ! KEEP_REPO )); then
     [[ -d "$REPLICANT_HOME" ]] && targets+=("$REPLICANT_HOME")
   fi
@@ -1192,7 +1244,7 @@ cmd_purge() {
   echo "── would remove ──" >&2
   local t
   for t in "${targets[@]}"; do echo "  · ${t/#$HOME/\~}" >&2; done
-  (( ${#backups[@]} > 0 )) && echo "  · ${#backups[@]} .bak.<epoch> backup(s) next to your configs" >&2
+  (( ${#backups[@]} > 0 )) && echo "  · $(plural "${#backups[@]}" ".bak.<epoch> backup") next to your configs" >&2
   if (( KEEP_REPO )) && [[ -d "$REPLICANT_HOME" ]]; then
     echo >&2; info "keeping your backup repo at $REPLICANT_HOME — pass --repo to remove that too"
   fi
@@ -1205,7 +1257,7 @@ cmd_purge() {
   for t in "${targets[@]}"; do rm -rf -- "$t" && ok "removed ${t/#$HOME/\~}"; done
   # -rf, not -f: a restored directory's backup is a whole tree, and rm -f on a
   # directory silently does nothing — purge listed it and then left it there.
-  (( ${#backups[@]} > 0 )) && { rm -rf -- "${backups[@]}"; ok "removed ${#backups[@]} backup(s)"; }
+  (( ${#backups[@]} > 0 )) && { rm -rf -- "${backups[@]}"; ok "removed $(plural "${#backups[@]}" backup)"; }
   ok "purged. Remove the plugin itself with: omarchy plugin remove $PLUGIN_ID"
 }
 

@@ -352,6 +352,54 @@ raises the number, so an old client saving cannot lower it and re-arm the deleti
 For a 0.6 machine the answer is to upgrade it, and `doctor` says exactly that. The reproduction, run
 against the real v0.6.3 core, is in `tests/test-core.sh`.
 
+## A difference has a direction, and only one moment knows it
+
+`unsaved` is `! cmp -s "$src" "$(repo_path_for "$rel")"`, which is the right question and half an
+answer: it says the two copies differ, never which one is newer. With two machines on one repo —
+the premise of the whole plugin — the other half is the difference between a backup and a
+delete. Pull a change the laptop made and the desktop showed the red ● whose button is Save;
+pressing it committed the desktop's older file over the laptop's work, in one click, with the
+panel having recommended exactly that.
+
+Content cannot answer it and no flag on a file can be trusted to stay true. What *is* certain is
+the moment the commits arrive, so that is where it is written down:
+
+- **`cmd_pull` → `core_incoming <before> <after>`** maps the changed repo paths back to the rows a
+  person can press a button on (`owning_rel`, so a file three levels inside a tracked tree marks
+  the tree's row) and records them in **`$REPLICANT_HOME/incoming`** — machine-local, because
+  "what this machine has not caught up with" is not a fact about the setup and has no business in
+  the repo. Only *this* profile's `profiles/<p>/config/` counts; the other machine's profile copy
+  is deliberately not shared and marking it incoming would tell the desktop to restore the
+  laptop's monitor layout onto itself.
+- **`is_incoming_rel` is never trusted alone.** Every caller ANDs it with "and the copies still
+  differ", which is what makes the mark self-healing in exactly the way the unsaved badge is:
+  restore the file and it clears, save over it deliberately and it clears. Nothing has to remember.
+- **`incoming` outranks `unsaved`** in the badge precedence, and it is the only ordering rule here
+  that is about safety rather than tidiness.
+- **`core_backup` holds incoming entries back** and names them. "Save everything" is never a
+  request to commit a stale copy over another machine's work; the escape hatch is naming the file
+  (`save-file <id>`), and the panel's per-file Save is disabled on those rows for the same reason.
+
+`tests/test-journey.sh` walks the whole thing, because every unit either side of the gap was
+already passing when the bug existed.
+
+## The bar icon and the panel must count the same thing
+
+`build_configs_json` was fixed in 0.6.1 to ask about content; `BarWidget.qml` was not, and went on
+reading `repoState.dirty` — git's view of the *repo* working tree, which only ever sees files
+`core_backup` has already copied in. Edit a tracked config and never press Save and the bar sat at
+the calm hexagon with a tooltip reading "✓ in sync", all day. That is the single thing this plugin
+exists to tell you, and the one surface that is on screen without being opened was the one lying
+about it.
+
+The bar polls `--brief` and has no rows to count, so the count comes down in the payload:
+`count_changes` in the core answers `<unsaved> <incoming>` for both `--brief` and the full
+payload. Brief went from 0.04 s to 0.18 s for it, once a minute, which is the whole price.
+
+`entry_differs` exists so the content comparison has exactly one definition. Two copies of it is
+how a badge and an icon come to disagree about the same file — put anything new that asks "has
+this changed" through it.
+
 ## Two machines, one repo
 
 The plugin is built for a desktop *and* a laptop sharing one private repo, which rules out two

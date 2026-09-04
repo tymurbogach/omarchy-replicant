@@ -47,16 +47,21 @@ Open the panel again and it shows the repo name and every tracked file.
 - **Changed your mind?** The two small buttons at the end of every setting row put it back: ↺ to
   Omarchy's default, ⭳ to what your repo has. Neither touches the rest of the file.
 - **Another machine saved something?** The bar icon turns into a download cloud — panel → **Pull**.
+  Pull tells you which of your files it brought down, and each of them is then marked **↓ to
+  restore** rather than ● unsaved, so the button you press is the one that brings the change
+  here instead of the one that commits your old copy over it. Panel → **Restore**, or the ⭳
+  button on that row.
 - **What did I change in this file?** **Configs** → the file's compare button. The diff opens in
   the panel.
 
 The bar icon tells you the state at a glance: the GitHub mark when everything is saved, a floppy
-disk when this machine has unsaved changes, a cloud with an up arrow when there is something to
+disk when this machine has unsaved changes — counted from the files themselves, so a config you
+edited and never saved shows up there and not only in the panel — a cloud with an up arrow when there is something to
 push, a cloud with a down arrow when another machine saved something, a warning when the two have
 diverged, and a plus before you have set anything up.
 
 The panel takes the keyboard too: `1`–`4` for the tabs, `/` to filter, `a` to jump to *Add more
-files*, `r` to refresh, `s` to save, `c` to collapse every open area, `Esc` to back out. To open it from a keybinding, bind
+files*, `r` to refresh, `s` to save, `p` to pull, `c` to collapse every open area, `Esc` to back out. To open it from a keybinding, bind
 `omarchy shell replicant toggle`.
 
 ## 3b. Two machines, one repo
@@ -87,6 +92,26 @@ omarchy-replicant profile desktop    # assign it explicitly
 Everything else is already per-machine where it needs to be: the package/service/plugin inventory
 is written to `state/<hostname>/`, so the desktop and the laptop add to the repo instead of
 overwriting each other. Overview lists every machine, its profile, and when it last saved.
+
+### Which way does a change point?
+
+"This file and the copy in the repo differ" has two opposite answers — *I* changed it, or the
+*other machine* did — and only one of them is Save. Content alone cannot tell them apart, so the
+plugin writes the direction down at the one moment it is knowable: when `pull` brings the commits
+down. Anything another machine touched is marked **↓ to restore** until this machine catches up.
+
+Two things follow from that mark, and they are the reason it exists:
+
+- **Save to GitHub holds those files back.** It copies everything else in as usual and prints
+  which ones it did not touch. This machine's copy is the stale one; a sweeping "save everything"
+  is never a request to commit it over somebody else's work.
+- **You can still overrule it,** by naming the file: `omarchy-replicant save-file <id>` saves
+  *this* machine's version and the mark clears. The panel's per-file Save button stays disabled on
+  those rows on purpose — one stray click there is the only action in this panel that destroys
+  work belonging to another machine.
+
+Restore the file and the mark clears by itself, the same way every other badge in the panel does:
+nothing has to remember, because the mark only ever shows while the two copies actually differ.
 
 > Upgrading from 0.5? Your old `.replicant-exclude` is migrated to `.replicant-sync` on the next
 > save, and every file you had switched off stays off — nothing is reinterpreted. If you switched

@@ -156,7 +156,7 @@ check_true "…leaving it for savegame" \
   bash -c 'git -C "$1" status --porcelain -- config/ | grep -q .' _ "$DREPO"
 on desktop savegame --auto --no-push >/dev/null 2>&1
 out=$(on desktop push)
-check_contains "…and it does push what is already committed" "commit(s) to" "$out"
+check_contains "…and it does push what is already committed" "commit" "$out"
 check_contains "…saying so out loud" "Pushing" "$out"
 check_true "…which really reached the remote" \
   bash -c 'git -C "$1" diff --quiet origin/main HEAD' _ "$DREPO"
@@ -213,9 +213,49 @@ check_true "…alongside the laptop's own"            test -d "$LREPO/state/lapt
 check_true "…and so is the desktop's profile tree"  \
   test -f "$LREPO/profiles/desktop/config/hypr/monitors.lua"
 
-on desktop pull >/dev/null 2>&1
+section "which way does the difference point"
+# The one mistake in this tool that destroys work belonging to somebody else.
+# "Is this file the same as its copy in the repo" has two opposite answers —
+# I changed it, or the other machine did — and until 0.7.2 both rendered as the
+# red "unsaved" badge whose button is Save. Pulling the laptop's edit and then
+# pressing Save on the desktop committed the desktop's OLD file over it, in one
+# click, with the panel having recommended exactly that.
+#
+# The direction is only knowable at the moment the commits arrive, so pull is
+# where it is written down.
+out=$(on desktop pull)
+check_contains "pull says what came down"    "changed on another machine" "$out"
+check_contains "…and names the file"         "nvim/" "$out"
+state_of() { on "$1" status --json --no-fetch | jq -r --arg i "$2" '.configs[]|select(.id==$i)|.sync_state'; }
+check "the file the laptop changed asks to be RESTORED, not saved" \
+  "incoming" "$(state_of desktop nvim/)"
+check_contains "…and the desktop's own advice agrees" "came from another machine" \
+  "$(on desktop status)"
+# Everything the machine itself changed is untouched by this: a real unsaved
+# file must still read unsaved, or the fix would have swapped one lie for another.
+printf 'edited on the desktop only\n' > "$D/.config/hypr/input.lua"
+check "a file only THIS machine changed still says unsaved" \
+  "unsaved" "$(state_of desktop hypr/input.lua)"
+
+# And the badge alone is not enough. Save is one button that copies EVERYTHING
+# in, so on a machine with one honest unsaved file and one incoming one, the
+# press the panel is asking for still took the incoming file with it. The
+# sweeping action holds those back and says which; the deliberate per-file one
+# is the escape hatch.
+out=$(on desktop savegame --auto)
+check_contains "saving everything says what it held back" "held back" "$out"
+check_contains "…and names it"                            "nvim/" "$out"
+check_true "the other machine's version is still in the repo" \
+  grep -q '"b"' "$DREPO/config/nvim/lua/plugins.lua"
+check "…and the desktop's own file was saved as normal" "saved" \
+  "$(state_of desktop hypr/input.lua)"
+
 on desktop restore --apply --only development --yes >/dev/null 2>&1
 check_true "the desktop picked the edit up" \
   grep -q '"b"' "$D/.config/nvim/lua/plugins.lua"
+# Self-healing, the same way every other badge in this plugin is: nothing has to
+# remember to clear the mark, because the mark only ever shows while the files
+# actually differ.
+check "…and the row goes quiet once it has" "saved" "$(state_of desktop nvim/)"
 
 summary

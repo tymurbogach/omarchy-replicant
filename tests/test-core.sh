@@ -736,8 +736,25 @@ for st in $core_states; do
   grep -q "st === \"$st\"" "$panel" || { unrendered=$((unrendered+1)); echo "    core emits '$st' and stateGlyph has no case for it"; }
 done
 check "every state the core emits has a badge in the panel" "0" "$unrendered"
-check "…and the states are the six that are documented" "default missing off saved unpushed unsaved" \
+check "…and the states are the seven that are documented" \
+  "default incoming missing off saved unpushed unsaved" \
   "$(echo $core_states)"
+# The README and the panel's own legend are the two places a user reads the
+# badge alphabet. A state the core emits and neither of them names is a symbol
+# nobody can look up.
+for st in $core_states; do
+  case "$st" in
+    incoming) word="to restore" ;;
+    unsaved)  word="unsaved" ;;
+    unpushed) word="to push" ;;
+    saved)    word="saved" ;;
+    default)  word="default" ;;
+    off)      word="off" ;;
+    missing)  word="not here" ;;
+  esac
+  check_true "the legend names '$st'" grep -qF "$word" <(grep -F 'unsaved    ' "$panel")
+  check_true "the README names '$st'" grep -qF "$word" "$readme"
+done
 
 section "a secret you added yourself is still a secret"
 # Everything that protects a secret used to key on the path prefix ssh/ or env/,

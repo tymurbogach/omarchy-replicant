@@ -74,6 +74,9 @@ Panel {
   readonly property color fg: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(fg, 1.55)
   readonly property color okColor: "#4caf50"
+  // The same amber the bar icon already uses for "there is something on GitHub
+  // you have not got yet". One idea, one colour, in both places you can see it.
+  readonly property color warnColor: "#e6a23c"
   readonly property string ff: bar ? bar.fontFamily : Style.font.family
   readonly property string mono: "monospace"
 
@@ -150,12 +153,20 @@ Panel {
   function stateGlyph(st) {
     if (st === "off") return "⊘"
     if (st === "missing") return "·"
+    // Down, against unsaved's dot and unpushed's up arrow. The three states that
+    // ask for an action say which direction that action moves the file in.
+    if (st === "incoming") return "↓"
     if (st === "unsaved") return "●"
     if (st === "unpushed") return "↑"
     if (st === "default") return "○"
     return "◆"
   }
   function stateColor(st) {
+    // Its own colour, and deliberately not the accent the other two "do
+    // something" states share: pressing Save on an incoming row is the one
+    // mistake in this panel that destroys somebody else's work, so the badge
+    // must not look like the badge that asks for Save.
+    if (st === "incoming") return root.warnColor
     if (st === "unsaved") return Color.accent
     if (st === "unpushed") return Color.accent
     if (st === "saved") return root.okColor
@@ -168,11 +179,16 @@ Panel {
     // carries a Save button and sits under a banner that already says "press
     // Save to GitHub", so a longer sentence bought nothing and cost the path
     // its last few characters on exactly the rows that had one worth reading.
+    if (st === "incoming") return "newer copy in your repo"
     if (st === "unsaved") return "not saved yet"
     if (st === "unpushed") return "not pushed yet"
     if (st === "default") return "untouched Omarchy default"
     return "saved on GitHub"
   }
+
+  // "1 file", "4 files". The panel printed "file(s)" eleven times on one screen
+  // and the number was always right there next to it.
+  function plural(n, one, many) { return n + " " + (n === 1 ? one : (many || one + "s")) }
 
   readonly property string profileName: root.repoState.profile || "this machine"
   readonly property int scopedCount: (root.repoState.configs || []).filter(function(c){ return c.scope === "profile" }).length
@@ -185,6 +201,14 @@ Panel {
   }).length + (root.repoState.secrets || []).filter(function(s){
     return s.sync_state === "unsaved"
   }).length
+  // Files a pull brought a newer copy of. Counted the same way and from the same
+  // rows, because this is the one state where pressing the OTHER button — Save —
+  // commits over what another machine did.
+  readonly property int nIncoming: (root.repoState.configs || []).filter(function(c){
+    return c.sync_state === "incoming"
+  }).length + (root.repoState.secrets || []).filter(function(s){
+    return s.sync_state === "incoming"
+  }).length
   readonly property int nAhead: repoState.ahead || 0
   readonly property int nBehind: repoState.behind || 0
 
@@ -193,6 +217,7 @@ Panel {
     if (!root.ready) return "not set up yet"
     if (root.nAhead > 0 && root.nBehind > 0) return "diverged"
     if (root.nBehind > 0) return root.nBehind + " waiting on GitHub"
+    if (root.nIncoming > 0) return "changes to restore"
     if (root.nDirty > 0 || root.nAhead > 0) return "unsaved changes"
     return "everything saved"
   }
@@ -201,9 +226,15 @@ Panel {
   // there is nothing to do. A banner that is always present stops being read.
   readonly property string advice: {
     if (!root.asked || !root.ready) return ""
-    if (root.nBehind > 0) return "Another machine saved " + root.nBehind + " change(s) — press Pull to bring them here."
-    if (root.nDirty > 0) return root.nDirty + " file(s) changed on this machine — press Save to GitHub."
-    if (root.nAhead > 0) return root.nAhead + " commit(s) committed but not pushed — press Save to GitHub."
+    if (root.nBehind > 0) return "Another machine saved " + root.plural(root.nBehind, "change") + " — press Pull to bring them here."
+    // Before the unsaved line, and that order is the whole point of the state.
+    // Both mean "this file and its copy differ"; only this one knows which way,
+    // and pressing Save here commits over what the other machine saved.
+    // One line, and it has to fit on one line: the banner elides, and the half
+    // that got cut was the half naming the button.
+    if (root.nIncoming > 0) return root.plural(root.nIncoming, "file") + " came from another machine — press Restore, not Save."
+    if (root.nDirty > 0) return root.plural(root.nDirty, "file") + " changed on this machine — press Save to GitHub."
+    if (root.nAhead > 0) return root.plural(root.nAhead, "commit") + " committed but not pushed — press Save to GitHub."
     return ""
   }
 
@@ -271,20 +302,22 @@ Panel {
       // Counted from the same states the badges render, not a separate word.
       // This once tested for "modified", a state that no longer exists, so every
       // card cheerfully said "in sync" while its own rows showed unsaved changes.
-      var changed = 0, off = 0
+      var changed = 0, off = 0, incoming = 0
       for (var j = 0; j < rows.length; j++) {
         if (rows[j].sync_state === "unsaved" || rows[j].sync_state === "unpushed") changed++
+        if (rows[j].sync_state === "incoming") incoming++
         if (rows[j].synced === false) off++
       }
       out.push({
         id: cats[i].id, icon: cats[i].icon, label: cats[i].label,
         description: cats[i].description, method: cats[i].method,
-        rows: rows, count: rows.length, changed: changed, off: off
+        rows: rows, count: rows.length, changed: changed, off: off, incoming: incoming
       })
     }
     return out
   }
 
+  readonly property int statColumns: root.nIncoming > 0 ? 5 : 4
   readonly property int countChanged: root.nDirty
   readonly property int countOff: (root.repoState.configs || []).filter(function(c){ return c.synced === false }).length
 
@@ -633,6 +666,9 @@ Panel {
         else if (t === "4") root.activeTab = "restore"
         else if (t === "r") root.refresh()
         else if (t === "s" && root.ready && !root.busy) root.doSavegame()
+        // The other half of the same journey, and since 0.7.2 the panel has a
+        // state whose answer is Pull rather than Save.
+        else if (t === "p" && root.ready && !root.busy) root.doPull()
         else if (t === "c") root.closeAllCards()
         // Straight to "what else could I be backing up?". The card lives at the
         // bottom of a long list on purpose — it must not compete with the areas —
@@ -790,10 +826,15 @@ Panel {
             Row {
               width: parent.width
               spacing: Style.space(8)
-              StatCard { label: "tracked";  value: String((root.repoState.configs || []).length) }
-              StatCard { label: "unsaved";  value: String(root.nDirty); highlight: root.nDirty > 0 }
-              StatCard { label: "to pull";  value: String(root.nBehind);      highlight: root.nBehind > 0 }
-              StatCard { label: "not synced"; value: String(root.countOff) }
+              // Five only when the fifth has something to say. A card that reads
+              // 0 every day of the year is a card nobody looks at any more.
+              StatCard { columns: root.statColumns; label: "tracked";  value: String((root.repoState.configs || []).length) }
+              StatCard { columns: root.statColumns; label: "unsaved";  value: String(root.nDirty); highlight: root.nDirty > 0 }
+              StatCard { columns: root.statColumns; label: "to restore"; value: String(root.nIncoming)
+                         highlight: root.nIncoming > 0; highlightColor: root.warnColor
+                         visible: root.nIncoming > 0 }
+              StatCard { columns: root.statColumns; label: "to pull";  value: String(root.nBehind);      highlight: root.nBehind > 0 }
+              StatCard { columns: root.statColumns; label: "not synced"; value: String(root.countOff) }
             }
 
             Row {
@@ -812,7 +853,7 @@ Panel {
                 foreground: root.nBehind > 0 ? Color.accent : root.fg; accent: Color.accent; fontFamily: root.ff
                 iconSpinning: pullProc.running
                 enabled: root.ready && !root.busy
-                tooltipText: "Bring down what another machine saved"
+                tooltipText: "Bring down what another machine saved  (p)"
                 onClicked: root.doPull()
               }
               Button {
@@ -844,11 +885,15 @@ Panel {
                 FactRow { label: "Remote";      value: root.repoState.remote_name || "—" }
                 FactRow { label: "Branch";      value: (root.repoState.branch || "main") + (root.nAhead || root.nBehind ? "   ↑" + root.nAhead + " ↓" + root.nBehind : "") }
                 FactRow { label: "This machine"; value: root.repoState.machine || "—" }
-                FactRow { label: "Last save";   value: (root.repoState.last_save || "never") + (root.repoState.last_subject ? "   " + root.repoState.last_subject : "") }
+                // No "Last save" row here. It printed the date and subject of the
+                // newest commit — which is, verbatim, the first line of the
+                // Recent saves list three rows further down the same screen,
+                // where it has a column for the date and room for the subject
+                // instead of eliding it.
                 FactRow { label: "Theme";       value: root.settingText("theme.current") }
                 FactRow { label: "Bar position"; value: root.settingText("bar.position") }
                 FactRow { label: "Lock screen"; value: root.settingText("idle.lock") }
-                FactRow { label: "Profile";     value: root.profileName + "  ·  " + root.scopedCount + " file(s) kept per profile" }
+                FactRow { label: "Profile";     value: root.profileName + "  ·  " + root.plural(root.scopedCount, "file") + " kept per profile" }
                 FactRow { label: "Plugin";      value: "omarchy-replicant " + (root.repoState.plugin_version || "?") }
               }
             }
@@ -1001,7 +1046,7 @@ Panel {
             // already says.
             Text {
               width: parent.width
-              text: "● unsaved    ↑ to push    ◆ saved    ○ default    ⊘ off    · not here"
+              text: "● unsaved    ↓ to restore    ↑ to push    ◆ saved    ○ default    ⊘ off    · not here"
               color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
               wrapMode: Text.WordWrap
             }
@@ -1161,10 +1206,29 @@ Panel {
                   }
                   Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width - Style.space(18) - areaBtn.width - parent.spacing * 2
-                    text: areaRow.modelData.label + "   " + areaRow.modelData.count + " file(s)"
+                    width: parent.width - Style.space(18) - areaBtn.width - areaPreview.width - parent.spacing * 3
+                    text: areaRow.modelData.label + "   " + root.plural(areaRow.modelData.count, "file")
                     color: root.fg; font.family: root.ff; font.pixelSize: Style.font.caption
                     elide: Text.ElideRight
+                  }
+                  // Both whole-machine cards above offer Preview before they
+                  // offer the button that writes. These rows write to the same
+                  // files with the same force and offered only the button —
+                  // "look first" was available for the biggest action in the
+                  // panel and not for the ones anybody actually presses.
+                  Button {
+                    id: areaPreview
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Preview"; iconText: root.icDiff; bordered: false
+                    foreground: root.dim; fontFamily: root.ff
+                    enabled: !root.busy
+                    tooltipText: "Show what restoring " + areaRow.modelData.label + " would change — writes nothing"
+                    onClicked: {
+                      root.busyLabel = "Previewing…"
+                      root.lastOutput = "Working out what would change in " + areaRow.modelData.label + "…"
+                      dangerProc.command = [root.cli, "restore", "--dry-run", "--only", areaRow.modelData.id]
+                      dangerProc.running = true
+                    }
                   }
                   Button {
                     id: areaBtn
@@ -1321,20 +1385,28 @@ Panel {
     property string label: ""
     property string value: ""
     property bool highlight: false
+    // Which colour the highlight is. "to restore" is not the same kind of
+    // attention as "unsaved" — one asks you to press Save and the other asks
+    // you not to — so it borrows the amber the bar icon and the row badge
+    // already use for it rather than sharing the accent.
+    property color highlightColor: Color.accent
     // Explicit width: a Row gives its children no width, and a BorderSurface
     // with no width renders at zero — the cards were simply invisible.
-    width: (parent.width - Style.space(24)) / 4
+    // The count is a property because the row grows a fifth card on the days
+    // there is something to restore, and a hardcoded /4 left it overflowing.
+    property int columns: 4
+    width: (parent.width - Style.space(8 * (statCard.columns - 1))) / statCard.columns
     implicitHeight: Style.space(46)
     radius: Style.cornerRadius
     color: Style.controlFill(false, false, root.fg, Color.accent)
-    borderSpec: Border.controlSpec(statCard.highlight ? "focus" : "normal", root.fg, Color.accent)
+    borderSpec: Border.controlSpec(statCard.highlight ? "focus" : "normal", root.fg, statCard.highlightColor)
     Column {
       anchors.centerIn: parent
       spacing: 0
       Text {
         anchors.horizontalCenter: parent.horizontalCenter
         text: statCard.value
-        color: statCard.highlight ? Color.accent : root.fg
+        color: statCard.highlight ? statCard.highlightColor : root.fg
         font.family: root.ff; font.pixelSize: Style.font.title; font.bold: true
       }
       Text {
@@ -1456,9 +1528,10 @@ Panel {
         title: cc.card.label
         subtitle: cc.card.description
         countText: String(cc.card.count)
-        statusText: cc.card.changed > 0 ? cc.card.changed + " changed"
+        statusText: cc.card.incoming > 0 ? cc.card.incoming + " to restore"
+                  : cc.card.changed > 0 ? cc.card.changed + " changed"
                   : cc.card.off > 0 ? cc.card.off + " off" : "in sync"
-        statusHighlight: cc.card.changed > 0
+        statusHighlight: cc.card.changed > 0 || cc.card.incoming > 0
         expanded: cc.expanded
         onToggled: root.toggleCard(cc.card.id)
       }
@@ -2052,7 +2125,12 @@ Panel {
     readonly property string syncState: frow.config.sync_state || "saved"
     readonly property bool isDefault: frow.syncState === "default"
     // "Needs the Save button" — unsaved, or committed here but never pushed.
+    // Deliberately NOT incoming: that row's difference belongs to another
+    // machine, and the button it wants is the one next to this one.
     readonly property bool isModified: frow.syncState === "unsaved" || frow.syncState === "unpushed"
+    readonly property bool isIncoming: frow.syncState === "incoming"
+    // Anything with a button worth pressing reads bold, whichever button it is.
+    readonly property bool needsAction: frow.isModified || frow.isIncoming
     readonly property string scope: frow.config.scope || "shared"
     readonly property bool isOff: frow.config.synced === false
     readonly property bool missing: frow.config.exists === false
@@ -2060,6 +2138,7 @@ Panel {
     // "saved" and "default" are the states you do not have to act on, and the
     // one-line legend above the list is enough for them.
     readonly property bool needsWords: frow.syncState === "unsaved"
+                                    || frow.syncState === "incoming"
                                     || frow.syncState === "unpushed"
                                     || frow.syncState === "off"
                                     || frow.syncState === "missing"
@@ -2091,7 +2170,7 @@ Panel {
           width: parent.width
           text: frow.config.label
           color: frow.missing || frow.isOff ? root.dim : root.fg
-          font.family: root.ff; font.pixelSize: Style.font.subtitle; font.bold: frow.isModified
+          font.family: root.ff; font.pixelSize: Style.font.subtitle; font.bold: frow.needsAction
           elide: Text.ElideMiddle
         }
         // Two texts, not one string. Appended to the end of the path the state
@@ -2178,13 +2257,17 @@ Panel {
           iconText: root.icSave; bordered: false
           foreground: frow.isModified ? Color.accent : root.dim; fontFamily: root.ff
           enabled: !frow.missing && frow.isModified && !root.busy
-          tooltipText: frow.isModified ? "Commit and push just this file" : "Already saved"
+          tooltipText: frow.isModified ? "Commit and push just this file"
+                     : frow.isIncoming ? "Your repo has a newer copy from another machine — restore it instead"
+                     : "Already saved"
           onClicked: root.doSaveFile(frow.config.id)
         }
         Button {
-          iconText: root.icFromRepo; bordered: false; foreground: root.dim; fontFamily: root.ff
+          iconText: root.icFromRepo; bordered: false
+          foreground: frow.isIncoming ? root.warnColor : root.dim; fontFamily: root.ff
           enabled: !root.busy && frow.syncState !== "off"
-          tooltipText: "Put back the copy saved in your repo (keeps a .bak copy)"
+          tooltipText: frow.isIncoming ? "Bring down the newer copy another machine saved (keeps a .bak copy)"
+                                       : "Put back the copy saved in your repo (keeps a .bak copy)"
           onClicked: root.ask("restore-file", frow.config.id,
                               "Replace " + frow.config.label + " with the copy saved in your repo?\n\nYour current version is kept as .bak.<epoch>.",
                               "Restore")

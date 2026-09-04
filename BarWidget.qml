@@ -40,13 +40,36 @@ BarWidget {
   // rings, while the filled ones keep their shape. Outline detail needs the
   // panel header's 30px to survive.
   function mdi(cp) { return String.fromCodePoint(cp) }
+
+  // What this icon is FOR. It used to read repoState.dirty, which counts what
+  // git can see inside the REPO — files core_backup has already copied in. Edit
+  // a tracked config and never press Save and the icon sat at the calm hexagon
+  // and the tooltip said "in sync", all day, which is the single thing this
+  // whole plugin exists to tell you. The panel was fixed for this in 0.6.1 by
+  // counting its own rows; the bar polls --brief and has no rows, so the count
+  // now comes down in the payload (core's count_changes) and both read the same
+  // number.
+  //
+  // `dirty` is the fallback, not an addition: content catches "never copied in"
+  // and git catches "copied in, never committed", and adding the two would count
+  // the same file twice.
+  readonly property int nUnsaved: {
+    var n = repoState.unsaved || 0
+    if (n === 0 && (repoState.dirty || 0) > 0) return repoState.dirty
+    return n
+  }
+  readonly property int nIncoming: repoState.incoming || 0
+  function plural(n, one, many) { return n + " " + (n === 1 ? one : (many || one + "s")) }
   readonly property string glyph: {
     if (!asked) return root.mdi(0xF0450)                                         // refresh
     if (!repoState.initialized) return root.mdi(0xF0415)                         // plus
     if ((repoState.ahead || 0) > 0 && (repoState.behind || 0) > 0) return root.mdi(0xF002A)  // alert
-    if ((repoState.ahead || 0) > 0) return root.mdi(0xF0167)                     // cloud-upload
+    // Before anything about pushing: an incoming file is the one state where
+    // the obvious next action is the wrong one.
+    if (root.nIncoming > 0) return root.mdi(0xF0162)                             // cloud-download
     if ((repoState.behind || 0) > 0) return root.mdi(0xF0162)                    // cloud-download
-    if ((repoState.dirty || 0) > 0) return root.mdi(0xF0193)                     // content-save
+    if (root.nUnsaved > 0) return root.mdi(0xF0193)                              // content-save
+    if ((repoState.ahead || 0) > 0) return root.mdi(0xF0167)                     // cloud-upload
     return root.mdi(0xF06E1)                                                     // hexagon-multiple
   }
   readonly property string tooltip: {
@@ -56,19 +79,22 @@ BarWidget {
     if (repoState.remote) t += " → " + repoState.remote
     else t += " (no remote)"
     t += "\nbranch: " + (repoState.branch || "?")
-    if ((repoState.ahead || 0) > 0) t += "\n↑ " + repoState.ahead + " to push"
-    if ((repoState.behind || 0) > 0) t += "\n↓ " + repoState.behind + " to pull"
-    if ((repoState.dirty || 0) > 0) t += "\n● " + repoState.dirty + " modified files"
-    else if ((repoState.ahead || 0) === 0 && (repoState.behind || 0) === 0) t += "\n✓ in sync"
+    if (root.nIncoming > 0) t += "\n↓ " + root.plural(root.nIncoming, "file") + " to restore from another machine"
+    if ((repoState.behind || 0) > 0) t += "\n↓ " + root.plural(repoState.behind, "commit") + " to pull"
+    if (root.nUnsaved > 0) t += "\n● " + root.plural(root.nUnsaved, "file") + " changed and not saved"
+    if ((repoState.ahead || 0) > 0) t += "\n↑ " + root.plural(repoState.ahead, "commit") + " to push"
+    if (root.nIncoming === 0 && root.nUnsaved === 0
+        && (repoState.ahead || 0) === 0 && (repoState.behind || 0) === 0) t += "\n✓ in sync"
     t += "\nClick to open panel · Right-click to refresh"
     return t
   }
   readonly property color bg: {
     if (!asked || !repoState.initialized) return Qt.darker(bar ? bar.barForeground : Color.foreground, 1.6)
-    if ((repoState.ahead || 0) > 0 || (repoState.dirty || 0) > 0) return Color.accent
-    if ((repoState.behind || 0) > 0) return "#e6a23c"
+    if (root.nIncoming > 0 || (repoState.behind || 0) > 0) return "#e6a23c"
+    if ((repoState.ahead || 0) > 0 || root.nUnsaved > 0) return Color.accent
     return bar ? bar.barForeground : Color.foreground
   }
+
 
   // force = ask the CLI to contact GitHub. The background poll deliberately
   // does not: `status` only fetches when its own throttle has expired, so the
@@ -78,7 +104,9 @@ BarWidget {
   //
   // The tick also asks for --brief. This icon reads six numbers; the full
   // payload builds fifty file rows, twenty-four settings and every category,
-  // which took 1.4 s of CPU once a minute to answer them. Brief takes 0.04 s.
+  // which took 1.4 s of CPU once a minute to answer them. Brief takes 0.18 s —
+  // it grew from 0.04 s when it started counting unsaved files, which is fifty
+  // cmps and the reason the icon is now telling the truth.
   // Whenever the panel is open — or a write just finished — the full payload is
   // built, because that is when anybody is actually looking at the rows.
   // A request that arrives while a probe is in flight used to be dropped. Open

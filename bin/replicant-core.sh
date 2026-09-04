@@ -21,9 +21,30 @@ MACHINE="${REPLICANT_MACHINE:-$(hostnamectl --static 2>/dev/null || hostname 2>/
 STATE_ROOT="$REPO_DIR/state"
 STATE_DIR="$STATE_ROOT/$MACHINE"
 
+# Which tracked entries the last pull brought a newer copy of. Machine-local on
+# purpose: it is a fact about what THIS machine has not caught up with yet, not
+# about the setup, so it has no business travelling in the repo.
+#
+# It exists because "does the file on this machine differ from the copy in the
+# repo" cannot tell you WHICH way the difference points, and the two answers ask
+# for opposite buttons. Before this, pulling a change the laptop had made left
+# the desktop showing the calm red "unsaved" badge — press Save and the laptop's
+# work is quietly committed away. The direction is only knowable at the moment
+# the commits arrive, so that is where it is written down.
+INCOMING_FILE="$REPLICANT_HOME/incoming"
+
 # Overridable so the tests can exercise the reader and the writer without a
 # root-owned file; in normal use it is exactly where logind looks.
 LOGIND_DROPIN="${REPLICANT_LOGIND_DROPIN:-/etc/systemd/logind.conf.d/99-lid.conf}"
+
+# plural <n> <singular> [plural] — "1 file", "4 files". Every count this tool
+# prints used to read "4 file(s)", including in the panel, where it appeared
+# eleven times on one screen. Nothing about the parenthesis was ever needed:
+# the number is right there.
+plural() {
+  local n="$1" one="$2" many="${3:-$2s}"
+  if [[ "$n" == 1 ]]; then printf '%s %s\n' "$n" "$one"; else printf '%s %s\n' "$n" "$many"; fi
+}
 
 TEMPLATES_DIR="$REPO_DIR/templates"
 GITHOOKS_DIR="$REPO_DIR/.githooks"
@@ -847,6 +868,105 @@ owning_rel() {
   printf '%s\n' "$p"
 }
 
+# ─── incoming: what another machine changed and this one has not caught up ──
+# Read through one assoc array, filled once. Every row in the panel asks, so a
+# per-row re-read of the file is fifty reads of the same six lines.
+declare -A INCOMING=()
+INCOMING_LOADED=0
+read_incoming() {
+  (( INCOMING_LOADED )) && return 0
+  INCOMING_LOADED=1
+  INCOMING=()
+  [[ -f "$INCOMING_FILE" ]] || return 0
+  local line
+  while IFS= read -r line; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    INCOMING["$line"]=1
+  done < "$INCOMING_FILE"
+  return 0
+}
+
+# is_incoming_rel <rel> — 0 when the last pull brought a newer copy of this
+# entry. The CALLER still has to check the file actually differs: an entry that
+# has since been restored, or deliberately saved over, matches again and must
+# stop claiming anything. That is the same self-healing rule the unsaved badge
+# follows, and it is why no pass has to remember to clear this flag.
+is_incoming_rel() {
+  read_incoming
+  [[ -n "${INCOMING[$1]:-}" ]]
+}
+
+# record_incoming <rel>... — replace the list with exactly these entries.
+# Called by `pull`, which is the one moment the direction of a difference is
+# known for certain.
+record_incoming() {
+  mkdir -p "$REPLICANT_HOME" 2>/dev/null || return 0
+  if (( $# == 0 )); then rm -f "$INCOMING_FILE" 2>/dev/null || true
+  else printf '%s\n' "$@" | sort -u > "$INCOMING_FILE"
+  fi
+  INCOMING_LOADED=0
+  return 0
+}
+
+# entry_differs <src> <repo-copy> <is-dir> — 0 when what is on this machine is
+# not what the repo holds. This is the CONTENT half of "unsaved", factored out
+# because two callers need it: the row payload the panel draws, and the cheap
+# count the bar icon polls. A second copy of this comparison is exactly how a
+# badge and a bar icon come to disagree about the same file.
+#
+# A file that is not on this machine does NOT differ — that is "missing", a
+# different row and a different answer.
+entry_differs() {
+  local src="$1" repo_path="$2" is_dir="${3:-false}"
+  if [[ "$is_dir" == true ]]; then
+    [[ -d "${src%/}" ]] || return 1
+    tree_same "$src" "$repo_path" && return 1
+    return 0
+  fi
+  [[ -f "$src" ]] || return 1
+  [[ -f "$repo_path" ]] || return 0
+  cmp -s "$src" "$repo_path" 2>/dev/null && return 1
+  return 0
+}
+
+# count_changes — prints "<unsaved> <incoming>" over every tracked entry.
+#
+# The bar icon used to read repoState.dirty, which counts what git sees in the
+# REPO working tree — files core_backup has already copied in. Edit a config and
+# never save it and the icon sat at the calm "in sync" hexagon all day, which is
+# the one thing this plugin exists to tell you. The panel was fixed for this in
+# 0.6.1 and the bar was not.
+#
+# It answers with content only. The git half ("copied in, not committed") is
+# already in the brief payload as `dirty`, and the icon ORs the two. Fifty cmps
+# take a few milliseconds; building the full row payload for the same answer
+# took 1.4 s of CPU once a minute.
+count_changes() {
+  local entry src rel repo_path is_dir n_unsaved=0 n_incoming=0
+  read_scopes >/dev/null
+  read_incoming
+  for entry in "${TRACKED[@]}"; do
+    src="${entry%%:*}"; rel="${entry##*:}"
+    [[ "$(scope_for "$rel")" == "off" ]] && continue
+    is_dir=false; is_dir_entry "$rel" && is_dir=true
+    repo_path=$(repo_path_for "$rel")
+    entry_differs "$src" "$repo_path" "$is_dir" || continue
+    # Exclusive, exactly as the badge precedence is: a file the repo has a newer
+    # copy of is asking for Restore, not for Save, and counting it in both
+    # totals put the same file behind two contradictory buttons.
+    if [[ -n "${INCOMING[$rel]:-}" ]]; then n_incoming=$(( n_incoming + 1 ))
+    else n_unsaved=$(( n_unsaved + 1 )); fi
+  done
+  for entry in "${TRACKED_SECRETS[@]}"; do
+    src="${entry%%:*}"; rel="${entry##*:}"
+    is_excluded "$rel" && continue
+    entry_differs "$src" "$SECRETS_DIR/$rel" false || continue
+    if [[ -n "${INCOMING[$rel]:-}" ]]; then n_incoming=$(( n_incoming + 1 ))
+    else n_unsaved=$(( n_unsaved + 1 )); fi
+  done
+  printf '%s %s\n' "$n_unsaved" "$n_incoming"
+}
+
 is_discovered_plugin_config() {
   local p="$1" psrc _prel _pname
   while IFS=$'\t' read -r psrc _prel _pname; do
@@ -1166,7 +1286,9 @@ core_backup() {
   ensure_repo_layout
   echo "→ Copying configuration (fixed MANIFEST, savegame)" >&2
   copied=0; missing=0
-  local skipped=0
+  local skipped=0 held=0
+  local -a held_rels=()
+  read_incoming
   for entry in "${TRACKED[@]}"; do
     src=${entry%%:*}
     rel="${entry##*:}"
@@ -1175,6 +1297,19 @@ core_backup() {
     # prune pass below) whatever the repo already holds is left alone.
     if is_excluded "$rel"; then
       skipped=$((skipped + 1))
+      continue
+    fi
+    # The repo holds a newer copy that came down from another machine, and this
+    # machine has not caught up with it. Copying over it is never what the
+    # sweeping "save everything" action means: this machine's version is the
+    # STALE one, and one press of Save would commit it over work done elsewhere.
+    #
+    # Held, not refused, and it clears itself: restore the file and the copies
+    # match again, so the next save treats it like any other row. The escape
+    # hatch, for the day this machine's version really should win, is naming it:
+    # `save-file <id>` saves one file the user asked for by name.
+    if [[ -n "${INCOMING[$rel]:-}" ]] && entry_differs "$src" "$dst" "$(is_dir_entry "$rel" && echo true || echo false)"; then
+      held=$((held + 1)); held_rels+=("$rel")
       continue
     fi
     if is_dir_entry "$rel"; then
@@ -1199,6 +1334,11 @@ core_backup() {
   else
     echo "  $copied copied, $missing missing" >&2
   fi
+  if (( held > 0 )); then
+    echo "  · held back $(plural "$held" file) another machine changed — 'restore --apply' brings them here:" >&2
+    printf '      %s\n' "${held_rels[@]}" >&2
+    echo "    (to save this machine's version instead: 'save-file <id>')" >&2
+  fi
 
   echo "→ Copying auto-detected plugin configs" >&2
   local pcopied=0 psrc prel _pname
@@ -1209,7 +1349,7 @@ core_backup() {
     cp -f "$psrc" "$dst"
     pcopied=$((pcopied+1))
   done < <(discover_plugin_entries)
-  echo "  $pcopied plugin config(s) detected" >&2
+  echo "  $(plural "$pcopied" "plugin config") detected" >&2
 
   # Prune what is no longer tracked. Without this, dropping a line from MANIFEST
   # (or uninstalling a plugin) leaves its last copy in config/ forever — the
@@ -1267,7 +1407,7 @@ core_backup() {
   done < <(find "${sweep[@]}" -type f -print0 2>/dev/null)
   # leave no empty directories behind either
   find "${sweep[@]}" -mindepth 1 -type d -empty -delete 2>/dev/null || true
-  (( pruned > 0 )) && echo "  $pruned stale file(s) pruned" >&2
+  (( pruned > 0 )) && echo "  $(plural "$pruned" "stale file") pruned" >&2
   fi
 
   echo "→ Copying secrets (private repo, 600)" >&2
@@ -1295,7 +1435,7 @@ core_backup() {
       echo "  · $src needs sudo: sudo install -m600 -o $USER -g $USER $src $dst" >&2
     fi
   done
-  echo "  $scopied secret(s) copied" >&2
+  echo "  $(plural "$scopied" secret) copied" >&2
 
   echo "→ Regenerating state/ inventory" >&2
   mkdir -p "$STATE_DIR"
@@ -2388,7 +2528,7 @@ build_configs_json() {
   # One jq for the whole list. Same reason as build_settings_json: this runs on
   # every panel refresh and there are forty-odd rows.
   local entry src rel label category exists is_default has_default default_src config_rel
-  local dirty unpushed sync_state saved synced source scope repo_path git_rel unsaved is_dir nfiles
+  local dirty unpushed sync_state saved synced source scope repo_path git_rel unsaved is_dir nfiles incoming
   # Fill the scope cache HERE, in this shell. scope_for is reached through
   # $(repo_path_for ...) for every row, and a cache filled inside that
   # substitution is discarded with it — the file was re-read fifty times over.
@@ -2437,13 +2577,7 @@ build_configs_json() {
     # tree_same is cmp over the whole tree, so adding, editing or deleting
     # anything inside a tracked directory shows up, and undoing it clears.
     unsaved=false
-    if [[ "$exists" == true ]]; then
-      if [[ "$is_dir" == true ]]; then
-        tree_same "$src" "$repo_path" || unsaved=true
-      elif [[ "$saved" == false ]] || ! cmp -s "$src" "$repo_path" 2>/dev/null; then
-        unsaved=true
-      fi
-    fi
+    entry_differs "$src" "$repo_path" "$is_dir" && unsaved=true
     # Copied into the repo but not committed is unsaved too — same word, same
     # button. Content and git each catch a case the other misses.
     dirty=false
@@ -2451,9 +2585,20 @@ build_configs_json() {
     [[ "$dirty" == true ]] && unsaved=true
     unpushed=false
     path_unpushed "$git_rel" && unpushed=true
+    # The same difference, pointing the other way. Only meaningful while the
+    # file still differs, which is what makes it clear itself once the entry is
+    # restored — or once the user knowingly saves over it.
+    incoming=false
+    [[ "$unsaved" == true ]] && is_incoming_rel "$rel" && incoming=true
     synced=true
     [[ "$scope" == "off" ]] && synced=false
-    # off > missing > unsaved > default > unpushed > saved.
+    # off > missing > incoming > unsaved > default > unpushed > saved.
+    #
+    # incoming MUST outrank unsaved, and it is the only ordering that is about
+    # safety rather than tidiness. Both mean "this file and its copy differ";
+    # unsaved asks for Save and incoming asks for Restore, and pressing the
+    # wrong one commits over work another machine did. When the direction is
+    # known, it wins.
     #
     # unsaved MUST outrank default. Putting a customised file back to Omarchy's
     # default is itself a change that still needs saving, and it used to show the
@@ -2467,6 +2612,7 @@ build_configs_json() {
     # matters is whether THIS machine has something the repo does not.
     if [[ "$synced" == false ]]; then sync_state="off"
     elif [[ "$exists" == false ]]; then sync_state="missing"
+    elif [[ "$incoming" == true ]]; then sync_state="incoming"
     elif [[ "$unsaved" == true ]]; then sync_state="unsaved"
     elif [[ "$is_default" == true ]]; then sync_state="default"
     elif [[ "$unpushed" == true ]]; then sync_state="unpushed"
@@ -2482,10 +2628,10 @@ build_configs_json() {
     source=manifest
     is_user_entry "$rel" && source=user
     if [[ "$source" == manifest && "$exists" == false && "$saved" == false ]]; then continue; fi
-    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
       "$rel" "$label" "$src" "$category" "$exists" "$is_default" "$has_default" \
       "$config_rel" "$dirty" "$unpushed" "$sync_state" "$saved" "$synced" "$source" "$scope" "$unsaved" \
-      "$is_dir" "$nfiles"
+      "$is_dir" "$nfiles" "$incoming"
   done
   # Auto-detected entries from other plugins. No Omarchy default ships for
   # these, so they can never read as "default".
@@ -2501,17 +2647,20 @@ build_configs_json() {
     [[ "$dirty" == true ]] && unsaved=true
     unpushed=false
     path_unpushed "config/$prel" && unpushed=true
+    incoming=false
+    [[ "$unsaved" == true ]] && is_incoming_rel "$prel" && incoming=true
     synced=true
     is_excluded "$prel" && synced=false
     if [[ "$synced" == false ]]; then sync_state="off"
+    elif [[ "$incoming" == true ]]; then sync_state="incoming"
     elif [[ "$unsaved" == true ]]; then sync_state="unsaved"
     elif [[ "$unpushed" == true ]]; then sync_state="unpushed"
     else sync_state="saved"
     fi
-    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
       "$prel" "$pname" "$psrc" "plugins" "true" "false" "false" \
       "omarchy/${psrc##*/}" "$dirty" "$unpushed" "$sync_state" "$saved" "$synced" "auto" "$(scope_for "$prel")" "$unsaved" \
-      "false" "0"
+      "false" "0" "$incoming"
   done < <(discover_plugin_entries)
   } | jq -Rsc '
     def flag: . == "true";
@@ -2522,7 +2671,8 @@ build_configs_json() {
       config_rel: .[7], dirty: (.[8]|flag), unpushed: (.[9]|flag),
       sync_state: .[10], saved: (.[11]|flag), synced: (.[12]|flag),
       source: .[13], scope: .[14], unsaved: (.[15]|flag),
-      is_dir: (.[16]|flag), nfiles: (.[17]|tonumber? // 0)
+      is_dir: (.[16]|flag), nfiles: (.[17]|tonumber? // 0),
+      incoming: (.[18]|flag)
     })'
 }
 
@@ -2533,7 +2683,7 @@ build_configs_json() {
 # variables it defines.
 build_secrets_json() {
   invalidate_git_cache
-  local entry src rel exists mode kind dirty unpushed saved synced sync_state vars nvars unsaved
+  local entry src rel exists mode kind dirty unpushed saved synced sync_state vars nvars unsaved incoming
   {
   for entry in "${TRACKED_SECRETS[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"
@@ -2560,25 +2710,26 @@ build_secrets_json() {
     # only whether they differ — no secret is read INTO a variable, printed, or
     # put in the JSON. Comparing is not revealing.
     unsaved=false
-    if [[ "$exists" == true ]]; then
-      if [[ "$saved" == false ]] || ! cmp -s "$src" "$SECRETS_DIR/$rel" 2>/dev/null; then unsaved=true; fi
-    fi
+    entry_differs "$src" "$SECRETS_DIR/$rel" false && unsaved=true
     dirty=false
     path_dirty "secrets/$rel" && dirty=true
     [[ "$dirty" == true ]] && unsaved=true
     unpushed=false
     path_unpushed "secrets/$rel" && unpushed=true
+    incoming=false
+    [[ "$unsaved" == true ]] && is_incoming_rel "$rel" && incoming=true
     synced=true
     is_excluded "$rel" && synced=false
     if [[ "$synced" == false ]]; then sync_state="off"
     elif [[ "$exists" == false ]]; then sync_state="missing"
+    elif [[ "$incoming" == true ]]; then sync_state="incoming"
     elif [[ "$unsaved" == true ]]; then sync_state="unsaved"
     elif [[ "$unpushed" == true ]]; then sync_state="unpushed"
     else sync_state="saved"
     fi
-    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
       "$rel" "$src" "$exists" "$mode" "$kind" "$dirty" "$unpushed" "$saved" \
-      "$synced" "$sync_state" "$vars" "$nvars"
+      "$synced" "$sync_state" "$vars" "$nvars" "$incoming"
   done
   } | jq -Rsc '
     def flag: . == "true";
@@ -2587,7 +2738,8 @@ build_secrets_json() {
       dirty: (.[5]|flag), unpushed: (.[6]|flag), saved: (.[7]|flag),
       synced: (.[8]|flag), sync_state: .[9],
       vars: (if .[10] == "" then [] else (.[10]|split(",")) end),
-      var_count: ((.[11]|tonumber?) // 0)
+      var_count: ((.[11]|tonumber?) // 0),
+      incoming: (.[12]|flag)
     })'
 }
 
@@ -2685,6 +2837,11 @@ core_status() {
     ahead=$(git -C "$REPO_DIR" rev-list --count @{u}..HEAD 2>/dev/null || echo 0)
     behind=$(git -C "$REPO_DIR" rev-list --count HEAD..@{u} 2>/dev/null || echo 0)
   fi
+  # Content, not git: what is on this machine that the repo has not got, and
+  # which of those differences came down from another machine. Both the bar icon
+  # and the panel header read these, so they can never disagree.
+  local n_unsaved n_incoming
+  read -r n_unsaved n_incoming < <(count_changes)
   local pending_groups=""
   path_dirty "config/"  && pending_groups="$pending_groups config"
   path_dirty "secrets/" && pending_groups="$pending_groups secrets"
@@ -2694,8 +2851,10 @@ core_status() {
       --argjson dirty "$dirty" --argjson untracked "$untracked" \
       --argjson ahead "$ahead" --argjson behind "$behind" \
       --arg pending "$pending_groups" \
+      --argjson unsaved "$n_unsaved" --argjson incoming "$n_incoming" \
       '{initialized:true, brief:true, branch:$branch, remote:$remote,
         dirty:$dirty, untracked:$untracked, ahead:$ahead, behind:$behind,
+        unsaved:$unsaved, incoming:$incoming,
         pending:$pending}'
     return 0
   fi
@@ -2743,6 +2902,7 @@ core_status() {
       --arg home "$HOME" \
       --arg last_save "$last_save" --arg last_subject "$last_subject" \
       --argjson dirty "$dirty" --argjson untracked "$untracked" --argjson ahead "$ahead" --argjson behind "$behind" \
+      --argjson unsaved "$n_unsaved" --argjson incoming "$n_incoming" \
       --arg pending "$pending_groups" --argjson configs "$configs_json" --argjson secrets "$secrets_json" \
       --argjson settings "$settings_json" --argjson categories "$categories_json" \
       --argjson setting_groups "$groups_json" --argjson machines "$machines_json" \
@@ -2752,12 +2912,17 @@ core_status() {
         profile:$profile, profiles:$profiles,
         last_save:$last_save, last_subject:$last_subject,
         dirty:$dirty, untracked:$untracked, ahead:$ahead, behind:$behind, pending:$pending,
+        unsaved:$unsaved, incoming:$incoming,
         configs:$configs, secrets:$secrets, settings:$settings,
         categories:$categories, setting_groups:$setting_groups, machines:$machines}'
   else
     echo "branch: $branch"
     echo "remote: ${remote:-<none>}"
     echo "dirty: $dirty pending:$pending_groups ahead/behind: $ahead/$behind"
+    # The two lines someone reading this in a terminal is actually looking for,
+    # and the button each one asks for.
+    (( n_unsaved > 0 ))  && echo "$(plural "$n_unsaved" file) changed here and not saved — 'savegame --auto'"
+    (( n_incoming > 0 )) && echo "$(plural "$n_incoming" file) came from another machine — 'restore --apply'"
     if (( dirty > 0 )); then git -C "$REPO_DIR" status --short 2>/dev/null | head -n 30; fi
   fi
 }
@@ -3083,6 +3248,39 @@ core_log() {
 }
 
 # Used by the omarchy-replicant CLI wrapper
+# core_incoming <before-rev> <after-rev> — which tracked entries a pull moved.
+# Written down for the panel and printed for the caller.
+#
+# It lives here rather than in the CLI for the reason everything else does: the
+# mapping from a repo path back to the row a person can press a button on is
+# business logic, and owning_rel is the only thing that knows a file three
+# levels inside a tracked directory belongs to the directory's row.
+core_incoming() {
+  local before="$1" after="$2" p rel
+  local -a rels=()
+  while IFS= read -r p; do
+    case "$p" in
+      config/*)            rel="${p#config/}" ;;
+      secrets/*)           rel="${p#secrets/}" ;;
+      # Only THIS machine's profile. profiles/laptop/... is the laptop's own copy
+      # of a file that is kept per profile precisely so the two machines do not
+      # share it — reporting it as incoming here would tell the desktop to
+      # restore the laptop's monitor layout onto itself.
+      profiles/*/config/*) rel="${p#profiles/}"
+                           [[ "${rel%%/*}" == "$(current_profile)" ]] || continue
+                           rel="${rel#*/config/}" ;;
+      *)                   continue ;;   # state/, .replicant-*: not rows anyone acts on
+    esac
+    rels+=("$(owning_rel "$rel")")
+  done < <(git -C "$REPO_DIR" diff --name-only "$before" "$after" 2>/dev/null)
+  if (( ${#rels[@]} == 0 )); then record_incoming; return 0; fi
+  local -a uniq=()
+  # shellcheck disable=SC2207
+  uniq=($(printf '%s\n' "${rels[@]}" | sort -u))
+  record_incoming "${uniq[@]}"
+  printf '%s\n' "${uniq[@]}"
+}
+
 if [[ "${1:-}" == "backup" ]]; then core_backup "${2:-}"
 elif [[ "${1:-}" == "status" ]]; then shift; core_status "$@"
 elif [[ "${1:-}" == "diff" ]]; then core_diff "${2:-}" "${3:-auto}"
@@ -3100,5 +3298,6 @@ elif [[ "${1:-}" == "local-only-themes" ]]; then local_only_themes
 elif [[ "${1:-}" == "track" ]]; then shift; core_track "$@"
 elif [[ "${1:-}" == "untrack" ]]; then core_untrack "${2:-}"
 elif [[ "${1:-}" == "suggest" ]]; then core_suggest "${2:-}"
+elif [[ "${1:-}" == "incoming" ]]; then core_incoming "${2:-}" "${3:-}"
 elif [[ "${1:-}" == "machine" ]]; then printf '%s\n' "$MACHINE"
 fi

@@ -5,13 +5,21 @@ import Quickshell.Io
 // keepLoaded service. Its only job is the IPC surface, so a script can ask the
 // running shell what Replicant sees without shelling out to git itself:
 //
-//   omarchy ipc call omarchy-replicant status
-//   omarchy ipc call omarchy-replicant refresh
+//   omarchy shell omarchy-replicant status
+//   omarchy shell omarchy-replicant refresh
+//
+// (`omarchy ipc call ...`, which this comment used to give, is not a command.
+// The verified form is `omarchy shell <target> <method>`.)
 //
 // It deliberately does NOT poll on a timer. The bar widget already polls once a
 // minute and is the thing that has to stay current; a second poller here meant
-// two `status` runs per cycle for a value nothing was reading. The cached
-// answer is refreshed on load and whenever someone asks for it.
+// two `status` runs per cycle for a value nothing was reading.
+//
+// `status` returns a CACHED answer, refreshed when this loads and when someone
+// calls `refresh` — not on every call. Refreshing per call would put a
+// second-long `status` process behind every poll of a script's loop, which is
+// the idle cost the bar's --brief tick exists to avoid. A script that needs a
+// current answer calls `refresh` and then `status`, or just runs the CLI.
 Item {
   id: root
   visible: false

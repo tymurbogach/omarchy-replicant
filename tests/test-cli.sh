@@ -413,4 +413,22 @@ printf 'API_TOKEN=%s\n' "${P_GH}abcdefghijklmnopqrstuvwxyz0123456789" > "$d/conf
 check_false "…but a real one in the same place is"           bash "$SCAN" "$d/config"
 rm -rf "$d"
 
+section "the documented IPC surface is the one that exists"
+# Service.qml's comment gave `omarchy ipc call <target> <method>`. There is no
+# `omarchy ipc` command: anyone following it got "Unknown Omarchy command".
+# The form that works, and that this was checked against, is `omarchy shell`.
+svc="$HERE/../Service.qml"
+check "no command that does not exist is documented" "0" \
+  "$(grep -c 'omarchy ipc call omarchy-replicant' "$svc" || true)"
+check "…and the one that does is" "2" \
+  "$(grep -c 'omarchy shell omarchy-replicant' "$svc" || true)"
+# Inside the IpcHandler block specifically: Service.qml also has a plain
+# refresh() of its own, and counting both would pass whether or not the handler
+# exposes anything.
+handler=$(sed -n '/IpcHandler {/,/^  }/p' "$svc")
+for fn in status refresh; do
+  check "the IpcHandler really exposes $fn" "1" \
+    "$(grep -cE "function $fn\(" <<<"$handler" || true)"
+done
+
 summary

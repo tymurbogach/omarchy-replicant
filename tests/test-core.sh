@@ -783,4 +783,34 @@ check_false "…and never writes outside the repo" move_repo_copy "$CONFIG_DIR/t
 check_true "…leaving the source where it was" test -d "$CONFIG_DIR/tree2"
 core_untrack "tree2/" >/dev/null 2>&1
 
+section "track refuses what would own the same path twice"
+mkdir -p "$HOME/.config/owned/deep"
+printf 'x\n' > "$HOME/.config/owned/a.conf"
+printf 'y\n' > "$HOME/.config/owned/deep/b.conf"
+core_track "$HOME/.config/owned" >/dev/null 2>&1
+check_true "the directory is tracked" is_tracked_path "$HOME/.config/owned/a.conf"
+# Two entries owning one path in the repo: the panel drew the row twice, and
+# untracking the file would have deleted the copy the directory still owns.
+out=$(core_track "$HOME/.config/owned/a.conf" 2>&1)
+check_contains "a file inside it is refused" "already covered by the tracked directory" "$out"
+check "…and nothing was added" "1" \
+  "$(printf '%s\n' "${USER_MANIFEST[@]}" | grep -c 'owned' || true)"
+# The other way round: a directory that swallows a file listed on its own.
+printf 'z\n' > "$HOME/.config/solo.conf"
+core_track "$HOME/.config/solo.conf" >/dev/null 2>&1
+out=$(core_track "$HOME/.config/" 2>&1 || true)
+check_contains "a directory that swallows a listed file is refused" "would swallow" "$out"
+check_false "…and it really was not added" is_tracked_path "$HOME/.config/unrelated-thing.conf"
+core_untrack "solo.conf" >/dev/null 2>&1
+core_untrack "owned/" >/dev/null 2>&1
+
+section "track will not quietly put a hundred megabytes in a git repo"
+mkdir -p "$HOME/.config/huge"
+for i in $(seq 1 420); do printf 'x\n' > "$HOME/.config/huge/f$i.conf"; done
+out=$(core_track "$HOME/.config/huge" 2>&1 || true)
+check_contains "a big tree is refused, with the number" "holds 420 files" "$out"
+check_contains "…and says what to do instead" "narrower directory" "$out"
+check_false "…and is not tracked" is_tracked_path "$HOME/.config/huge/f1.conf"
+rm -rf "$HOME/.config/huge"
+
 summary

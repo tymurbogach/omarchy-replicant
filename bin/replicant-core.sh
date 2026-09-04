@@ -692,12 +692,41 @@ core_track() {
   [[ -n "$rel" ]] || rel=$(derive_rel "$path")
   if [[ "$path" == */ ]]; then rel="${rel%/}/"; fi
 
-  local entry
+  local entry esrc
   for entry in "${TRACKED[@]}" "${TRACKED_SECRETS[@]}"; do
-    if [[ "${entry%%:*}" == "$path" || "${entry##*:}" == "$rel" ]]; then
+    esrc="${entry%%:*}"
+    if [[ "$esrc" == "$path" || "${entry##*:}" == "$rel" ]]; then
       echo "track: already tracked as '${entry##*:}'" >&2; return 0
     fi
+    # A file inside a tracked directory is already tracked BY it. Accepting it
+    # again gave two entries the same path in the repo, so the panel drew the
+    # row twice and untracking the file would have deleted the copy the
+    # directory still owns.
+    if [[ "$esrc" == */ && "$path" == "$esrc"* ]]; then
+      echo "track: already covered by the tracked directory '${entry##*:}'" >&2; return 0
+    fi
+    # And the other way round: a directory that swallows something already
+    # listed would take over its copy without anyone saying so.
+    if [[ "$path" == */ && "$esrc" == "$path"* ]]; then
+      echo "track: '$rel' would swallow '${entry##*:}', which is tracked on its own" >&2
+      echo "       untrack that first, or track a narrower directory" >&2
+      return 1
+    fi
   done
+
+  # Tracking a big tree is a foot-gun with a quiet failure mode: it works, and
+  # the repo grows by a hundred megabytes nobody meant to push. Say the number
+  # rather than guessing an acceptable one.
+  if [[ "$path" == */ ]]; then
+    local n; n=$(tree_count "$path")
+    if (( n > 400 )); then
+      echo "track: ${path/#$HOME/\~} holds $n files — that is a lot to put in a git repo." >&2
+      echo "       If it is a git clone (a theme, a plugin), it is already recorded by URL." >&2
+      echo "       Track a narrower directory, or the handful of files you actually edit." >&2
+      return 1
+    fi
+    (( n > 100 )) && echo "track: note — ${path/#$HOME/\~} holds $n files" >&2
+  fi
 
   ensure_track_file
   local -a keep=()

@@ -829,4 +829,38 @@ ensure_repo_layout >/dev/null 2>&1
 check "…and an up-to-date one is left alone" "$before" \
   "$(sha256sum "$REPO_DIR/bin/scan-secrets.sh" | cut -d' ' -f1)"
 
+section "the panel's text has to fit the panel"
+# Every one of these strings is drawn into a fixed-width row that elides. A
+# description that runs long does not wrap or warn — it just loses its last
+# words, and it did: three of the ten category rows ended in "…" for a whole
+# release. The budget is what actually fits at the panel's width, measured on
+# a real screenshot, with a few characters of slack.
+DESC_MAX=58
+for entry in "${CATEGORIES[@]}"; do
+  d=$(category_field "$entry" 4)
+  check_true "category description fits: ${d:0:28}…" test "${#d}" -le "$DESC_MAX"
+done
+for entry in "${SETTING_GROUPS[@]}"; do
+  IFS='|' read -ra gf <<<"$entry"
+  d="${gf[2]}"
+  check_true "settings group description fits: ${d:0:28}…" test "${#d}" -le "$DESC_MAX"
+done
+
+section "the icons in those tables are single code points"
+# Same trap as the QML glyphs, in the one other file that holds them: these
+# live above U+FFFF, so a re-encoding that truncates the four-byte sequence
+# leaves a *different* symbol behind with no error anywhere. run-all.sh guards
+# the .qml files; nothing guarded these until a row could have silently been
+# drawn with the wrong icon.
+for entry in "${CATEGORIES[@]}"; do
+  g=$(category_field "$entry" 2)
+  check "category icon is one character: $(category_field "$entry" 1)" "1" "${#g}"
+  check_true "…and is above U+FFFF" test "$(printf '%s' "$g" | wc -c)" -ge 4
+done
+for entry in "${SETTING_GROUPS[@]}"; do
+  IFS='|' read -ra gf <<<"$entry"
+  check "settings group icon is one character: ${gf[0]}" "1" "${#gf[1]}"
+  check_true "…and is above U+FFFF" test "$(printf '%s' "${gf[1]}" | wc -c)" -ge 4
+done
+
 summary

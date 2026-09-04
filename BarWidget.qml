@@ -23,6 +23,7 @@ BarWidget {
   function open() { if (panelLoader.item) panelLoader.item.open() }
   function close() { if (panelLoader.item) panelLoader.item.close() }
   function toggle() { if (panelLoader.item) panelLoader.item.toggle() }
+  function showTab(n) { return panelLoader.item ? panelLoader.item.showTab(n) === true : false }
 
   // Symbol by state. Material Design Icon code points, not pasted glyphs — see
   // the note in Panel.qml: these all live above U+FFFF, where a re-encoding of
@@ -186,6 +187,27 @@ BarWidget {
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
+
+  // Opening the panel is a click on the icon, and that was the only way in —
+  // which made every visual check depend on synthesising a mouse event, and
+  // left a user with no way to bind it to a key. `status`/`refresh` live on the
+  // service's own target (see Service.qml); the panel is this component's, so
+  // its handler is here, where `open`/`close`/`toggle` already exist:
+  //
+  //   omarchy shell omarchy-replicant-panel toggle
+  //
+  // A separate target because two IpcHandlers may not share one name.
+  IpcHandler {
+    target: "omarchy-replicant-panel"
+    function open(): void { root.open() }
+    function close(): void { root.close() }
+    function toggle(): void { root.toggle() }
+    function isOpen(): string { return root.opened ? "open" : "closed" }
+    // tab overview|configs|settings|restore — opens the panel if it is closed.
+    // Answers "no such tab" rather than silently doing nothing, so a keybinding
+    // with a typo in it says so the first time it is pressed.
+    function tab(name: string): string { return root.showTab(name) ? name : "no such tab: " + name }
+  }
 
   BarIconButton {
     id: button

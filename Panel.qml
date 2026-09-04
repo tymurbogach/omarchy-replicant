@@ -97,6 +97,19 @@ Panel {
     if (h !== "" && String(p).indexOf(h) === 0) return "~" + String(p).slice(h.length)
     return String(p)
   }
+  // Where a file lives, but only when that is not already on screen. A row's
+  // title IS its path under ~/.config with the prefix taken off, so printing
+  // "~/.config/alacritty/alacritty.toml" under a title that reads
+  // "alacritty/alacritty.toml" spends the row's scarcest resource — width —
+  // saying nothing, and it was the width the rows that DO surprise you needed:
+  // a dotfile in $HOME, a script in ~/.local/bin, a drop-in under /etc. Those
+  // now print whole instead of every row printing "~/.confi…".
+  function whereText(c) {
+    var src = String(c.src || "")
+    var h = root.repoState.home || ""
+    if (h !== "" && src === h + "/.config/" + String(c.id || "")) return ""
+    return root.pretty(src)
+  }
   readonly property string icRefresh: root.mdi(0xF0450)    // refresh
   readonly property string icPush: root.mdi(0xF0167)    // cloud-upload
   readonly property string icPull: root.mdi(0xF0162)    // cloud-download
@@ -151,8 +164,12 @@ Panel {
   function stateWord(st) {
     if (st === "off") return "not synced"
     if (st === "missing") return "not on this machine"
-    if (st === "unsaved") return "changed here — press Save"
-    if (st === "unpushed") return "saved here, not pushed yet"
+    // Short on purpose. These are printed beside the path on a row that also
+    // carries a Save button and sits under a banner that already says "press
+    // Save to GitHub", so a longer sentence bought nothing and cost the path
+    // its last few characters on exactly the rows that had one worth reading.
+    if (st === "unsaved") return "not saved yet"
+    if (st === "unpushed") return "not pushed yet"
     if (st === "default") return "untouched Omarchy default"
     return "saved on GitHub"
   }
@@ -570,6 +587,15 @@ Panel {
   }
   function close() { root.opened = false; root.diffOpen = false; confirmDialog.opened = false }
   function toggle() { root.opened ? root.close() : root.open() }
+  // Open straight onto one tab. The keys 1-4 already do this for someone
+  // looking at the panel; this is the same jump for a keybinding or a script,
+  // and it is what makes the panel checkable without synthesising a keystroke.
+  function showTab(name) {
+    if (["overview", "configs", "settings", "restore"].indexOf(name) < 0) return false
+    if (!root.opened) root.open()
+    root.activeTab = name
+    return true
+  }
 
   KeyboardPanel {
     id: panel
@@ -852,9 +878,12 @@ Panel {
                     Text {
                       // A machine with no explicit assignment guessed from its
                       // own chassis; say so rather than showing an empty column.
+                      // The word "profile" is not decoration: without it the row
+                      // read "omarchy (this one) laptop", which looks like two
+                      // machines on a line whose whole subject is one.
                       text: machineRow.modelData.profile
-                          ? machineRow.modelData.profile
-                          : (machineRow.modelData.current ? root.profileName + " (guessed)" : "—")
+                          ? "profile " + machineRow.modelData.profile
+                          : (machineRow.modelData.current ? "profile " + root.profileName + " (guessed)" : "no profile")
                       color: Color.accent; font.family: root.ff; font.pixelSize: Style.font.caption
                     }
                     Text {
@@ -896,7 +925,11 @@ Panel {
                     }
                     Text {
                       width: parent.width - Style.space(102)
+                      // A run of identical saves is collapsed by core_log; the
+                      // count is what says the four inventory commits are still
+                      // accounted for and not quietly dropped.
                       text: recentRow.modelData.subject
+                          + ((recentRow.modelData.count || 1) > 1 ? "   ×" + recentRow.modelData.count : "")
                       color: root.fg; font.family: root.ff; font.pixelSize: Style.font.caption
                       elide: Text.ElideRight
                     }
@@ -1695,7 +1728,12 @@ Panel {
         title: sc.group.name
         subtitle: sc.group.description
         countText: String((sc.group.items || []).length)
-        statusText: sc.group.changed > 0 ? sc.group.changed + " changed" : "as Omarchy ships"
+        // Not "changed": one tab to the left that word counts files waiting to
+        // be saved, and here it counts values that differ from what Omarchy
+        // ships — two different questions under one word, two tabs apart.
+        // "customised" is the answer to this one, and it pairs with the text
+        // it alternates with.
+        statusText: sc.group.changed > 0 ? sc.group.changed + " customised" : "as Omarchy ships"
         statusHighlight: sc.group.changed > 0
         expanded: sc.expanded
         onToggled: root.toggleCard(sc.group.id)
@@ -1788,10 +1826,45 @@ Panel {
     readonly property bool isLongList: srow.isChoice && (setting.options || []).length > 8
     readonly property bool usable: setting.available === true && !root.busy
 
-    // Fixed height on purpose. Deriving it from the children while the inner
-    // Row is verticalCenter-anchored to this same item is a parent-height <->
-    // child-position feedback loop; the row then renders at zero height.
-    implicitHeight: Style.space(50)
+    // Whether the exact value is worth repeating under the label. It is there
+    // because the stepper rounds — 150 seconds is edited as 3 minutes, and the
+    // row must never leave you guessing which number is real — but on the rows
+    // where the control already shows the value exactly, repeating it cost the
+    // hint its last words: seven of eight rows ended in "…". So it is printed
+    // only when the control cannot say it: a rounded number, a value with a
+    // name of its own ("never" for 0), or a choice, whose dropdown elides.
+    readonly property string controlText: {
+      var du = String(srow.setting.display_unit || "")
+      return String(srow.setting.display_value) + (du !== "" ? " " + du : "")
+    }
+    readonly property bool showValue: srow.isChoice
+                                      // A dropdown 160 wide shows about
+                                      // seventeen characters; past that it
+                                      // elides and the row has to say the value
+                                      // in full underneath. "top" does not.
+                                      ? String(srow.setting.value_text || "").length > 17
+                                    : srow.isBool ? false
+                                    : String(srow.setting.value_text || "") !== srow.controlText
+
+    // What goes under the label, composed once so the height can be decided
+    // from it. See showValue for when the value is part of it.
+    readonly property string subtitleText: srow.setting.available !== true
+        ? "not present in this machine's config"
+        : (srow.showValue ? String(srow.setting.value_text) : "")
+          + (srow.setting.implicit === true
+             ? (srow.showValue ? "  (inherited)" : "inherited") : "")
+          + ((srow.showValue || srow.setting.implicit === true) ? "  ·  " : "")
+          + String(srow.setting.hint || "")
+
+    // Two lines when one cannot hold it. Some hints carry a consequence worth
+    // reading — "setting it stops the bar scaling with the font" — and cutting
+    // them to fit would have deleted the reason the control exists. A character
+    // count, NOT the text's own implicitHeight: this row's children are
+    // verticalCenter-anchored to it, so a height derived from them is the
+    // parent-height <-> child-position loop that renders the row at nothing.
+    // 44 is what fits on one line at the panel's width, measured on a capture.
+    readonly property bool twoLine: srow.subtitleText.length > 44
+    implicitHeight: Style.space(srow.twoLine ? 66 : 50)
     opacity: srow.setting.available === true ? 1.0 : 0.45
 
     Row {
@@ -1814,15 +1887,10 @@ Panel {
         }
         Text {
           width: parent.width
-          // The exact current value first — the control may round it (150
-          // seconds shows as 3 minutes in a whole-minute stepper) and the row
-          // should never leave you guessing which one is true.
-          text: srow.setting.available === true
-                ? (srow.setting.value_text
-                   + (srow.setting.implicit === true ? "  (inherited)" : "")
-                   + "  ·  " + String(srow.setting.hint || ""))
-                : "not present in this machine's config"
+          text: srow.subtitleText
           color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+          maximumLineCount: 2
           elide: Text.ElideRight
         }
         // Only ever present when the value genuinely cannot do what it says —
@@ -1988,6 +2056,7 @@ Panel {
     readonly property bool needsWords: frow.syncState === "unsaved"
                                     || frow.syncState === "unpushed"
                                     || frow.syncState === "off"
+                                    || frow.syncState === "missing"
 
     implicitHeight: Style.space(50)
 
@@ -2019,31 +2088,46 @@ Panel {
           font.family: root.ff; font.pixelSize: Style.font.subtitle; font.bold: frow.isModified
           elide: Text.ElideMiddle
         }
-        Text {
+        // Two texts, not one string. Appended to the end of the path the state
+        // words were the first thing elided — on exactly the rows whose whole
+        // point is that something needs doing, they were the half that got cut.
+        // (The same bug was already fixed for a directory's file count by
+        // moving it in front; this is that fix applied to the other half.)
+        // So the words come first and are never elided; the path takes whatever
+        // room is left, and it is the part that can afford to lose its head —
+        // the title right above it is the same path without ~/.config/.
+        Row {
           width: parent.width
-          // Secrets describe themselves by what they ARE, never by what they
-          // contain: a kind, a mode, and for env files the names of the
-          // variables. No value ever reaches the screen.
-          // The count goes FIRST for a directory. Behind the path it was the
-          // first thing elided, on the one row whose whole point is the count.
-          //
-          // A row that needs attention says so in words, right here, instead of
-          // relying on the reader having learnt the badge. Only those rows: the
-          // forty that are simply saved would be forty repetitions of "saved on
-          // GitHub", which is how a legend becomes wallpaper.
-          text: frow.missing ? (root.pretty(frow.config.src) + "  — not on this machine")
-              : frow.config.is_dir === true
-                ? (frow.config.nfiles + " files  ·  " + root.pretty(frow.config.src)
-                   + (frow.needsWords ? "  ·  " + root.stateWord(frow.syncState) : ""))
+          spacing: Style.space(6)
+          Text {
+            id: stateWords
+            // A row that needs attention says so in words instead of relying on
+            // the reader having learnt the badge. Only those rows: the forty
+            // that are simply saved would be forty repetitions of "saved on
+            // GitHub", which is how a legend becomes wallpaper.
+            visible: frow.needsWords
+            text: root.stateWord(frow.syncState)
+            color: root.stateColor(frow.syncState)
+            font.family: root.ff; font.pixelSize: Style.font.caption
+          }
+          Text {
+            width: parent.width - (stateWords.visible ? stateWords.width + parent.spacing : 0)
+            // Secrets describe themselves by what they ARE, never by what they
+            // contain: a kind, a mode, and for env files the names of the
+            // variables. No value ever reaches the screen.
+            // The count goes FIRST for a directory — behind the path it was the
+            // first thing elided, on the one row whose whole point is the count.
+            text: frow.config.is_dir === true
+                ? (frow.config.nfiles + " files"
+                   + (root.whereText(frow.config) !== "" ? "  ·  " + root.whereText(frow.config) : ""))
               : frow.isSecret
                 ? (frow.config.kind + "  ·  mode " + (frow.config.mode || "?")
-                   + (frow.config.var_count > 0 ? "  ·  " + frow.config.var_count + " variables" : "")
-                   + (frow.needsWords ? "  ·  " + root.stateWord(frow.syncState) : ""))
-                : root.pretty(frow.config.src)
-                  + (frow.needsWords ? "  ·  " + root.stateWord(frow.syncState) : "")
-          color: frow.isSecret && frow.config.kind === "private key" && frow.config.mode !== "600" ? Color.urgent : root.dim
-          font.family: root.ff; font.pixelSize: Style.font.caption
-          elide: Text.ElideRight
+                   + (frow.config.var_count > 0 ? "  ·  " + frow.config.var_count + " variables" : ""))
+                : root.whereText(frow.config)
+            color: frow.isSecret && frow.config.kind === "private key" && frow.config.mode !== "600" ? Color.urgent : root.dim
+            font.family: root.ff; font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
+          }
         }
       }
 

@@ -327,4 +327,18 @@ done
 check "every line has 15 fields" "0" "$bad_fields"
 check "no duplicate setting ids" "0" "$dupe"
 
+section "a hint has to fit the row that draws it"
+# The panel gives a setting's subtitle two lines and elides after them. There
+# is no warning when a hint overruns — it just loses its tail, and two of them
+# did, on the two rows whose hints carried the consequence of the setting
+# ("setting it stops the font scaling it"), which is the half worth reading.
+# 80 is two lines at the panel's width, measured on a capture, less room for
+# the "inherited · " some rows carry in front.
+HINT_MAX=80
+for entry in "${SETTINGS[@]}"; do
+  id=$(setting_field "$entry" 1)
+  h=$(setting_field "$entry" 11)
+  check_true "hint fits: $id" test "${#h}" -le "$HINT_MAX"
+done
+
 summary

@@ -927,12 +927,6 @@ Panel {
             spacing: Style.space(8)
             visible: root.ready && root.activeTab === "configs"
 
-            Text {
-              width: parent.width
-              text: "Everything this repo tracks, grouped by what it does. Press an area to open it."
-              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
-            }
-
             Row {
               width: parent.width
               spacing: Style.space(8)
@@ -955,22 +949,17 @@ Panel {
               }
             }
 
-            // Two different things share every row and they are easy to
-            // confuse: the badge is the file's STATE, the button is what this
-            // repo DOES with it. Spelling both out here costs two lines and
-            // saves the question.
+            // One line, not three paragraphs. This tab used to open with six
+            // lines of grey text before a single file appeared — an
+            // introduction, a badge legend and a scope legend — and every one
+            // of them is read once and then skipped forever. The badge is the
+            // only thing here with no other explanation; the scope button
+            // states its own label and carries a tooltip spelling out all
+            // three, so its legend was saying a second time what the control
+            // already says.
             Text {
               width: parent.width
-              text: "● changed here, not saved   ↑ saved here, not pushed   "
-                  + "◆ saved on GitHub   ○ untouched default   ⊘ not synced   · not on this machine"
-              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
-
-            Text {
-              width: parent.width
-              text: "Shared = every machine   ·   " + root.profileName
-                  + " = only machines in that profile   ·   Off = never copied"
+              text: "● unsaved    ↑ to push    ◆ saved    ○ default    ⊘ off    · not here"
               color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
               wrapMode: Text.WordWrap
             }
@@ -1006,7 +995,10 @@ Panel {
 
             Text {
               width: parent.width
-              text: "Change a value here and Replicant writes it to the real config file, applies it, and commits it to your repo. The two small buttons on the right put it back — to Omarchy's default, or to what your repo has."
+              // Three sentences became one. What the two revert buttons do is
+              // already on their own tooltips, where somebody wondering about
+              // a button actually looks.
+              text: "Changing a value writes it to the real config file, applies it, and commits it."
               color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
             }
 
@@ -1988,6 +1980,11 @@ Panel {
     readonly property bool isOff: frow.config.synced === false
     readonly property bool missing: frow.config.exists === false
     readonly property bool isSecret: frow.config.secret === true
+    // "saved" and "default" are the states you do not have to act on, and the
+    // one-line legend above the list is enough for them.
+    readonly property bool needsWords: frow.syncState === "unsaved"
+                                    || frow.syncState === "unpushed"
+                                    || frow.syncState === "off"
 
     implicitHeight: Style.space(50)
 
@@ -2026,13 +2023,21 @@ Panel {
           // variables. No value ever reaches the screen.
           // The count goes FIRST for a directory. Behind the path it was the
           // first thing elided, on the one row whose whole point is the count.
+          //
+          // A row that needs attention says so in words, right here, instead of
+          // relying on the reader having learnt the badge. Only those rows: the
+          // forty that are simply saved would be forty repetitions of "saved on
+          // GitHub", which is how a legend becomes wallpaper.
           text: frow.missing ? (root.pretty(frow.config.src) + "  — not on this machine")
               : frow.config.is_dir === true
-                ? (frow.config.nfiles + " files  ·  " + root.pretty(frow.config.src))
+                ? (frow.config.nfiles + " files  ·  " + root.pretty(frow.config.src)
+                   + (frow.needsWords ? "  ·  " + root.stateWord(frow.syncState) : ""))
               : frow.isSecret
                 ? (frow.config.kind + "  ·  mode " + (frow.config.mode || "?")
-                   + (frow.config.var_count > 0 ? "  ·  " + frow.config.var_count + " variables" : ""))
+                   + (frow.config.var_count > 0 ? "  ·  " + frow.config.var_count + " variables" : "")
+                   + (frow.needsWords ? "  ·  " + root.stateWord(frow.syncState) : ""))
                 : root.pretty(frow.config.src)
+                  + (frow.needsWords ? "  ·  " + root.stateWord(frow.syncState) : "")
           color: frow.isSecret && frow.config.kind === "private key" && frow.config.mode !== "600" ? Color.urgent : root.dim
           font.family: root.ff; font.pixelSize: Style.font.caption
           elide: Text.ElideRight

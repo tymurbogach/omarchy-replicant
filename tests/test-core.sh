@@ -813,4 +813,20 @@ check_contains "…and says what to do instead" "narrower directory" "$out"
 check_false "…and is not tracked" is_tracked_path "$HOME/.config/huge/f1.conf"
 rm -rf "$HOME/.config/huge"
 
+section "the repo's copy of the scanner keeps up with the plugin"
+# The repo's pre-commit hook runs the copy in the repo, not the one in the
+# plugin. Seeding it once meant a repo created in June was still checking for
+# the credential shapes the plugin knew about then: teaching the plugin a new
+# one never reached anybody who had already set up.
+printf '#!/bin/bash\n# an old version\nexit 0\n' > "$REPO_DIR/bin/scan-secrets.sh"
+ensure_repo_layout >/dev/null 2>&1
+check_true "an out-of-date copy is replaced" \
+  cmp -s "$PLUGIN_DIR/bin/scan-secrets.sh" "$REPO_DIR/bin/scan-secrets.sh"
+check "…and stays executable" "1" \
+  "$(test -x "$REPO_DIR/bin/scan-secrets.sh" && echo 1 || echo 0)"
+before=$(sha256sum "$REPO_DIR/bin/scan-secrets.sh" | cut -d' ' -f1)
+ensure_repo_layout >/dev/null 2>&1
+check "…and an up-to-date one is left alone" "$before" \
+  "$(sha256sum "$REPO_DIR/bin/scan-secrets.sh" | cut -d' ' -f1)"
+
 summary

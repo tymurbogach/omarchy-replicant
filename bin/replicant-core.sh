@@ -1108,16 +1108,26 @@ fi
 HOOK
     chmod +x "$GITHOOKS_DIR/pre-commit"
   fi
-  # scan-secrets bin
-  if [[ ! -f "$REPO_DIR/bin/scan-secrets.sh" ]]; then
-    mkdir -p "$REPO_DIR/bin"
-    if [[ -f "$PLUGIN_DIR/bin/scan-secrets.sh" ]]; then
+  # scan-secrets bin — kept in step with the plugin, not just seeded once.
+  #
+  # The repo's pre-commit hook runs THIS copy, so a repo created in June was
+  # still checking for the four credential shapes the plugin knew about then.
+  # Teaching the plugin a new one has to reach the repos that already exist, or
+  # the improvement only ever protects people who install for the first time.
+  # It is plugin-provided infrastructure, not the user's data, and every
+  # version of it is in git — so replacing it is safe and is the point.
+  if [[ -f "$PLUGIN_DIR/bin/scan-secrets.sh" ]]; then
+    if ! cmp -s "$PLUGIN_DIR/bin/scan-secrets.sh" "$REPO_DIR/bin/scan-secrets.sh" 2>/dev/null; then
+      mkdir -p "$REPO_DIR/bin"
+      [[ -f "$REPO_DIR/bin/scan-secrets.sh" ]] &&
+        echo "  · updating the repo's secret scanner to this version's" >&2
       cp -a "$PLUGIN_DIR/bin/scan-secrets.sh" "$REPO_DIR/bin/scan-secrets.sh"
-    elif [[ -f "$HOME/omarchy_thinkpad/bin/scan-secrets.sh" ]]; then
-      cp -a "$HOME/omarchy_thinkpad/bin/scan-secrets.sh" "$REPO_DIR/bin/scan-secrets.sh"
     fi
-    chmod +x "$REPO_DIR/bin/scan-secrets.sh" 2>/dev/null || true
+  elif [[ ! -f "$REPO_DIR/bin/scan-secrets.sh" && -f "$HOME/omarchy_thinkpad/bin/scan-secrets.sh" ]]; then
+    mkdir -p "$REPO_DIR/bin"
+    cp -a "$HOME/omarchy_thinkpad/bin/scan-secrets.sh" "$REPO_DIR/bin/scan-secrets.sh"
   fi
+  chmod +x "$REPO_DIR/bin/scan-secrets.sh" 2>/dev/null || true
   # pacman-delta-ignore
   if [[ ! -f "$REPO_DIR/bin/pacman-delta-ignore" && -f "$HOME/omarchy_thinkpad/bin/pacman-delta-ignore" ]]; then
     mkdir -p "$REPO_DIR/bin"

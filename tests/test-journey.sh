@@ -85,6 +85,22 @@ check_contains "the theme is recorded as a URL, not copied" \
 check "…and no theme file was copied into the repo" "0" \
   "$(find "$DREPO/config" -path '*themes*' 2>/dev/null | wc -l)"
 
+section "savegame, the button the panel actually presses"
+# Nothing exercised this command. Every suite reached for `backup` and drove
+# git by hand, so the commit step savegame does on its own was never run — and
+# a variable named there that belongs to the core, not the CLI, killed it under
+# `set -u` after it had copied every file in. A save that does the work and
+# then fails is the worst shape this tool has.
+out=$(on desktop savegame --no-push; echo "rc=$?")
+check_contains "it finishes"            "rc=0" "$out"
+check_true "…and does not die on an unbound variable" \
+  bash -c '! grep -q "unbound variable" <<<"$0"' "$out"
+check_contains "…and commits the inventory"  "Inventory commit" "$out"
+# Which machine's inventory moved is the whole content of the line in a repo
+# two machines write to, and the date column beside it already says when.
+check_true "…naming the machine, not the date" \
+  bash -c 'git -C "$1" log -1 --pretty=%s -- state/ | grep -q "desktop inventory"' _ "$DREPO"
+
 # ── the laptop, which has never seen any of this ─────────────────────────────
 L="$TMP/laptop/home"
 mkdir -p "$L/.config/hypr" "$L/.local/bin" "$L/.config/omarchy"

@@ -140,7 +140,17 @@ cmd_savegame() {
 
   if [[ -n $(git_repo status --porcelain -- state/ 2>/dev/null) ]]; then
     git_repo add -A state/
-    git_repo commit -q -m "state: inventory $(date +%F)"
+    # The date used to be in the subject, which put it twice on every row of
+    # the panel's list — there is a date column right beside it. The machine
+    # is the thing you cannot see from the date: in a repo two machines write
+    # to, "whose inventory changed" is the whole content of the line.
+    # The machine name comes from the core, which is the only place that
+    # decides it. It is NOT $MACHINE here: that variable belongs to
+    # replicant-core.sh, which this function never sources, so naming it under
+    # `set -u` aborted savegame after it had copied everything in — a save that
+    # did the work and then failed at the commit.
+    local machine; machine=$(bash "$CORE" machine)
+    git_repo commit -q -m "state: $machine inventory (packages, plugins, themes)"
     echo "→ Inventory commit:" >&2; git_repo show --stat --oneline HEAD 2>/dev/null | sed 's/^/    /' >&2; echo >&2
   fi
 

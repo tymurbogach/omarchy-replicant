@@ -293,15 +293,15 @@ load_user_manifest
 #
 # Format: "id|icon|label|description|method"
 CATEGORIES=(
-  "shortcuts|󰌌|Shortcuts|Your keybinding overrides, layered on top of Omarchy's defaults|Copied back, then hyprctl reload"
+  "shortcuts|󰌌|Shortcuts|Your keybinding overrides, on top of Omarchy's defaults|Copied back, then hyprctl reload"
   "appearance|󰏘|Appearance|Theme, look & feel, fonts, interface density and branding|Theme re-applied with omarchy theme set"
-  "desktop|󰍹|Desktop & bar|The Omarchy shell: bar layout, widgets, menu and idle behaviour|Written to shell.json / shell.toml, which the shell watches live"
+  "desktop|󰍹|Desktop & bar|The Omarchy shell: bar layout, widgets, menu and idle|Written to shell.json / shell.toml, which the shell watches live"
   "hyprland|󰖯|Hyprland|Input, monitors, autostart, lock screen and night light|Copied back, then hyprctl reload and a config-error check"
-  "terminal|󰆍|Terminal & shell|Alacritty, foot, the default terminal, bashrc and compose keys|Copied back, then omarchy restart terminal"
+  "terminal|󰆍|Terminal & shell|Alacritty, foot, bashrc and which terminal opens|Copied back, then omarchy restart terminal"
   "development|󰅴|Development|git, editors, Claude and opencode, mise, VS Code|Copied back; nothing needs restarting"
   "secrets|󰌆|Secrets & keys|SSH keys, tokens and .env files — private, mode 600|Copied back as mode 600; contents are never printed"
-  "plugins|󰐱|Plugins|Plugin settings, plus every installed plugin's id and git origin|Reinstalled with omarchy plugin add, then their settings copied back"
-  "scripts|󰈙|Scripts|Your own helper scripts under ~/.local/bin and Omarchy hooks|Copied back with the executable bit kept"
+  "plugins|󰐱|Plugins|Plugin settings, plus every plugin's id and git origin|Reinstalled with omarchy plugin add, then their settings copied back"
+  "scripts|󰈙|Scripts|Your helper scripts under ~/.local/bin and Omarchy hooks|Copied back with the executable bit kept"
   "system|󰋊|System|systemd drop-ins for lid, sleep and fingerprint|Copied back with sudo, then systemctl daemon-reload"
   "other|󰈔|Other|Anything else you asked Replicant to track|Copied back as-is"
 )
@@ -907,7 +907,12 @@ core_suggest() {
       find "$HOME/.config/systemd/user" -maxdepth 1 -type f 2>/dev/null
       find "$HOME/.local/bin" -maxdepth 1 -type f -executable 2>/dev/null
     } | sort -u)
-  } | if (( as_json )); then
+  # Credentials first — "secret" sorts after "config", hence -r — and stably,
+  # so everything else keeps path order. The list is long and, in the panel,
+  # lives at the bottom of a longer one: a row buried at position fourteen is a
+  # row nobody reads, and this is the one whose cost of being missed is an OAuth
+  # token sitting world-readable in a git checkout.
+  } | sort -s -t$'\t' -k4,4r | if (( as_json )); then
     jq -Rsc 'def home: sub("^"+$ENV.HOME; "~");
       split("\n") | map(select(length > 0) | split("\t")
       | {path: .[0], pretty: (.[0]|home), id: .[1], reason: .[2], kind: .[3]})'
@@ -1591,8 +1596,8 @@ SETTINGS=(
   "bar.transparent|Appearance|$HOME/.config/omarchy/shell.json|.bar.transparent|bool|Transparent bar|||||Let the wallpaper show through the bar|||1|"
   "font.baseSize|Appearance|$HOME/.config/omarchy/shell.toml|font.base-size|toml-int|Interface font size|pt|8|32||Base size every bar, menu and panel font derives from||12|1|"
   "spacing.scale|Appearance|$HOME/.config/omarchy/shell.toml|spacing.scale|toml-float|Interface density|×|0.5|2||Multiplies every margin, gap and control size||1.0|1|"
-  "bar.sizeHorizontal|Appearance|$HOME/.config/omarchy/shell.toml|bar.size-horizontal|toml-int|Bar thickness (top/bottom)|px|16|80||Height of the bar when it sits on a horizontal edge; setting it stops the bar scaling with the font||26|1|"
-  "bar.sizeVertical|Appearance|$HOME/.config/omarchy/shell.toml|bar.size-vertical|toml-int|Bar thickness (left/right)|px|16|120||Width of the bar when it sits on a vertical edge; setting it stops the bar scaling with the font||28|1|"
+  "bar.sizeHorizontal|Appearance|$HOME/.config/omarchy/shell.toml|bar.size-horizontal|toml-int|Bar thickness (top/bottom)|px|16|80||Bar height on a horizontal edge; setting it stops the font scaling it||26|1|"
+  "bar.sizeVertical|Appearance|$HOME/.config/omarchy/shell.toml|bar.size-vertical|toml-int|Bar thickness (left/right)|px|16|120||Bar width on a vertical edge; setting it stops the font scaling it||28|1|"
   "bar.iconFont|Appearance|$HOME/.config/omarchy/shell.toml|bar.icon-font|toml-int|Bar icon size|px|8|28||How large the glyphs in the bar are drawn||13|1|"
   # ── Input — Hyprland reads Lua at startup, so these need an explicit reload
   "input.repeatRate|Input|$HOME/.config/hypr/input.lua|repeat_rate|lua-int|Key repeat rate|/s|1|100||Characters a held key sends per second|hyprctl reload||1|"
@@ -1607,7 +1612,7 @@ SETTINGS=(
   # default for all three is 'suspend'; the fallback field records that so the
   # panel can show a value even before a drop-in exists.
   "lid.close|Lid & sleep|$LOGIND_DROPIN|Login.HandleLidSwitch|ini-enum|Closing the lid||||suspend,suspend-then-hibernate,hibernate,lock,ignore,poweroff|What happens on battery when the lid closes|systemctl reload systemd-logind|suspend|1|"
-  "lid.closeAc|Lid & sleep|$LOGIND_DROPIN|Login.HandleLidSwitchExternalPower|ini-enum|Closing the lid on AC||||suspend,suspend-then-hibernate,hibernate,lock,ignore,poweroff|What happens while plugged in — many people want 'ignore' here and 'suspend' on battery|systemctl reload systemd-logind|suspend|1|"
+  "lid.closeAc|Lid & sleep|$LOGIND_DROPIN|Login.HandleLidSwitchExternalPower|ini-enum|Closing the lid on AC||||suspend,suspend-then-hibernate,hibernate,lock,ignore,poweroff|What happens while plugged in; many people want 'ignore' here|systemctl reload systemd-logind|suspend|1|"
   "lid.closeDocked|Lid & sleep|$LOGIND_DROPIN|Login.HandleLidSwitchDocked|ini-enum|Closing the lid when docked||||ignore,suspend,suspend-then-hibernate,hibernate,lock,ignore,poweroff|What happens with an external monitor attached; 'ignore' is clamshell mode|systemctl reload systemd-logind|ignore|1|"
   # ── Defaults
   "default.editor|Defaults|$HOME/.local/state/omarchy/defaults/editor|-|line-enum|Default editor||||nvim,code,hx,micro,nano,zed|Editor Omarchy opens config files with||nvim|1|"
@@ -3047,10 +3052,20 @@ core_diff() {
 core_log() {
   local n="${1:-8}"
   [[ -d "$REPO_DIR/.git" ]] || { echo '[]'; return 0; }
-  git -C "$REPO_DIR" log -n "$n" --date=format:'%d %b %H:%M' \
+  # Runs of the same subject collapse into one row with a count. A save writes
+  # an inventory commit whenever a package list moved, so four of the six rows
+  # said "state: … inventory" and the two that recorded a decision the user
+  # actually made were what fell off the bottom. Read more than we show, so
+  # collapsing lengthens the history instead of shortening the list.
+  git -C "$REPO_DIR" log -n "$(( n * 4 ))" --date=format:'%d %b %H:%M' \
       --pretty=format:'%H%x1f%ad%x1f%s%x1f%an' 2>/dev/null |
-    jq -Rsc 'split("\n") | map(select(length > 0) | split("\u001f")
-             | {sha: .[0][0:7], date: .[1], subject: .[2], author: .[3]})'
+    jq -Rsc --argjson n "$n" 'split("\n") | map(select(length > 0) | split("\u001f")
+             | {sha: .[0][0:7], date: .[1], subject: .[2], author: .[3], count: 1})
+             | reduce .[] as $c ([];
+                 if (length > 0 and .[-1].subject == $c.subject)
+                 then .[0:-1] + [.[-1] * {count: (.[-1].count + 1)}]
+                 else . + [$c] end)
+             | .[0:$n]'
 }
 
 # Used by the omarchy-replicant CLI wrapper
@@ -3071,4 +3086,5 @@ elif [[ "${1:-}" == "local-only-themes" ]]; then local_only_themes
 elif [[ "${1:-}" == "track" ]]; then shift; core_track "$@"
 elif [[ "${1:-}" == "untrack" ]]; then core_untrack "${2:-}"
 elif [[ "${1:-}" == "suggest" ]]; then core_suggest "${2:-}"
+elif [[ "${1:-}" == "machine" ]]; then printf '%s\n' "$MACHINE"
 fi

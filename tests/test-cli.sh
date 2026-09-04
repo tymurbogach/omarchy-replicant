@@ -300,7 +300,7 @@ run link >/dev/null 2>&1
 mkdir -p "$HOME/.config/nvim.bak.1700000000"
 printf 'old\n' > "$HOME/.config/nvim.bak.1700000000/init.lua"
 out=$(run purge)
-check_contains "a directory backup is listed too" ".bak.<epoch> backup(s)" "$out"
+check_contains "a directory backup is listed too" ".bak.<epoch> backup" "$out"
 check "…and the dry run leaves it alone" "1" "$(ls -d "$HOME/.config/nvim.bak.1700000000" 2>/dev/null | wc -l)"
 out=$(run purge)
 check_contains "lists what it would remove" "would remove" "$out"

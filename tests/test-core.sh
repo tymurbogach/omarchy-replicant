@@ -674,4 +674,30 @@ for fn in core_track core_untrack; do
     "$(awk '/ensure_track_file/{seen=1} /write_track_file/{if(seen) print "1"; exit}' <<<"$body" | head -n1 || true)"
 done
 
+section "an older machine never deletes what a newer one tracks"
+# The premise of this plugin is two machines sharing one repo, and they are not
+# upgraded on the same day. The prune pass deletes whatever is not in the
+# RUNNING version's list — so the machine still on the old release silently
+# deleted every file the upgraded one tracked, on its next save. This actually
+# happened while building 0.7.0: the ~/.config/nvim tree the new code had just
+# saved was gone by the time anyone looked.
+check "a save records the version that wrote the repo" "$(running_version)" \
+  "$(repo_written_by)"
+check_true  "0.6.9 is older than 0.7.0"  version_lt 0.6.9 0.7.0
+check_true  "0.7.0 is older than 0.10.0" version_lt 0.7.0 0.10.0
+check_false "a version is not older than itself" version_lt 0.7.0 0.7.0
+check_true "a client at the repo's own version may prune" may_prune
+mkdir -p "$CONFIG_DIR/from-the-future"
+printf 'z\n' > "$CONFIG_DIR/from-the-future/thing.conf"
+printf '99.0.0\n' > "$REPO_VERSION_FILE"
+check_false "a client older than the repo may not prune" may_prune
+core_backup >/dev/null 2>&1
+check_true "…so a newer version's file survives its save" \
+  test -f "$CONFIG_DIR/from-the-future/thing.conf"
+check "…and the recorded version is never lowered" "99.0.0" "$(repo_written_by)"
+rm -rf "$CONFIG_DIR/from-the-future"
+printf '%s\n' "$(running_version)" > "$REPO_VERSION_FILE"
+core_backup >/dev/null 2>&1
+check_true "back at its own version it prunes again" may_prune
+
 summary

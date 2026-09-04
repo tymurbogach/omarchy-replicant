@@ -861,6 +861,19 @@ cmd_doctor() {
     printf '      push them to a git remote, or they are lost with this machine\n' >&2
   fi
 
+  # Two machines, one repo, upgraded on different days. Until every machine runs
+  # 0.7.0 or newer, the older one still prunes what this one tracks — it has no
+  # guard to check, because the guard did not exist when it shipped.
+  local seen_ver run_ver
+  seen_ver=$(repo_written_by 2>/dev/null || true)
+  run_ver=$(running_version 2>/dev/null || echo "?")
+  if [[ -n "$seen_ver" ]] && version_lt "$run_ver" "$seen_ver"; then
+    chk_warn "this repo was last written by Replicant $seen_ver and this machine has $run_ver"
+    printf '    saves from here will not prune, so nothing is lost — but upgrade to see everything\n' >&2
+  else
+    chk_ok "this machine ($run_ver) is not behind the repo${seen_ver:+ ($seen_ver)}"
+  fi
+
   echo "Themes"
   # The same question, for the thing a person actually looks at. A theme is a
   # git clone, so the inventory records its URL and `omarchy theme install`

@@ -116,6 +116,11 @@ and suggests `--secret`, which stores it at mode 600 and never renders its conte
 **Untrack is for your own entries only.** A file the plugin ships with is switched **Off** instead
 (the scope button) — that keeps the row and the copy in your repo, where untracking would remove both.
 
+> **Upgrade both machines.** A machine still on 0.6 deletes from the repo anything its own version
+> does not know about — including everything you add to your list here. From 0.7.0 on the repo
+> records which version last wrote it and an older client refuses to prune, but 0.6 shipped without
+> that check. `omarchy-replicant doctor` tells you if this machine is behind.
+>
 > Upgrading from 0.6? Anything the old version hardcoded that this machine or your repo actually has
 > is moved into your `.replicant-track` on the next save, so nothing stops being backed up. You will
 > see a line saying how many entries moved.

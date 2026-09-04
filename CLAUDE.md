@@ -307,6 +307,23 @@ is what removes 1Password, Code and chromium in one rule rather than three.
 offered as a **secret**. Tracking one as ordinary config would leave an OAuth token world-readable
 in a git checkout.
 
+## An older machine must never delete what a newer one tracks
+
+The prune pass removes whatever is not in the **running** version's list. With two machines on one
+repo — the premise of the whole plugin — the machine still on the old release therefore deletes
+every file the upgraded one tracks, on its next save. This is not a hypothetical: while building
+0.7.0 the `~/.config/nvim` tree the new code had just saved was gone by the time anyone looked,
+because the installed plugin was still 0.6.3 and had saved once in between.
+
+`.replicant-version` in the repo records the highest version that has ever written it, and
+`may_prune()` refuses when the running client is older. The client still copies its own files in;
+it just does not get to decide that somebody else's are stale. `record_repo_version` only ever
+raises the number, so an old client saving cannot lower it and re-arm the deletion.
+
+**This only protects from 0.7.0 onwards** — an already-released client cannot be taught to check.
+For a 0.6 machine the answer is to upgrade it, and `doctor` says exactly that. The reproduction, run
+against the real v0.6.3 core, is in `tests/test-core.sh`.
+
 ## Two machines, one repo
 
 The plugin is built for a desktop *and* a laptop sharing one private repo, which rules out two

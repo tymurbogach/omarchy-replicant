@@ -138,6 +138,51 @@ LEGACY_PERSONAL_SECRETS=(
 #   secret ~/dev/app/.env                   stored 600, contents never rendered
 #
 USER_TRACK_FILE="$REPO_DIR/.replicant-track"
+
+# ─── WHICH VERSION LAST WROTE THIS REPO ─────────────────────────────────────
+# Two machines share one repo and they are not upgraded on the same day. The
+# prune pass deletes whatever is not in the running version's list — so the
+# machine still on the old release silently deletes every file the upgraded one
+# tracks, on its next save. This is not hypothetical: it happened here, and the
+# reproduction is in tests/test-core.sh.
+#
+# So the repo records the highest version that has ever written it, and a client
+# older than that REFUSES TO PRUNE. It still copies its own files in; it just
+# does not get to decide that somebody else's are stale.
+#
+# This can only protect against versions that know about the file, which means
+# 0.7.0 onwards. There is no way to teach an already-released client to check —
+# the honest answer for a 0.6 machine is to upgrade it, and doctor says so.
+REPO_VERSION_FILE="$REPO_DIR/.replicant-version"
+
+running_version() { jq -r '.version // "0"' "$PLUGIN_DIR/manifest.json" 2>/dev/null || echo 0; }
+repo_written_by() { [[ -f "$REPO_VERSION_FILE" ]] && head -n1 "$REPO_VERSION_FILE" | tr -d '[:space:]' || echo ""; }
+
+# version_lt <a> <b> — true when a is strictly older than b.
+version_lt() {
+  [[ "$1" == "$2" ]] && return 1
+  [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" == "$1" ]]
+}
+
+# The recorded version only ever goes up: an older client saving must not lower
+# it, or the next save from that client would prune after all.
+record_repo_version() {
+  local running seen
+  running=$(running_version); seen=$(repo_written_by)
+  [[ -n "$running" && "$running" != "0" ]] || return 0
+  if [[ -z "$seen" ]] || version_lt "$seen" "$running"; then
+    printf '%s\n' "$running" > "$REPO_VERSION_FILE"
+  fi
+}
+
+# May this client delete files it does not recognise?
+may_prune() {
+  local running seen
+  running=$(running_version); seen=$(repo_written_by)
+  [[ -n "$seen" && -n "$running" && "$running" != "0" ]] || return 0
+  version_lt "$running" "$seen" && return 1
+  return 0
+}
 USER_MANIFEST=()
 USER_SECRETS=()
 
@@ -973,6 +1018,7 @@ ensure_repo_layout() {
   done
   ensure_scope_file
   ensure_track_file
+  record_repo_version
   mkdir -p "$REPO_DIR/profiles/$(current_profile)/config" 2>/dev/null || true
   install -d -m 700 "$SECRETS_DIR" 2>/dev/null || mkdir -p "$SECRETS_DIR"
   # templates placeholder
@@ -1102,6 +1148,14 @@ core_backup() {
   # A file is expected at exactly one path: the one repo_path_for() gives it.
   # So the prune pass asks the same function the copy pass did, and a file that
   # moved between scopes is cleaned up at its old path by core_scope(), not here.
+  # A client older than whatever last wrote this repo copies its own files in
+  # and stops there. Everything it does not recognise belongs to a version that
+  # knows more than it does, and deleting that is how one machine's upgrade
+  # becomes another machine's data loss.
+  if ! may_prune; then
+    echo "  · this repo was last written by Replicant $(repo_written_by); this machine has $(running_version)" >&2
+    echo "    nothing was pruned — upgrade this machine so it can see everything the other one tracks" >&2
+  else
   local -a expected=()
   local _e
   for entry in "${TRACKED[@]}"; do
@@ -1143,6 +1197,7 @@ core_backup() {
   # leave no empty directories behind either
   find "${sweep[@]}" -mindepth 1 -type d -empty -delete 2>/dev/null || true
   (( pruned > 0 )) && echo "  $pruned stale file(s) pruned" >&2
+  fi
 
   echo "→ Copying secrets (private repo, 600)" >&2
   install -d -m 700 "$SECRETS_DIR" 2>/dev/null || true

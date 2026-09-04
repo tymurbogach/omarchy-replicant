@@ -132,6 +132,21 @@ machine- or user-specific except through `MANIFEST`/`SECRETS_MANIFEST` in
 
 ## Quickshell caches compiled QML — clear it or you are testing old code
 
+**Never restart the shell while the session is locked.** The Omarchy shell *is* the
+lock screen, so `omarchy restart shell` tears the lock down and builds it again — and
+the fingerprint prompt starts over from zero, with a 30-second timeout, every time. On
+2026-09-04 five restarts between 10:56 and 11:00 landed on top of a lock the user was
+already fighting: the prompt reset under their finger until they gave up and rebooted
+the machine. Check first, and wait rather than restart:
+
+```bash
+loginctl show-session "$(loginctl | awk '/'"$USER"'/{print $1; exit}')" -p LockedHint
+```
+
+`LockedHint=yes` means the only safe action is to leave it alone. This matters more
+than it looks: the shell restart is the innermost loop of working on this plugin, and
+the person at the keyboard has no way to tell a restart from a crash.
+
 **After changing any `.qml` file, `rm -rf ~/.cache/quickshell/qmlcache` before
 `omarchy restart shell`.** Quickshell keeps compiled QML (`.qmlc`) there, and it does
 *not* reliably invalidate on a plugin reinstall (`omarchy plugin remove` + `add`

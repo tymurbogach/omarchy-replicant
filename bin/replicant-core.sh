@@ -1959,11 +1959,27 @@ rel_for_src() {
   return 1
 }
 
+# is_secret_rel <rel> — is this entry a secret? A question about the ENTRY, not
+# about how it happens to be spelled.
+#
+# Everything that protects a secret used to key on the path prefix ssh/ or env/,
+# which was true for the three the plugin ships. Then `track --secret` let a user
+# add one under any name: ~/.config/gh/hosts.yml derives to "gh/hosts.yml", and
+# every one of those rules quietly stopped applying to it. It was copied INTO
+# secrets/ and read back OUT of config/ (so the panel called a saved file
+# unsaved and revert-to-repo could never find it), it would have been restored
+# at mode 644 with an OAuth token in it, and core_diff's refusal to render a
+# secret did not recognise it as one.
+is_secret_rel() {
+  local rel="$1" entry
+  for entry in "${TRACKED_SECRETS[@]}"; do
+    [[ "${entry##*:}" == "$rel" ]] && return 0
+  done
+  return 1
+}
+
 repo_copy_for_rel() {
-  case "$1" in
-    ssh/*|env/*) printf '%s\n' "$SECRETS_DIR/$1" ;;
-    *)           repo_path_for "$1" ;;
-  esac
+  if is_secret_rel "$1"; then printf '%s\n' "$SECRETS_DIR/$1"; else repo_path_for "$1"; fi
 }
 
 # read_setting_from <entry> <file> — the same getter as get_setting_value, but
@@ -2694,9 +2710,13 @@ resolve_manifest_src() {
 # executable, and everything else is 644.
 restore_mode_for() {
   case "$1" in
-    *.pub)                   echo 644 ;;
-    ssh/id_*|env/*)          echo 600 ;;
-    ssh/config)              echo 600 ;;
+    *.pub) echo 644; return ;;
+    ssh/config) echo 600; return ;;
+  esac
+  # Anything the repo holds as a secret is restored as one, whatever it is
+  # called. Keying on the name alone put a tracked API token back at 644.
+  is_secret_rel "$1" && { echo 600; return; }
+  case "$1" in
     bin/*|*/hooks/*|*.hook)  echo 755 ;;
     *)                       echo 644 ;;
   esac
@@ -2910,22 +2930,22 @@ core_diff() {
   # SSH private key or a file of API tokens has no business being drawn there,
   # so secrets report whether they changed and never what changed. Public keys
   # are fine.
-  case "$id" in
-    *.pub) ;;
-    ssh/id_*|env/*)
-      repo_copy=$(repo_copy_for_rel "$id")
-      if [[ ! -f "$repo_copy" ]]; then echo "not saved in your repo yet"; return 0; fi
-      if cmp -s "$src" "$repo_copy" 2>/dev/null; then
-        echo "identical to the copy in your repo"
-      else
-        echo "This file differs from the copy in your repo."
-        echo
-        echo "Its contents are not shown: it holds a key or a token, and a diff"
-        echo "on screen is a diff on any screen share or over any shoulder."
-        echo "Open it yourself if you need to see it."
-      fi
-      return 0 ;;
-  esac
+  # Not a name test. A user can track any file as a secret, under any name, and
+  # the refusal has to follow the entry rather than the spelling.
+  if [[ "$id" != *.pub ]] && is_secret_rel "$id"; then
+    repo_copy=$(repo_copy_for_rel "$id")
+    if [[ ! -f "$repo_copy" ]]; then echo "not saved in your repo yet"; return 0; fi
+    if cmp -s "$src" "$repo_copy" 2>/dev/null; then
+      echo "identical to the copy in your repo"
+    else
+      echo "This file differs from the copy in your repo."
+      echo
+      echo "Its contents are not shown: it holds a key or a token, and a diff"
+      echo "on screen is a diff on any screen share or over any shoulder."
+      echo "Open it yourself if you need to see it."
+    fi
+    return 0
+  fi
   # A directory's "diff" is which files moved, not which bytes: a tree is too
   # big to render in the panel, and the useful answer is the file list.
   if is_dir_entry "$id"; then
@@ -2941,8 +2961,7 @@ core_diff() {
     return 0
   fi
   [[ -f "$src" ]] || { echo "$src does not exist on this machine"; return 0; }
-  repo_copy="$CONFIG_DIR/$id"
-  [[ "$id" == ssh/* || "$id" == env/* ]] && repo_copy="$SECRETS_DIR/$id"
+  repo_copy=$(repo_copy_for_rel "$id")
   def=$(default_for_src "$src" 2>/dev/null || true)
 
   if [[ "$against" == "auto" ]]; then

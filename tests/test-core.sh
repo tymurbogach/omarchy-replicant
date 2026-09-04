@@ -727,4 +727,30 @@ check "every state the core emits has a badge in the panel" "0" "$unrendered"
 check "…and the states are the six that are documented" "default missing off saved unpushed unsaved" \
   "$(echo $core_states)"
 
+section "a secret you added yourself is still a secret"
+# Everything that protects a secret used to key on the path prefix ssh/ or env/,
+# which was true for the three the plugin ships. `track --secret` then let a
+# user add one under any name, and every one of those rules quietly stopped
+# applying: ~/.config/gh/hosts.yml derives to "gh/hosts.yml".
+mkdir -p "$HOME/.config/gh"
+printf 'oauth_token: ghp_PLANTED_TOKEN_VALUE\n' > "$HOME/.config/gh/hosts.yml"
+core_track "$HOME/.config/gh/hosts.yml" --secret >/dev/null 2>&1
+check_true "it is recorded as a secret, not as config" is_secret_rel gh/hosts.yml
+check_false "…and a normal file is not"                is_secret_rel hypr/input.lua
+# Saved to one path and read from another is the bug hard rule 9 exists for:
+# the panel called a saved file unsaved, and revert-to-repo never found it.
+check "it is written and read at the SAME path" "$SECRETS_DIR/gh/hosts.yml" \
+  "$(repo_copy_for_rel gh/hosts.yml)"
+check "…and restored at 600, not 644"  "600" "$(restore_mode_for gh/hosts.yml)"
+core_backup >/dev/null 2>&1
+check_true "the copy really is under secrets/" test -f "$SECRETS_DIR/gh/hosts.yml"
+printf 'oauth_token: ghp_ROTATED_TOKEN_VALUE\n' > "$HOME/.config/gh/hosts.yml"
+d=$(core_diff gh/hosts.yml)
+check_contains "a changed secret still says only that" "contents are not shown" "$d"
+check "…and the token is never rendered" "0" "$(printf '%s' "$d" | grep -c 'ghp_' || true)"
+check "…in either direction" "0" "$(printf '%s' "$(core_diff gh/hosts.yml repo)" | grep -c 'ghp_' || true)"
+check "nor anywhere in the panel payload" "0" \
+  "$(printf '%s%s' "$(build_configs_json)" "$(build_secrets_json)" | grep -c 'ghp_' || true)"
+core_untrack gh/hosts.yml >/dev/null 2>&1
+
 summary

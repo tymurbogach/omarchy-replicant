@@ -73,10 +73,17 @@ machine- or user-specific except through `MANIFEST`/`SECRETS_MANIFEST` in
    plugin's stated selling point ("the right way to back up Omarchy"), it is shown in the panel
    under every open category, and it is in the README table — don't add a category that copies
    files and stops.
-11. **Never render a secret.** `core_diff` refuses to print the contents of `ssh/id_*` or `env/*`
+11. **Never render a secret — and ask the entry, not the filename.** Every rule that protects a
+   secret used to key on the path prefix `ssh/` or `env/`, which held for the three the plugin
+   ships. `track --secret` then let a user add one under any name — `~/.config/gh/hosts.yml`
+   derives to `gh/hosts.yml` — and all of them silently stopped applying: it was copied *into*
+   `secrets/` and read back *out of* `config/` (so the panel called a saved file unsaved and
+   revert-to-repo could never find it), it would have been restored at mode 644 with an OAuth
+   token in it, and `core_diff` did not recognise it as a secret at all. `is_secret_rel()` asks
+   `TRACKED_SECRETS` instead; `repo_copy_for_rel`, `restore_mode_for` and `core_diff` all go
+   through it. `tests/test-core.sh` plants a token and greps every output for it. `core_diff` refuses to print the contents of any tracked secret
    (`.pub` files excepted) and says only whether they differ; `build_secrets_json` carries a kind,
    a mode and variable *names*, never values. A diff on screen is a diff on any screen share.
-   `tests/test-core.sh` greps the payload and the diff for planted secrets.
 12. **Names that are already taken.** `state` is a built-in property of every QML Item (see below),
    and `GROUPS` is a bash special variable — `local GROUPS=(...)` aborts the enclosing function
    with "variable may not be assigned value", which silently turned `restore` into a no-op for

@@ -386,6 +386,18 @@ exits at the first hit, the writer takes a SIGPIPE, and `set -o pipefail` turns 
 non-zero pipeline. Capture first (`p=$(plan_for_category "$c"); grep -qF "$x" <<<"$p"`). This cost
 a confusing test failure where the value being searched for was visibly present in the output.
 
+## A test fixture that looks like a credential IS one
+
+`tests/test-cli.sh` checks the secret scanner one shape at a time, and the first
+version wrote each shape out whole. GitHub's push protection rejected the commit —
+correctly. Every scanner in the chain, theirs and ours, sees a string, not an
+intention, and a repo that cannot be pushed is worse than a test that is slightly
+awkward to read.
+
+The prefixes are therefore assembled from pieces (`P_SLACK="xo""xb-"`), so the file
+on disk contains no scannable token while the string handed to the scanner is exact.
+Run `bin/scan-secrets.sh tests bin` before committing anything that adds one.
+
 ## A test must never open a window on the user's screen
 
 `tests/test-cli.sh` exercises `edit --wait`, and its fake `$HOME` did nothing to stop the command

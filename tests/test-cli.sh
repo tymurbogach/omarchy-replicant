@@ -342,4 +342,58 @@ for bad in "get nope.setting" "set nope.setting 5" "edit nope/nope" "path nope/n
 done
 check_contains "revert names the real problem" "unknown setting" "$(run revert nope.setting)"
 
+section "the secret scanner is the last thing between a token and GitHub"
+# It runs in the repo's pre-commit hook and over everything core_backup copies.
+# It shipped knowing four shapes, and this machine runs seven AI CLIs whose keys
+# live in ordinary JSON config — exactly the kind of file that gets tracked
+# without a second thought.
+SCAN="$HERE/../bin/scan-secrets.sh"
+scan_one() { # <value> -> "caught" | "missed"
+  local d; d=$(mktemp -d); mkdir -p "$d/config"; printf '%s\n' "$1" > "$d/config/f.txt"
+  if bash "$SCAN" "$d/config" >/dev/null 2>&1; then rm -rf "$d"; echo missed; else rm -rf "$d"; echo caught; fi
+}
+# The shapes are assembled from pieces on purpose. Written out whole, this file
+# contains strings that ARE the thing being tested for: GitHub's own push
+# protection rejected the commit that first added them, and it was right to.
+# A test fixture that looks like a real credential is a real credential as far
+# as every scanner in the chain is concerned.
+P_GH="gh""p_"; P_GL="gl""pat-"; P_ANT="sk-""ant-"; P_OAI="sk-""proj-"; P_SK="sk""-"
+P_OR="sk-""or-v1-"; P_XAI="xa""i-"; P_HF="h""f_"; P_NPM="np""m_"
+P_SLACK="xo""xb-"; P_STRIPE="sk""_live_"; P_AWS="AK""IA"; P_JWT="ey""J"
+A32="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+while IFS='|' read -r name value; do
+  [[ -n "$name" ]] || continue
+  check "$name is caught" "caught" "$(scan_one "$value")"
+done <<SHAPES
+a GitHub token|${P_GH}abcdefghijklmnopqrstuvwxyz0123456789
+a GitLab token|${P_GL}AAAAAAAAAAAAAAAAAAAA
+an Anthropic key|${P_ANT}api03-AAAAAAAAAAAAAAAAAAAAAAAA
+an OpenAI project key|${P_OAI}${A32}AAAAAAAA
+an OpenAI-style key|${P_SK}${A32}AAAA
+an OpenRouter key|${P_OR}0123456789abcdef0123456789abcdef
+an xAI key|${P_XAI}AAAAAAAAAAAAAAAAAAAAAAAA
+a Hugging Face token|${P_HF}AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+an npm token|${P_NPM}${A32}AAAAAAAA
+a Slack token|${P_SLACK}123456789012-1234567890123-abcdefghijklmnop
+a Stripe live key|${P_STRIPE}AAAAAAAAAAAAAAAAAAAAAAAA
+a Google API key|AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+an AWS access key id|${P_AWS}IOSFODNN7AAAAAAA
+a private key|-----BEGIN OPENSSH PRIVATE KEY-----
+a JSON Web Token|${P_JWT}hbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.${P_JWT}hIjoxLCJiIjoyfQ.abcdefghijklmnop
+SHAPES
+
+# The other half matters just as much: a scanner that cries wolf gets disabled,
+# and then it is not a scanner at all.
+d=$(mktemp -d); mkdir -p "$d/config"
+cat > "$d/config/ordinary.json" <<'J'
+{ "model": "claude-opus-5",
+  "sha": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "url": "https://example.com/sk-something",
+  "note": "password = <your password here>" }
+J
+check_true "ordinary config that looks key-ish is not flagged" bash "$SCAN" "$d/config"
+printf 'API_TOKEN=%s\n' "${P_GH}abcdefghijklmnopqrstuvwxyz0123456789" > "$d/config/real.env"
+check_false "…but a real one in the same place is"           bash "$SCAN" "$d/config"
+rm -rf "$d"
+
 summary

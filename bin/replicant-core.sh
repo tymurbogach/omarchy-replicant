@@ -328,7 +328,11 @@ CATEGORIES=(
 )
 CATEGORY_ORDER=(shortcuts appearance desktop hyprland terminal development secrets plugins scripts system other)
 
-category_field() { local -a f; IFS='|' read -ra f <<<"$1"; printf '%s' "${f[$(($2 - 1))]:-}"; }
+# `fields`, not `f`. Bash scopes dynamically, so a local named `f` here is
+# visible inside anything this calls — and `f` means "the file being examined"
+# in three other functions in this file. That collision is what made
+# suggest_skip_reason work by accident for four releases.
+category_field() { local -a fields; IFS='|' read -ra fields <<<"$1"; printf '%s' "${fields[$(($2 - 1))]:-}"; }
 find_category() {
   local id="$1" entry
   for entry in "${CATEGORIES[@]}"; do
@@ -347,7 +351,9 @@ category_for_rel() {
     omarchy/shell.json|omarchy/extensions/*)           echo desktop ;;
     hypr/*)                                            echo hyprland ;;
     alacritty/*|foot/*|kitty/*|ghostty/*|xdg-terminals.list|home/*) echo terminal ;;
-    git/*|vscode/*|mise/*|claude/*|opencode/*|dev/*|nvim/*|nvim/|omarchy/defaults/*) echo development ;;
+    # nvim/ is not listed separately: `nvim/*` already matches it, since * matches
+    # the empty string. Having both said the author was unsure which one worked.
+    git/*|vscode/*|mise/*|claude/*|opencode/*|dev/*|nvim/*|omarchy/defaults/*) echo development ;;
     ssh/*|env/*)                                       echo secrets ;;
     plugins/*)                                         echo plugins ;;
     bin/*|omarchy/hooks/*|omarchy-audit-ignore)        echo scripts ;;
@@ -820,7 +826,23 @@ is_app_state_dir() {
 }
 
 suggest_skip_reason() {
-  local f="$1" base="${f##*/}" ext="${f##*.}"
+  # TWO `local` statements, and that is not style. Bash expands every word on a
+  # `local` line BEFORE performing any of its assignments, so in
+  # `local f="$1" base="${f##*/}"` the `$f` that `base` reads is NOT the one
+  # being assigned on the same line — it is whatever `f` meant in the caller.
+  #
+  # This worked, and only by accident: bash scopes dynamically, the sole caller
+  # is core_suggest, and core_suggest's loop variable is also called `f` and
+  # holds the same path. Rename it there and every test in this function goes
+  # quietly dead — symlinks, .bak files, oversized files, binaries, application
+  # state, package-manager files, runtime state, mise shims, plugin-installed
+  # scripts and files identical to Omarchy's default would all start being
+  # offered, which is the opposite of what the README promises, with no error
+  # anywhere. Called on its own under `set -u` it aborts outright on this line.
+  #
+  # Found by shellcheck (SC2318/SC2178) the first time it was ever installed.
+  local f="$1"
+  local base="${f##*/}" ext="${f##*.}"
   [[ -L "$f" ]]                             && { echo "a symlink"; return 0; }
   [[ "$base" == *.bak.* || "$base" == *~ ]] && { echo "a backup"; return 0; }
   [[ $(stat -c%s "$f" 2>/dev/null || echo 0) -gt $SUGGEST_MAX_BYTES ]] && { echo "too big to be hand-written"; return 0; }
@@ -1683,9 +1705,9 @@ load_git_cache() {
     [[ ${#rec} -gt 3 ]] && rec="${rec:3}"
     [[ -n "$rec" ]] && GIT_DIRTY_SET+="$rec"$'\n'
   done < <(git -C "$REPO_DIR" status --porcelain -z -uall 2>/dev/null || true)
-  if git -C "$REPO_DIR" rev-parse --abbrev-ref --symbolic-full-name @{u} >/dev/null 2>&1; then
+  if git -C "$REPO_DIR" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
     GIT_HAS_UPSTREAM=1
-    GIT_UNPUSHED_SET=$(git -C "$REPO_DIR" diff --name-only @{u} 2>/dev/null || true)
+    GIT_UNPUSHED_SET=$(git -C "$REPO_DIR" diff --name-only '@{u}' 2>/dev/null || true)
   fi
 }
 
@@ -1832,7 +1854,7 @@ SETTING_GROUPS=(
 # Pure bash: `cut` here meant a fork per field, and the panel reads fifteen
 # fields from twenty-odd settings on every refresh — three hundred processes
 # for a string split.
-setting_field() { local -a f; IFS='|' read -ra f <<<"$1"; printf '%s' "${f[$(($2 - 1))]:-}"; }
+setting_field() { local -a fields; IFS='|' read -ra fields <<<"$1"; printf '%s' "${fields[$(($2 - 1))]:-}"; }
 
 find_setting() {
   local id="$1" entry
@@ -2880,9 +2902,9 @@ core_status() {
   dirty=$(git -C "$REPO_DIR" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
   untracked=$(git -C "$REPO_DIR" status --porcelain 2>/dev/null | grep -c '^??' || true)
   ahead=0; behind=0
-  if git -C "$REPO_DIR" rev-parse --abbrev-ref --symbolic-full-name @{u} >/dev/null 2>&1; then
-    ahead=$(git -C "$REPO_DIR" rev-list --count @{u}..HEAD 2>/dev/null || echo 0)
-    behind=$(git -C "$REPO_DIR" rev-list --count HEAD..@{u} 2>/dev/null || echo 0)
+  if git -C "$REPO_DIR" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+    ahead=$(git -C "$REPO_DIR" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)
+    behind=$(git -C "$REPO_DIR" rev-list --count 'HEAD..@{u}' 2>/dev/null || echo 0)
   fi
   # Content, not git: what is on this machine that the repo has not got, and
   # which of those differences came down from another machine. Both the bar icon

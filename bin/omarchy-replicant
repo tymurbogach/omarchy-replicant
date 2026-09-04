@@ -59,8 +59,11 @@ cmd_status() { ensure_core; bash "$CORE" status "$@"; }
 cmd_backup() { ensure_core; bash "$CORE" backup; }
 
 cmd_init() {
-  local savegame=0
-  while (( $# )); do case "$1" in --savegame) savegame=1; shift;; *) shift;; esac; done
+  # --savegame is accepted and ignored: init has always done the full savegame
+  # layout, and the flag survives only so the documented command line and any
+  # script that learned it keep working. It used to be parsed into a variable
+  # nothing read, which is a promise of a behaviour that does not exist.
+  while (( $# )); do shift; done
   ensure_core
   # always savegame layout
   bash "$CORE" backup
@@ -214,7 +217,7 @@ cmd_savegame() {
     pending=""
   fi
 
-  if (( PUSH )) && [[ -n $(git_repo log --oneline @{u}..HEAD 2>/dev/null) ]]; then
+  if (( PUSH )) && [[ -n $(git_repo log --oneline '@{u}..HEAD' 2>/dev/null) ]]; then
     echo "→ Push to $(git_repo config --get remote.origin.url 2>/dev/null)" >&2
     git_repo push -q origin HEAD 2>&1 && echo "    done" >&2; echo >&2
   fi
@@ -786,7 +789,7 @@ cmd_save_file() {
   fi
   git_repo add -- "$repo_rel"
   git_repo commit -q -m "${msg:-config: update $id}" || fail "commit failed"
-  if git_repo rev-parse --abbrev-ref --symbolic-full-name @{u} >/dev/null 2>&1; then
+  if git_repo rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
     git_repo push -q origin HEAD 2>&1 && ok "saved and pushed: $id" || warn "committed, but the push failed — try Save to GitHub"
   else
     ok "committed: $id (no remote yet — run 'omarchy-replicant create --push')"
@@ -1251,11 +1254,13 @@ cmd_undo() {
     esac
   done
   [[ -n "$id" ]] || fail "undo <id> — see 'omarchy-replicant backups'"
-  DRY=$DRY bash -c '
-    DRY='"$DRY"'
-    source "$1" 2>/dev/null
-    core_undo "$2"
-  ' _ "$CORE" "$id" || fail "nothing undone"
+  # DRY reaches the core as an argument, not as an env prefix on `bash -c`.
+  # The prefix form (`DRY=$DRY bash -c '... DRY='"$DRY"' ...'`) set the variable
+  # twice by two different mechanisms and shellcheck was right to call it out:
+  # the prefix is seen only by the forked shell, which then immediately
+  # overwrote it with a spliced literal. One way in is enough.
+  bash -c 'DRY="$3"; source "$1" 2>/dev/null; core_undo "$2"' \
+    _ "$CORE" "$id" "$DRY" || fail "nothing undone"
   if (( DRY )); then
     echo >&2; skip "dry-run — nothing was touched. Repeat with --apply"
   fi

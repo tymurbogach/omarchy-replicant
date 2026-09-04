@@ -517,6 +517,26 @@ are each correct.
 
 ## Verify before calling it done
 
+**shellcheck is not optional and a missing one is not a pass.** For four releases that section
+printed "skipped" in yellow and the suite still ended in "Everything passed" — a linter that is not
+there had been folded into a green result. The first run that ever happened found `SC2318` in
+`suggest_skip_reason`: `local f="$1" base="${f##*/}"` reads a `$f` that the same line has not
+assigned yet, so every check in that function was computing from the caller's scope and worked only
+because the one caller happens to name its loop variable `f` too. Rename it there and eleven
+guarantees the README makes go quietly dead.
+
+Install it without root — the same way this machine did, and it travels in the tracked
+`mise/config.toml`:
+
+```bash
+mise use -g shellcheck@latest
+```
+
+`run-all.sh` looks on `PATH` and then in `~/.local/share/mise/shims`, and **fails** when it finds
+neither. Bash's dynamic scoping is why this class of bug is invisible here: a `local` in one
+function is readable by everything it calls, so a name collision substitutes for a real value. That
+is also why `category_field`/`setting_field` no longer call their split array `f`.
+
 - **`./tests/run-all.sh`** — the four suites (core, settings, CLI, journey) plus `bash -n`, shellcheck,
   qmllint, the QML-trap greps and `omarchy-plugin-validate`. This is the one command; everything
   below it is what that command already does, plus the things a script cannot check.

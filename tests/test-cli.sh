@@ -381,6 +381,7 @@ git -C "$REPO" config user.email t@example.com
 git -C "$REPO" config user.name Test
 # Two writes racing used to collide on .git/index.lock and one would die
 # half-done, leaving the repo mid-commit.
+# shellcheck disable=SC2034  # a repetition counter; the body deliberately ignores it
 for i in 1 2 3; do ( "$CLI" backup >/dev/null 2>&1 ) & done
 wait
 check "no leftover git index lock" "0" "$(ls "$REPO/.git/index.lock" 2>/dev/null | wc -l)"

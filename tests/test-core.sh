@@ -119,6 +119,7 @@ printf '{"id":"mine.widget","name":"My Widget","version":"1.0.0"}\n' \
   > "$TMP/roots/dev/my-widget/manifest.json"
 mkdir -p "$HOME/.config/omarchy/plugins/mine.widget"
 cp "$TMP/roots/dev/my-widget/manifest.json" "$HOME/.config/omarchy/plugins/mine.widget/manifest.json"
+# shellcheck disable=SC2034  # read by discover_plugin_origin in the sourced core
 PLUGIN_SOURCE_ROOTS=("$TMP/roots/dev")
 core_backup >/dev/null 2>&1
 check "a plugin is traced back to the checkout that builds it" "1" \

@@ -20,14 +20,26 @@ for f in "$ROOT"/bin/omarchy-replicant "$ROOT"/bin/*.sh "$HERE"/*.sh; do
 done
 
 banner "shellcheck"
-if command -v shellcheck >/dev/null 2>&1; then
+# Found on PATH, or in the mise shims — mise installs it without root, which is
+# what finally got it onto the machine this was written on. Four releases shipped
+# with this section printing "skipped" and the suite still ending in "Everything
+# passed", and the first real run found a function whose every check had been
+# dead the whole time (suggest_skip_reason, SC2318). A linter that is not there
+# is not a pass.
+SHELLCHECK=$(command -v shellcheck || echo "$HOME/.local/share/mise/shims/shellcheck")
+if [[ -x "$SHELLCHECK" ]]; then
   # SC1091: sourced files resolved at runtime. SC2154: variables that come from
-  # the sourced core. Both are noise here, not findings.
-  if shellcheck -e SC1091,SC2154 -S warning "$ROOT"/bin/omarchy-replicant "$ROOT"/bin/*.sh "$HERE"/*.sh; then
+  # the sourced core. SC2088: tildes inside strings printed to a person, where
+  # not expanding is the whole point. All three are noise here, not findings.
+  if "$SHELLCHECK" -e SC1091,SC2154,SC2088 -S warning \
+       "$ROOT"/bin/omarchy-replicant "$ROOT"/bin/*.sh "$HERE"/*.sh; then
     printf '  \033[32m✓\033[0m clean at warning level\n'
   else failed=$((failed+1)); fi
 else
-  printf '  \033[33m·\033[0m shellcheck not installed — skipped\n'
+  printf '  \033[31m✗\033[0m shellcheck is not installed — this section verified NOTHING\n'
+  printf '      mise use -g shellcheck@latest     (no root needed)\n'
+  printf '      omarchy pkg add shellcheck        (system-wide)\n'
+  failed=$((failed+1))
 fi
 
 banner "QML syntax"

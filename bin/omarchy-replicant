@@ -322,6 +322,23 @@ cmd_clone() {
   mkdir -p "$(dirname "$REPO_DIR")"
   git clone -- "$url" "$REPO_DIR" 2>&1 || fail "clone failed (private repo without gh auth?)"
   git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
+  # A clone can succeed and check out nothing — git says "remote HEAD refers to
+  # nonexistent ref" and leaves an empty directory, which happens whenever the
+  # remote's default branch is not the one the commits are on. Left unsaid,
+  # every restore afterwards reports "nothing to change" for every category:
+  # a restore tool announcing success while restoring nothing.
+  if ! git -C "$REPO_DIR" rev-parse HEAD >/dev/null 2>&1; then
+    warn "the clone worked but checked out nothing — the remote's default branch has no commits."
+    local branches
+    branches=$(git -C "$REPO_DIR" branch -r --format='%(refname:short)' 2>/dev/null | sed 's|^origin/||' | grep -v '^HEAD' | paste -sd' ' -)
+    if [[ -n "$branches" ]]; then
+      warn "branches that do have them: $branches"
+      warn "check one out: git -C $REPO_DIR checkout <branch>"
+    else
+      warn "the remote is empty — run 'create' on your first machine before cloning here"
+    fi
+    fail "nothing to restore from yet"
+  fi
   ok "cloned into $REPO_DIR — run omarchy-replicant restore --dry-run"
 }
 
@@ -495,7 +512,17 @@ cmd_restore() {
       fi
     done
     if (( DRY )); then skip "dry-run: ${#pending[@]} file(s) untouched. Repeat with --apply" >&2; continue; fi
-    if (( ! ALL_GROUPS )); then
+    # --yes means yes here too. It used to be honoured only through --all, so
+    # `restore --apply --only hyprland --yes` still stopped to ask — and with no
+    # terminal to ask on it died on /dev/tty and silently skipped the category,
+    # which is a restore reporting success having restored nothing. The panel
+    # worked around it by passing --all together with --only, which reads like
+    # a contradiction because it was one.
+    if (( ! ALL_GROUPS && ! YES )); then
+      if [[ ! -r /dev/tty ]]; then
+        warn "$cat needs a confirmation and there is no terminal to ask on — pass --yes" >&2
+        skip "$cat skipped" >&2; continue
+      fi
       read -rp "  apply $cat? [y/N] " resp </dev/tty 2>&1 || resp=""
       [[ $resp == [yY] ]] || { skip "$cat skipped" >&2; continue; }
     fi

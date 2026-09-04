@@ -395,9 +395,32 @@ hatch (`omarchy-launch-editor`, `xdg-open`, and the editor named in the fixture)
 placed first on `PATH`. This is not only manners — a window the user closes mid-measurement changes
 what the command returns, so the test can lie.
 
+## The parts can all be right while the trip is broken
+
+`tests/test-journey.sh` is the only suite that is not about a function. It stands two fake machines
+up with their own `$HOME` and a bare repo in place of GitHub, and walks the thing the plugin
+actually promises: the desktop saves, the laptop clones, restores, and ends up feeling like home
+without inheriting what was only ever true of the desktop — then edits something and the desktop
+picks it up.
+
+It was written last and immediately found two things every unit test had passed over:
+
+- **A clone can succeed and check out nothing.** When the remote's default branch is not the one
+  the commits are on, git says "remote HEAD refers to nonexistent ref" and leaves an empty
+  directory. Every restore afterwards reported "nothing to change" for every category — a restore
+  tool announcing success having restored nothing. `cmd_clone` now checks `rev-parse HEAD` and
+  names the branches that do have commits.
+- **`--yes` was only honoured through `--all`**, so `restore --apply --only hyprland --yes` still
+  stopped to ask, and with no terminal to ask on it died on `/dev/tty` and skipped the category.
+  The panel had been passing `--all` *together with* `--only` to get around it, which reads like a
+  contradiction because it was one.
+
+Both are the same shape: a whole-journey failure that sits in the gap between two functions that
+are each correct.
+
 ## Verify before calling it done
 
-- **`./tests/run-all.sh`** — the three suites (core, settings, CLI) plus `bash -n`, shellcheck,
+- **`./tests/run-all.sh`** — the four suites (core, settings, CLI, journey) plus `bash -n`, shellcheck,
   qmllint, the QML-trap greps and `omarchy-plugin-validate`. This is the one command; everything
   below it is what that command already does, plus the things a script cannot check.
 - `omarchy-plugin-validate` on this directory after any structural change.

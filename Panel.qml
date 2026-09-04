@@ -449,7 +449,10 @@ Panel {
     else if (a === "restore-file") { root.busyLabel = "Restoring " + arg + "…"; dangerProc.command = [root.cli, "restore-file", arg] }
     else if (a === "reset-all")    { root.busyLabel = "Resetting everything…"; dangerProc.command = [root.cli, "reset-all", "--apply", "--yes"] }
     else if (a === "restore-all")  { root.busyLabel = "Restoring everything…"; dangerProc.command = [root.cli, "restore", "--apply", "--all", "--yes"] }
-    else if (a === "restore-cat")  { root.busyLabel = "Restoring " + arg + "…"; dangerProc.command = [root.cli, "restore", "--apply", "--all", "--yes", "--only", arg] }
+    // --only with --yes, and no --all: passing --all alongside --only used to be
+    // required because --yes was only honoured through it, which read like a
+    // contradiction. It is not needed any more.
+    else if (a === "restore-cat")  { root.busyLabel = "Restoring " + arg + "…"; dangerProc.command = [root.cli, "restore", "--apply", "--yes", "--only", arg] }
     else if (a === "untrack")      { root.doUntrack(arg); return }
     else return
     root.lastOutput = root.busyLabel

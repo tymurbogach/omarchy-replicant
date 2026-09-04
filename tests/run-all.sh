@@ -8,7 +8,7 @@ failed=0
 
 banner() { printf '\n\033[1m══ %s\033[0m\n' "$1"; }
 
-for suite in test-core.sh test-settings.sh test-cli.sh; do
+for suite in test-core.sh test-settings.sh test-cli.sh test-journey.sh; do
   banner "$suite"
   "$HERE/$suite" || failed=$((failed+1))
 done

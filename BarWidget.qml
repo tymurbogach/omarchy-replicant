@@ -80,8 +80,18 @@ BarWidget {
   // which took 1.4 s of CPU once a minute to answer them. Brief takes 0.04 s.
   // Whenever the panel is open — or a write just finished — the full payload is
   // built, because that is when anybody is actually looking at the rows.
+  // A request that arrives while a probe is in flight used to be dropped. Open
+  // the panel during the once-a-minute tick and it rendered whatever that tick
+  // returned — since 0.7.0 a *brief* payload, with no rows in it — and nothing
+  // asked again until the next tick a minute later. Remember it instead.
+  property bool refreshPending: false
+  property bool refreshPendingForce: false
   function refresh(force) {
-    if (probe.running) return
+    if (probe.running) {
+      root.refreshPending = true
+      root.refreshPendingForce = root.refreshPendingForce || force === true
+      return
+    }
     var full = force || root.opened
     var cmd = [root.cli, "status", "--json"]
     if (force) cmd.push("--fetch")
@@ -135,6 +145,11 @@ BarWidget {
       if (code !== 0) {
         root.asked = true
         if (panelLoader.item) panelLoader.item.asked = true
+      }
+      if (root.refreshPending) {
+        var f = root.refreshPendingForce
+        root.refreshPending = false; root.refreshPendingForce = false
+        root.refresh(f)
       }
     }
   }

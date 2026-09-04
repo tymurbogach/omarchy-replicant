@@ -1820,7 +1820,7 @@ get_setting_value() {
       ;;
     toml-int|toml-float)
       [[ -f "$file" ]] || return 1
-      raw=$(map_get "$(file_map "$file" toml)" "$path") || return 1
+      raw=$(map_lookup "$file" toml "$path") || return 1
       [[ -n "$raw" ]] || return 1
       printf '%s\n' "$raw"
       ;;
@@ -1828,7 +1828,7 @@ get_setting_value() {
       # No drop-in yet means logind is on its built-in default, which is what
       # the fallback field records — so report that rather than "missing".
       if [[ -f "$file" ]]; then
-        raw=$(map_get "$(file_map "$file" toml)" "$path" 2>/dev/null || true)
+        raw=$(map_lookup "$file" toml "$path" 2>/dev/null || true)
         [[ -n "$raw" ]] && { printf '%s\n' "$raw"; return 0; }
       fi
       raw=$(setting_field "$entry" 13)
@@ -1836,14 +1836,14 @@ get_setting_value() {
       printf '%s\n' "$raw"
       ;;
     lua-int|lua-bool|lua-enum)
-      map_get "$(file_map "$file" lua)" "$path"
+      map_lookup "$file" lua "$path"
       ;;
     *)
       [[ -f "$file" ]] || return 1
       # A missing key reads as absent, but `false` must not: jq's `//` fires on
       # false as well as null, so a boolean setting that is genuinely off would
       # look like a setting that is not there.
-      raw=$(map_get "$(file_map "$file" json)" "$path") || return 1
+      raw=$(map_lookup "$file" json "$path") || return 1
       [[ "$raw" == "null" ]] && return 1
       printf '%s\n' "$raw"
       ;;
@@ -2135,12 +2135,17 @@ warm_setting_file_maps() {
   done
 }
 
-# map_get <map-text> <key> — the value, or failure when the key is absent.
-map_get() {
+# map_lookup <file> <kind> <key> — the value, or failure when the key is absent.
+#
+# The obvious spelling, map_get "$(file_map ...)" "$key", is TWO command
+# substitutions and therefore two forks per read, three reads per setting,
+# twenty-four settings. This is one.
+map_lookup() {
+  load_file_map "$1" "$2"
   local k v
   while IFS=$'\t' read -r k v; do
-    [[ "$k" == "$2" ]] && { printf '%s\n' "$v"; return 0; }
-  done <<<"$1"
+    [[ "$k" == "$3" ]] && { printf '%s\n' "$v"; return 0; }
+  done <<<"${FILE_MAP_CACHE[$1|$2]}"
   return 1
 }
 
@@ -2153,12 +2158,12 @@ read_setting_from() {
       raw=$(head -n1 "$file" 2>/dev/null | tr -d '[:space:]')
       [[ -n "$raw" ]] && printf '%s\n' "$raw" || return 1 ;;
     toml-int|toml-float|ini-enum)
-      raw=$(map_get "$(file_map "$file" toml)" "$path") || return 1
+      raw=$(map_lookup "$file" toml "$path") || return 1
       [[ -n "$raw" ]] && printf '%s\n' "$raw" || return 1 ;;
     lua-int|lua-bool|lua-enum)
-      map_get "$(file_map "$file" lua)" "$path" ;;
+      map_lookup "$file" lua "$path" ;;
     number|bool|enum)
-      raw=$(map_get "$(file_map "$file" json)" "$path") || return 1
+      raw=$(map_lookup "$file" json "$path") || return 1
       [[ "$raw" == "null" ]] && return 1
       printf '%s\n' "$raw" ;;
     *) return 1 ;;

@@ -30,11 +30,21 @@ JSON
 run() { "$CLI" "$@" 2>&1; }
 
 section "the command surface"
-check_contains "help lists the commands" "omarchy-replicant savegame" "$(run --help)"
-check_contains "help mentions the new ones" "doctor" "$(run --help)"
-for c in "sync <id>" "revert <id>" "restore-file <id>" "shortcuts"; do
-  check_contains "help documents $c" "$c" "$(run --help)"
-done
+# Derived from the dispatcher, not a hand-picked handful: a command you can run
+# and cannot find in --help is a command nobody knows about. This replaces a
+# check that grepped for one literal line of the old layout, which said nothing
+# about whether the help was complete and broke the moment it was reformatted.
+helptext=$(run --help)
+undocumented=0
+while read -r c; do
+  [[ -n "$c" && "$c" != -* ]] || continue
+  # A word boundary either side: "sync" must not be satisfied by "syncing", and
+  # must still be found inside "(sync <id> on|off is the old form)".
+  grep -qE "(^|[^a-z-])$c([^a-z-]|$)" <<<"$helptext" || { undocumented=$((undocumented+1)); echo "    '$c' is a command but is not in --help"; }
+done < <(grep -oE '^    [a-z|-]+\) shift' "$HERE/../bin/omarchy-replicant" | sed -e 's/^ *//' -e 's/) shift//' | tr '|' '\n' | sort -u)
+check "every command the dispatcher accepts is in --help" "0" "$undocumented"
+check_contains "…and the help says the panel does this too" "panel in your bar" "$helptext"
+check_contains "…and keeps the two ways back apart" "reset-all --apply" "$helptext"
 check_true  "--help exits 0"      "$CLI" --help
 check_false "an unknown command fails" "$CLI" definitely-not-a-command
 check_contains "…and says so" "unknown command" "$(run definitely-not-a-command)"

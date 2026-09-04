@@ -1127,53 +1127,57 @@ cmd_purge() {
 
 usage() {
   cat <<USAGE
-omarchy-replicant — private savegame (config+secrets+state) for Omarchy
+omarchy-replicant — back up, restore and replicate your Omarchy setup
 
-Usage:
-  omarchy-replicant init [--savegame]     Prepare the savegame repo (always private)
-  omarchy-replicant login                 gh auth
-  omarchy-replicant create [name] [--push]  Create a PRIVATE repo and push
-  omarchy-replicant backup                Copy only (no git)
-  omarchy-replicant savegame [-m "why"] [--no-push]  backup + auto-commit state + push (leaves config/secrets for 1 commit per change)
-  omarchy-replicant status [--json]
-  omarchy-replicant get <setting-id>      read one curated setting (e.g. idle.screensaver)
-  omarchy-replicant set <setting-id> <v>  write one curated setting + auto savegame commit
-  omarchy-replicant diff [id] [--against repo|default] [--terminal]
-                                          plain-text diff (the panel renders it inline)
-  omarchy-replicant settings [--json]     list every editable setting and its value
-  omarchy-replicant revert <id> [--to default|repo]   put ONE setting back
-  omarchy-replicant scope <id> <scope>    shared | profile | off, per file
-  omarchy-replicant sync <id> on|off      the older two-state form of scope
-  omarchy-replicant suggest [--json]      config on this machine that is not tracked yet
-  omarchy-replicant track <path> [name] [--secret]   add one file or directory to YOUR list
-  omarchy-replicant untrack <id>          drop one of your own entries (and its copy)
-  omarchy-replicant profile [name]        which profile this machine is in
-  omarchy-replicant shortcuts [--json]    your keybinding overrides, and what is bound now
-  omarchy-replicant edit <id>             open id in your editor (e.g. hypr/input.lua)
-  omarchy-replicant path <id>             print the real path an id refers to
-  omarchy-replicant save-file <id> [-m]   commit + push just that one file
-  omarchy-replicant log [-n N] [--json]   recent saves
-  omarchy-replicant doctor                check auth, remote privacy, hooks, permissions
-  omarchy-replicant link | unlink         add/remove omarchy-replicant on your PATH
-  omarchy-replicant purge [--apply] [--repo]  remove everything this plugin left on the machine
-  omarchy-replicant reset <id>            restore the default via omarchy refresh (1 file)
-  omarchy-replicant restore-file <id>     bring 1 file back from the repo (.bak.<epoch> kept)
-  omarchy-replicant reset-all [--dry-run|--apply] [--yes]   Restore EVERYTHING with a known Omarchy default back to factory
-  omarchy-replicant push [msg]             Direct push (not the savegame flow)
-  omarchy-replicant pull
-  omarchy-replicant clone <url>           Clone the private repo
-  omarchy-replicant restore [--dry-run|--apply] [--all]  Bring EVERYTHING down from the repo/GitHub, by group, with .bak.<epoch>
+  The panel in your bar does all of this without a terminal. These are here for
+  scripts, and for the days you would rather type.
 
-Flow:
-  omarchy-replicant init && omarchy-replicant create --push   # first machine (private)
-  omarchy-replicant savegame                   # day to day
-  # new machine:
-  omarchy-replicant clone https://github.com/<user>/omarchy-replicant
-  omarchy-replicant restore --apply
+First machine
+  create [name] [--push]      Make the PRIVATE GitHub repo and push this machine into it
+  login                       gh auth, if you are not logged in yet
+  init [--savegame]           Prepare the local repo without touching GitHub
 
-Restore everything:
-  omarchy-replicant reset-all --apply          # everything -> Omarchy defaults (factory)
-  omarchy-replicant restore --apply --all      # everything -> what's saved on GitHub
+Every day
+  savegame [-m "why"]         Copy everything in, commit, push        (--no-push to hold)
+  backup                      Copy everything in and stop — no commit, no push
+  status [--json] [--brief]   What changed, what is pushed, what is not
+  diff [id]                   Pending changes, or what changed in one file
+  pull                        Bring down what another machine saved
+
+What gets backed up
+  suggest [--json]            Config on this machine that nothing is backing up yet
+  track <path> [name] [--secret]   Add a file or directory to YOUR list
+  untrack <id>                Drop one of your own entries, and its copy
+  scope <id> shared|profile|off    Who syncs this file        (sync <id> on|off is the old form)
+  profile [name]              Which profile this machine is in
+  save-file <id> [-m]         Commit and push just that one file
+  path <id>  ·  edit <id>     Where a tracked id really lives; open it in your editor
+
+Settings
+  settings [--json]           Every editable setting and its current value
+  get <id>  ·  set <id> <v>   Read or write one     (always in the stored unit, e.g. seconds)
+  revert <id> [--to default|repo]   Put one setting back
+  shortcuts [--json]          Your keybinding overrides, and what is bound now
+
+Putting things back            (dry run by default; .bak.<epoch> kept for everything)
+  restore [--apply] [--all] [--only <area>] [--yes]
+                              Everything, or one area, from the repo
+  restore-file <id>           One file or directory back from the repo
+  reset <id>                  One file back to Omarchy's default
+  reset-all [--apply] [--yes] Everything with a known default back to factory
+
+Second machine
+  clone <url>                 Point this machine at the repo you already have
+
+Housekeeping
+  doctor                      Auth, remote privacy, hooks, permissions, version skew
+  log [-n N] [--json]         Recent saves
+  link | unlink               Add or remove omarchy-replicant on your PATH
+  purge [--apply] [--repo]    Remove what this plugin left on this machine
+
+Two ways back, and they are not the same thing
+  reset-all --apply           everything -> Omarchy's defaults (factory)
+  restore --apply --all       everything -> what is saved in your repo
 USAGE
 }
 

@@ -212,6 +212,26 @@ the inventory and then stops, listing what changed and waiting for you to write 
 change explaining **why**. Use `-m "why"` when you want that, `--auto` when you just want it saved.
 `push` on its own sends the commits you already have and touches nothing else.
 
+## 6. If a restore was wrong
+
+Everything this plugin writes to your machine keeps the version it replaced beside it, as
+`<file>.bak.<epoch>`. Panel → **Restore** → *If a restore went wrong* lists them: which file, how
+long ago, and whether the backup still differs from what you have now.
+
+**Undo** puts one back — and takes the version it replaces as the new backup. It is a swap, so
+undo can itself be undone, and the pile does not grow every time you use it. A backup that is
+byte-identical to the file you already have has its button disabled and says so.
+
+```bash
+omarchy-replicant backups                    # every one, newest first
+omarchy-replicant undo hypr/input.lua        # dry run
+omarchy-replicant undo hypr/input.lua --apply
+omarchy-replicant backups --prune --apply    # clear the lot; your repo is untouched
+```
+
+Nothing here touches your GitHub repo. If what you want is "give me back what is saved on
+GitHub", that is **Restore**, not this.
+
 ## If it goes wrong
 
 - **Undo a restore** — every overwritten file is next to the original as `.bak.<epoch>`.

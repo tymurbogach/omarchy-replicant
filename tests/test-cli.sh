@@ -290,6 +290,64 @@ check "a real file at that path is left alone" "1" "$(ls "$PATH_LINK" 2>/dev/nul
 check_false "…and link refuses to clobber it" "$CLI" link
 rm -f "$PATH_LINK"
 
+section "the safety net you can actually reach"
+# Every write this plugin makes keeps what it overwrote as <file>.bak.<epoch>.
+# For four releases the only code that could FIND one was purge, which removes
+# the whole plugin — eleven of them were sitting on the machine this was
+# written on, unnamed and unreachable. A backup you cannot find is not a backup.
+# Earlier sections restored this file, so it already has a backup with a real
+# epoch — which would sort ahead of the two planted here and make every count
+# below off by one. Start from a known net.
+rm -f "$HOME"/.config/hypr/input.lua.bak.*
+printf 'version one\n' > "$HOME/.config/hypr/input.lua"
+cp "$HOME/.config/hypr/input.lua" "$HOME/.config/hypr/input.lua.bak.1700000000"
+printf 'version two\n' > "$HOME/.config/hypr/input.lua"
+cp "$HOME/.config/hypr/input.lua" "$HOME/.config/hypr/input.lua.bak.1700000900"
+printf 'version three\n' > "$HOME/.config/hypr/input.lua"
+
+out=$(run backups)
+check_contains "backups names the id, not just the path" "hypr/input.lua" "$out"
+check "…and finds both"  "2" "$(run backups | grep -c 'input.lua.bak')"
+# The newest first, because that is the one undo takes.
+check_contains "newest first" "1700000900" "$(run backups | grep 'input.lua.bak' | head -1)"
+# "same" is the column worth having: a backup byte-identical to what is there
+# now is a copy of what you already have, and the one always safe to drop.
+cp "$HOME/.config/hypr/input.lua" "$HOME/.config/hypr/input.lua.bak.1700001000"
+check_contains "…and says which are identical to the live file" "same" \
+  "$(run backups | grep 'input.lua.bak' | head -1)"
+rm -f "$HOME/.config/hypr/input.lua.bak.1700001000"
+
+before=$(hash_tree "$HOME")
+run undo hypr/input.lua >/dev/null 2>&1
+check "undo is a dry run by default" "$before" "$(hash_tree "$HOME")"
+
+run undo hypr/input.lua --apply >/dev/null 2>&1
+check "…and --apply puts the newest one back" "version two" \
+  "$(cat "$HOME/.config/hypr/input.lua")"
+# A SWAP, not a restore. Obeying "keep what you overwrote" naively would leave a
+# second backup behind on every undo, so undoing twice would grow the pile this
+# exists to drain. Consuming one and writing one keeps the count where it was.
+check "…consuming the backup it used" "0" \
+  "$(ls "$HOME/.config/hypr/input.lua.bak.1700000900" 2>/dev/null | wc -l)"
+check "…and leaving what it replaced in its place" "2" \
+  "$(run backups | grep -c 'input.lua.bak')"
+# Which is the point: the thing anybody pressing undo wants to be sure of.
+run undo hypr/input.lua --apply >/dev/null 2>&1
+check "undo can itself be undone" "version three" "$(cat "$HOME/.config/hypr/input.lua")"
+
+check_false "undo on an id with no backup says so" "$CLI" undo hypr/monitors.lua --apply
+check_false "undo on an unknown id fails"          "$CLI" undo nope/nothing --apply
+
+out=$(run backups --prune)
+check_contains "prune shows before it removes" "would remove" "$out"
+check "…and the dry run removes nothing" "2" "$(run backups | grep -c 'input.lua.bak')"
+run backups --prune --apply >/dev/null 2>&1
+check "…--apply removes them" "0" "$(ls "$HOME"/.config/hypr/input.lua.bak.* 2>/dev/null | wc -l)"
+# prune is all-or-nothing on purpose: the other sections of this suite left
+# their own backups behind, and the whole net is now empty.
+check_contains "…and then it says the net is empty" "no .bak" "$(run backups)"
+printf 'my own input\n' > "$HOME/.config/hypr/input.lua"
+
 section "purge is a dry run by default and never touches the remote"
 run link >/dev/null 2>&1
 # A directory restore leaves its backup as a whole TREE beside the original.

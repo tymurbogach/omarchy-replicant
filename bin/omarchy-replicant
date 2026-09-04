@@ -1192,6 +1192,75 @@ cmd_unlink() {
 # Everything this plugin creates outside its own directory, in one place, so a
 # user removing it is never left guessing what is still on disk. Dry-run by
 # default like every other destructive command here.
+# The safety net, made reachable. Every write this plugin makes to the real
+# machine leaves the previous version as <file>.bak.<epoch>, and until now the
+# only code that could find one was `purge`, which removes the whole plugin.
+# Eleven of them were sitting on the machine this was written on: unnamed,
+# unreachable, and therefore a mess rather than a net.
+cmd_backups() {
+  ensure_core
+  local DRY=1 PRUNE=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --prune) PRUNE=1 ;;
+      --apply) DRY=0 ;;
+      --dry-run) DRY=1 ;;
+    esac
+  done
+  local -a paths=()
+  local rel src b epoch state line n=0
+  while IFS=$'\t' read -r rel src b epoch state; do
+    [[ -n "$rel" ]] || continue
+    paths+=("$b")
+    n=$((n + 1))
+    if (( ! PRUNE )); then
+      local when; when=$(date -d "@$epoch" '+%d %b %H:%M' 2>/dev/null || echo "$epoch")
+      # "same" is the useful column: a backup byte-identical to the live file is
+      # a copy of what you already have, and the one it is always safe to drop.
+      printf '  %-28s %s  %-8s %s\n' "$rel" "$when" "$state" "${b/#$HOME/\~}"
+    fi
+  done < <(bash "$CORE" backups)
+
+  if (( n == 0 )); then ok "no .bak.<epoch> backups on this machine"; return 0; fi
+
+  if (( ! PRUNE )); then
+    echo >&2
+    info "$(plural "$n" backup) · 'undo <id>' puts the newest one back · 'backups --prune --apply' removes them all"
+    return 0
+  fi
+  echo "── would remove ──" >&2
+  printf '  · %s\n' "${paths[@]/#$HOME/\~}" >&2
+  if (( DRY )); then
+    echo >&2; skip "dry-run — nothing was touched. Repeat with --apply"
+    return 0
+  fi
+  rm -rf -- "${paths[@]}"
+  ok "removed $(plural "$n" backup)"
+}
+
+cmd_undo() {
+  ensure_core
+  local id="" DRY=1 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --apply) DRY=0 ;;
+      --dry-run) DRY=1 ;;
+      -y|--yes) DRY=0 ;;
+      -*) ;;
+      *) [[ -z "$id" ]] && id="$arg" ;;
+    esac
+  done
+  [[ -n "$id" ]] || fail "undo <id> — see 'omarchy-replicant backups'"
+  DRY=$DRY bash -c '
+    DRY='"$DRY"'
+    source "$1" 2>/dev/null
+    core_undo "$2"
+  ' _ "$CORE" "$id" || fail "nothing undone"
+  if (( DRY )); then
+    echo >&2; skip "dry-run — nothing was touched. Repeat with --apply"
+  fi
+}
+
 cmd_purge() {
   local DRY=1 YES=0 KEEP_REPO=1
   while (( $# )); do case "$1" in
@@ -1217,21 +1286,18 @@ cmd_purge() {
 
   # .bak.<epoch> copies this plugin left behind next to the configs it edited
   local -a backups=()
-  local entry src
+  local _rel _src b _epoch _state
   ensure_core
   # shellcheck disable=SC1090
   source "$CORE" 2>/dev/null || true
-  for entry in "${TRACKED[@]}" "${TRACKED_SECRETS[@]}"; do
-    # Strip the trailing slash first. install_tree backs a directory up as
-    # `<dir>.bak.<epoch>` beside it, so globbing "$src".bak.* on a tracked
-    # directory looked for `~/.config/nvim/.bak.*` — INSIDE the directory —
-    # and found nothing. Hard rule 8 says purge must be able to name
-    # everything this plugin leaves on the machine; a whole restored tree
-    # sitting next to the original is not a small thing to miss.
-    src="${entry%%:*}"; src="${src%/}"
-    while IFS= read -r b; do [[ -n "$b" ]] && backups+=("$b"); done \
-      < <(ls -1d "$src".bak.* 2>/dev/null || true)
-  done
+  # Through list_backups, not a second glob of its own. The trailing-slash bug
+  # hard rule 8 exists for lived here first (globbing "$src".bak.* on a tracked
+  # directory looks INSIDE the directory and finds nothing), and having two
+  # copies of that glob is how purge and `backups` would come to disagree about
+  # what is on the machine.
+  while IFS=$'\t' read -r _rel _src b _epoch _state; do
+    [[ -n "$b" ]] && backups+=("$b")
+  done < <(bash "$CORE" backups)
 
   if (( ${#targets[@]} == 0 && ${#backups[@]} == 0 )); then
     ok "nothing to purge — this machine is already clean"
@@ -1308,6 +1374,8 @@ Second machine
   clone <url>                 Point this machine at the repo you already have
 
 Housekeeping
+  backups [--prune] [--apply] Every .bak.<epoch> this plugin left, and when
+  undo <id> [--apply]         Put the newest .bak.<epoch> back for one file
   doctor                      Auth, remote privacy, hooks, permissions, version skew
   log [-n N] [--json]         Recent saves
   link | unlink               Add or remove omarchy-replicant on your PATH
@@ -1332,6 +1400,29 @@ USAGE
 # Only the FIRST argument is inspected, so a message that happens to be "-h"
 # (`savegame -m -h`) is still a message and not a help request.
 declare -A HELP=(
+  [backups]="backups [--prune] [--apply]  —  the safety net, listed
+
+Every write this plugin makes to your machine keeps what it overwrote as
+<file>.bak.<epoch>. This is the only way to see them.
+
+The 'same' column means the backup is byte-identical to the file that is
+there now: a copy of what you already have, and always safe to drop.
+
+  backups                    list them, newest first
+  backups --prune            show what removing them all would remove
+  backups --prune --apply    remove them
+  undo <id>                  put the newest one back for one file"
+  [undo]="undo <id> [--apply]  —  that restore was wrong, give me the previous version
+
+Puts the newest <file>.bak.<epoch> back, and takes the version it replaces
+as the new backup. A swap, so undo can itself be undone and the pile of
+backups does not grow every time you use it.
+
+Dry-run by default, like everything here that writes.
+
+  omarchy-replicant backups          which ids have one
+  omarchy-replicant undo hypr/input.lua
+  omarchy-replicant undo hypr/input.lua --apply"
   [init]="init [--savegame]
   Prepare the local repo without touching GitHub. Safe to re-run: it creates the
   layout, the hooks and the .gitignore, and migrates an older repo shape."
@@ -1479,6 +1570,11 @@ main() {
     shortcuts) shift; cmd_shortcuts "$@";;
     link) shift; cmd_link "$@";;
     unlink) shift; cmd_unlink "$@";;
+    backups) shift; cmd_backups "$@";;
+    # The panel's own reader. Not in usage(): a JSON dump is not a thing anyone
+    # types, and the surface a person reads should only carry what they can use.
+    backups-json) ensure_core; bash "$CORE" backups-json;;
+    undo) shift; cmd_undo "$@";;
     purge) shift; cmd_purge "$@";;
     reset) shift; cmd_reset "$@";;
     reset-all) shift; cmd_reset_all "$@";;

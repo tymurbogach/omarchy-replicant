@@ -449,6 +449,52 @@ Panel {
     suggestProc.command = [root.cli, "suggest", "--json"]
     suggestProc.running = true
   }
+
+  // ── the safety net, made visible ──────────────────────────────────────────
+  // Every write this plugin makes to the machine keeps what it overwrote as
+  // <file>.bak.<epoch>. For four releases the only code that could find one was
+  // `purge`, which removes the whole plugin — eleven of them were sitting on
+  // the machine this was built on, unnamed and unreachable. A backup you cannot
+  // find is not a backup, and "I restored and it was wrong" is the exact moment
+  // somebody opens this tab.
+  property var backups: []
+  property bool backupsLoaded: false
+  function loadBackups() {
+    backupsProc.command = [root.cli, "backups-json"]
+    backupsProc.running = true
+  }
+  // Newest per id: undo takes the newest, so a row per id is a row per button.
+  // The rest are counted, never listed — twelve rows of the same file is a wall,
+  // and only one of them is reachable.
+  readonly property var backupRows: {
+    var seen = ({}), out = []
+    for (var i = 0; i < root.backups.length; i++) {
+      var b = root.backups[i]
+      if (seen[b.id]) { out[seen[b.id] - 1].older += 1; continue }
+      seen[b.id] = out.push({ id: b.id, path: b.path, epoch: b.epoch,
+                              state: b.state, older: 0 })
+    }
+    return out
+  }
+  function doUndo(id) {
+    root.busyLabel = "Undoing " + id + "…"
+    undoProc.command = [root.cli, "undo", id, "--apply"]
+    undoProc.running = true
+  }
+  function doPruneBackups() {
+    root.busyLabel = "Removing backups…"
+    undoProc.command = [root.cli, "backups", "--prune", "--apply"]
+    undoProc.running = true
+  }
+  // A backup's age in the words a person uses about one. The epoch is in the
+  // filename and says nothing; "3 days ago" is the whole question being asked.
+  function agoText(epoch) {
+    var s = Math.max(0, Math.floor(Date.now() / 1000) - epoch)
+    if (s < 90) return "just now"
+    if (s < 5400) return root.plural(Math.round(s / 60), "minute") + " ago"
+    if (s < 129600) return root.plural(Math.round(s / 3600), "hour") + " ago"
+    return root.plural(Math.round(s / 86400), "day") + " ago"
+  }
   function doTrack(path, kind) {
     root.busyLabel = "Tracking " + path + "…"
     var cmd = [root.cli, "track", path]
@@ -510,6 +556,8 @@ Panel {
     // contradiction. It is not needed any more.
     else if (a === "restore-cat")  { root.busyLabel = "Restoring " + arg + "…"; dangerProc.command = [root.cli, "restore", "--apply", "--yes", "--only", arg] }
     else if (a === "untrack")      { root.doUntrack(arg); return }
+    else if (a === "undo")          { root.doUndo(arg); return }
+    else if (a === "prune-backups") { root.doPruneBackups(); return }
     else return
     root.lastOutput = root.busyLabel
     dangerProc.running = true
@@ -534,6 +582,11 @@ Panel {
     if (code !== 0) text = label + " failed (exit " + code + ")\n" + text
     root.lastOutput = text.length > 1400 ? "…" + text.slice(-1400) : text
     root.refresh()
+    // Anything that writes to the machine leaves a new .bak behind it, so the
+    // list of them is stale the moment any of these finishes. It is one cheap
+    // call and it is the difference between an "If a restore went wrong"
+    // section that is about the restore you just did and one that is not.
+    root.loadBackups()
   }
 
   CliProcess { id: saveProc;     onExited: function(c){ root.finish("Save", c, saveProc.stdout.text, saveProc.stderr.text) } }
@@ -542,6 +595,7 @@ Panel {
   CliProcess { id: setProc;      onExited: function(c){ root.finish("Set", c, setProc.stdout.text, setProc.stderr.text) } }
   CliProcess { id: fileSaveProc; onExited: function(c){ root.finish("Save file", c, fileSaveProc.stdout.text, fileSaveProc.stderr.text) } }
   CliProcess { id: dangerProc;   onExited: function(c){ root.finish("Restore", c, dangerProc.stdout.text, dangerProc.stderr.text) } }
+  CliProcess { id: undoProc;     onExited: function(c){ root.finish("Undo", c, undoProc.stdout.text, undoProc.stderr.text) } }
   CliProcess { id: doctorProc;   onExited: function(c){ root.busyLabel = ""; root.lastOutput = (doctorProc.stdout.text + "\n" + doctorProc.stderr.text).replace(/\x1b\[[0-9;]*m/g, "").trim() } }
   Process {
     id: editProc
@@ -562,6 +616,17 @@ Panel {
   CliProcess {
     id: trackProc
     onExited: function(c){ root.finish("Track", c, trackProc.stdout.text, trackProc.stderr.text); root.loadSuggestions() }
+  }
+
+  Process {
+    id: backupsProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try { root.backups = JSON.parse(text || "[]") } catch (e) { root.backups = [] }
+        root.backupsLoaded = true
+      }
+    }
   }
 
   Process {
@@ -623,6 +688,7 @@ Panel {
     root.opened = true; root.refresh()
     if (!root.shortcutsLoaded) root.loadShortcuts()
     if (!root.suggestLoaded) root.loadSuggestions()
+    root.loadBackups()
   }
   function close() { root.opened = false; root.diffOpen = false; confirmDialog.opened = false }
   function toggle() { root.opened ? root.close() : root.open() }
@@ -1242,6 +1308,84 @@ Panel {
                       "Restore")
                   }
                 }
+              }
+            }
+
+            // ── the safety net ────────────────────────────────────────────
+            // Everything above this line promises "a .bak.<epoch> is kept".
+            // Until 0.7.3 that promise had no way of being collected on: the
+            // only code that could find a .bak was purge, which removes the
+            // plugin. This is the bottom of the Restore tab because that is
+            // where somebody is standing when they need it.
+            PanelSeparator { width: parent.width; visible: root.backupRows.length > 0 }
+            PanelSectionHeader {
+              width: parent.width
+              text: "If a restore went wrong"
+              foreground: root.fg; fontFamily: root.ff
+              visible: root.backupRows.length > 0
+            }
+            Text {
+              width: parent.width
+              visible: root.backupRows.length > 0
+              text: "Every write kept the version it replaced. Undo swaps the newest one back — and keeps what it replaces, so this is reversible too."
+              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
+            }
+            Repeater {
+              model: root.backupRows
+              delegate: Item {
+                id: bakRow
+                required property var modelData
+                width: content.width
+                implicitHeight: Style.space(30)
+                Row {
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(8)
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - undoBtn.width - parent.spacing
+                    // The id, when it was made, and whether it is any different
+                    // from what is there now. "same" is the one you can drop
+                    // without thinking; it is also the one that would make Undo
+                    // do nothing, which is worth saying before it is pressed.
+                    text: bakRow.modelData.id + "   " + root.agoText(bakRow.modelData.epoch)
+                        + (bakRow.modelData.state === "same" ? "   ·  identical to the file you have"
+                          : bakRow.modelData.state === "gone" ? "   ·  the file itself is gone" : "")
+                        + (bakRow.modelData.older > 0 ? "   ·  +" + bakRow.modelData.older + " older" : "")
+                    color: root.fg; font.family: root.ff; font.pixelSize: Style.font.caption
+                    elide: Text.ElideRight
+                  }
+                  Button {
+                    id: undoBtn
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Undo"; iconText: root.icDefault; bordered: false
+                    foreground: bakRow.modelData.state === "same" ? root.dim : root.fg
+                    fontFamily: root.ff
+                    enabled: !root.busy && bakRow.modelData.state !== "same"
+                    tooltipText: bakRow.modelData.state === "same"
+                      ? "This backup is identical to the file you have — undoing it would change nothing"
+                      : "Put this version back, and keep the current one as the new .bak"
+                    onClicked: root.ask("undo", bakRow.modelData.id,
+                      "Put back the version of " + bakRow.modelData.id + " from "
+                        + root.agoText(bakRow.modelData.epoch) + "?\n\nThe version you have now becomes the new .bak.<epoch>, so this can be undone again.",
+                      "Undo")
+                  }
+                }
+              }
+            }
+            Row {
+              width: parent.width
+              visible: root.backupRows.length > 0
+              spacing: Style.space(8)
+              Button {
+                text: "Remove all backups"; iconText: root.icUntrack; bordered: false
+                foreground: root.dim; fontFamily: root.ff
+                enabled: !root.busy
+                tooltipText: "Delete every .bak.<epoch> beside your configs. Your repo is not touched."
+                onClicked: root.ask("prune-backups", "",
+                  "Delete every .bak.<epoch> next to your configs?\n\nThis is the only copy of what those files looked like before each restore. Your repo is not touched.",
+                  "Remove")
               }
             }
           }

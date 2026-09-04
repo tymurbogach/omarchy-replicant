@@ -400,6 +400,28 @@ payload. Brief went from 0.04 s to 0.18 s for it, once a minute, which is the wh
 how a badge and an icon come to disagree about the same file — put anything new that asks "has
 this changed" through it.
 
+## The safety net has to be reachable or it is not a net
+
+Every write to the real machine keeps what it overwrote as `<file>.bak.<epoch>` — `install_file`,
+`install_tree` and `root_apply` all do it, and every confirmation dialog in the panel promises it.
+For four releases the only code that could *find* one was `cmd_purge`, which removes the plugin.
+Eleven of them were sitting on this machine, unnamed and unreachable: that is a mess, not a net.
+
+- **`list_backups [rel]`** in the core is the single glob. `cmd_purge` goes through it too — the
+  trailing-slash bug hard rule 8 exists for lived in that glob, and two copies of it is how purge
+  and `backups` would come to disagree about what is on the machine.
+- **`core_undo` is a swap, not a restore.** Obeying rule 2 naively would leave a second backup on
+  every undo, so undoing twice grows the pile it exists to drain. It consumes the newest backup and
+  writes what it replaced in its place: the count stays where it was, and undo can be undone —
+  which is the one thing anybody pressing that button wants to be sure of.
+- **It does not run the category's apply step.** `restore-file` does, because it is putting the
+  saved setup back. Undo is "that was wrong, give me the previous minute", and reloading Hyprland
+  under someone who has just realised they made a mistake is not a favour.
+- The panel puts it at the bottom of **Restore**, under "If a restore went wrong", one row per id
+  (the newest, since that is the one Undo takes) with the rest counted as "+N older". A `same`
+  backup — byte-identical to the live file — disables its own Undo and says why: a button that
+  would change nothing is worse than no button.
+
 ## Two machines, one repo
 
 The plugin is built for a desktop *and* a laptop sharing one private repo, which rules out two

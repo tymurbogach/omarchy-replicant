@@ -434,6 +434,18 @@ core_scope hypr/monitors.lua profile >/dev/null 2>&1
 core_scope hypr/input.lua shared >/dev/null 2>&1
 check "the inventory is scoped by hostname" "$STATE_ROOT/$MACHINE" "$STATE_DIR"
 check "…and that is where it was written"   "1" "$(ls "$STATE_DIR/system.txt" 2>/dev/null | wc -l)"
+# The inventory used to open with `date: <now>`, which changed on every single
+# run and nothing else did. So every save produced a commit called "state:
+# <machine> inventory (packages, plugins, themes)" that recorded no packages,
+# no plugins and no themes — just a clock reading — the panel's Last save row
+# showed one of those instead of the file the user had actually saved, and two
+# machines sharing a repo diverged every time either of them saved. git already
+# records when a commit was made.
+check "the inventory carries no timestamp of its own" "0" \
+  "$(grep -cE '^date:|[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]' "$STATE_DIR/system.txt" 2>/dev/null || true)"
+before_idle=$(hash_tree "$STATE_DIR")
+core_backup >/dev/null 2>&1
+check "…so a save that changes nothing writes nothing" "$before_idle" "$(hash_tree "$STATE_DIR")"
 # A repo written before the scoping existed has its inventory flat in state/.
 printf 'from an older version\n' > "$STATE_ROOT/legacy.txt"
 ensure_repo_layout >/dev/null 2>&1

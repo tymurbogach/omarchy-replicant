@@ -98,7 +98,7 @@ your own checkout.
 
 - **44 paths out of the box** — 41 configs and 3 secrets — plus whatever you add, grouped into eleven areas. Nothing scrolls forever; you open the one you came for.
 - **Directories, not just files.** `~/.config/nvim/` is one row with a file count; a change anywhere inside it says so, and `.git` inside a tracked tree is never copied.
-- **Change detection that tells the truth.** Every file is compared by content against the copy in your repo, so editing one says so immediately — and putting it back clears the warning by itself. Badges: ● changed here · ↑ saved here, not pushed · ◆ saved on GitHub · ○ untouched default · ⊘ not synced.
+- **Change detection that tells the truth.** Every file is compared by content against the copy in your repo, so editing one says so immediately — and putting it back clears the warning by itself. Badges, in the panel's own words: **●** unsaved, **↑** to push, **◆** saved, **○** default, **⊘** off, **·** not here.
 - **24 settings from the panel**, in units people use — the lock screen is *10 min*, not *600*.
 - **Lid & sleep** on laptops: what closing the lid does on battery, on AC, and when docked.
 - **Two ways back for every value** — one button to Omarchy's default, one to what your repo has.

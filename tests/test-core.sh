@@ -700,4 +700,31 @@ printf '%s\n' "$(running_version)" > "$REPO_VERSION_FILE"
 core_backup >/dev/null 2>&1
 check_true "back at its own version it prunes again" may_prune
 
+section "the README states the numbers this code actually ships"
+# A README is the first thing a stranger reads and the last thing anybody
+# updates. "50 tracked paths" was this developer's own count — 41 shipped plus
+# nine of their own — presented to every reader as what they would get.
+readme="$HERE/../README.md"
+check "the tracked-path count matches MANIFEST + SECRETS_MANIFEST" "1" \
+  "$(grep -c "\*\*$(( ${#MANIFEST[@]} + ${#SECRETS_MANIFEST[@]} )) paths out of the box\*\*" "$readme" || true)"
+check "…and it names the split" "1" \
+  "$(grep -c "${#MANIFEST[@]} configs and ${#SECRETS_MANIFEST[@]} secrets" "$readme" || true)"
+check "the settings count matches the registry" "1" \
+  "$(grep -c "\*\*${#SETTINGS[@]} settings from the panel\*\*" "$readme" || true)"
+# Guard 7 in run-all.sh catches the QML testing for a state the core never
+# emits. This is the other direction, which is the one that fails silently: a
+# NEW state added to the core, never taught to stateGlyph, falls through to its
+# final `return` and renders as "saved on GitHub" — the calmest badge there is,
+# on the row that needed attention.
+panel="$HERE/../Panel.qml"
+core_states=$(grep -oE 'sync_state="[a-z]+"' "$HERE/../bin/replicant-core.sh" |
+              sed -e 's/sync_state="//' -e 's/"//' | sort -u)
+unrendered=0
+for st in $core_states; do
+  grep -q "st === \"$st\"" "$panel" || { unrendered=$((unrendered+1)); echo "    core emits '$st' and stateGlyph has no case for it"; }
+done
+check "every state the core emits has a badge in the panel" "0" "$unrendered"
+check "…and the states are the six that are documented" "default missing off saved unpushed unsaved" \
+  "$(echo $core_states)"
+
 summary

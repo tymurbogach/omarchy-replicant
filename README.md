@@ -27,11 +27,11 @@ and each part has one correct way to be put back.
 
 | | Copying dotfiles | Replicant |
 | --- | --- | --- |
-| **Theme** | copies `theme.name` | replays `omarchy theme set` — rewrites every terminal, editor and GTK colour |
+| **Theme** | copies `theme.name`, or 556 MB of wallpapers | records each theme's git origin, reinstalls it, *then* applies it |
 | **Hyprland** | copies the Lua | copies, then `hyprctl reload` **and** checks `configerrors` |
 | **Terminals** | wait for a reboot | `omarchy restart terminal` |
-| **Plugins** | commits someone else's source | records each id + git origin, reinstalls with `omarchy plugin add` |
-| **Shortcuts** | snapshots all 227 bindings | tracks only *your* overrides — defaults ship with the distro |
+| **Plugins** | commits someone else's source | works out each origin — even for one you wrote — and reinstalls it |
+| **Shortcuts** | snapshots all 227 bindings | tracks only *your* overrides — Omarchy's 227 defaults ship with the distro |
 | **Reset** | `rm` and re-copy | `omarchy refresh config <file>` |
 
 The panel names the method under every area before you press anything.
@@ -59,33 +59,29 @@ omarchy-replicant profile desktop      # put it in another one
 omarchy-replicant scope hypr/input.lua profile
 ```
 
-## It backs up *your* list, not somebody else's
+## Your list, not somebody else's
 
-Every dotfile tool ships with a list of files, and that list is always one person's. This one ships
-the paths any Omarchy machine plausibly has — and keeps yours separately, in your own repo, so it
-travels to your second machine without being published to everybody else's.
+Every dotfile tool ships one person's list of files. This one ships the paths any Omarchy machine
+plausibly has and keeps **yours** in your own repo, so they travel to your second machine without
+being published to everyone else's.
+
+Panel → **Configs** → **Add more files** proposes what is not tracked yet, each row with the reason
+and a **Track** button. It will not propose a symlink, a mise shim, a browser's own state, a file
+another plugin installed, or anything identical to Omarchy's default — and it flags a file that
+holds a credential so you track it as a secret instead of world-readable. Nothing is added until
+you press the button.
 
 ```bash
-omarchy-replicant suggest              # what's on this machine that nothing is backing up
+omarchy-replicant suggest                                # the same list, in a terminal
 omarchy-replicant track ~/.local/bin/my-script
-omarchy-replicant track ~/.config/nvim/          # a whole directory
-omarchy-replicant track ~/.config/gh/hosts.yml --secret   # stored 600, never rendered
+omarchy-replicant track ~/.config/nvim/                  # a whole directory
+omarchy-replicant track ~/.config/gh/hosts.yml --secret  # stored 600, never rendered
 ```
 
-`suggest` is the point: it walks the few places hand-written config actually lives and tells you
-what is not tracked, with the reason. It refuses to propose a symlink, a mise shim, a browser's own
-state, a file another plugin installed, or anything byte-identical to Omarchy's default — and it
-flags a file that holds a credential so you track it as a secret rather than world-readable. In the
-panel it is a card at the bottom of **Configs** with a **Track** button per row. Nothing is added
-until you press it.
+## Big things are reinstalled, not copied
 
-## Themes and plugins come back as themes and plugins
-
-The eight custom themes on the machine this was written on are 556 MB — 400 of it their own `.git`.
-Copying that into a backup repo would be absurd, so Replicant records what it actually needs: the
-name and the git origin of every user theme, and reinstalls them with `omarchy theme install`
-**before** re-applying your theme. Plugins work the same way, including the ones with no obvious
-origin — a plugin you wrote yourself is traced back to your own checkout.
+The eight custom themes on the machine this was built on are **556 MB**, 400 of it their own `.git`.
+Copying that into a backup repo would be absurd, so what travels is the URL.
 
 | | Recorded | Restored with |
 | --- | --- | --- |
@@ -93,9 +89,14 @@ origin — a plugin you wrote yourself is traced back to your own checkout.
 | Plugins | id + version + origin + method | `omarchy plugin add` / `omarchy plugin clone` |
 | Packages | per hostname, official and AUR | your package manager |
 
+Themes are installed **before** the theme name is applied — otherwise `omarchy theme set` fails on
+a machine that does not have the theme yet, and the most visible thing about your setup comes back
+as nothing. Plugins resolve even with no obvious origin: one you wrote yourself is traced back to
+your own checkout.
+
 ## What else it does
 
-- **50 tracked paths**, grouped into eleven areas. Nothing scrolls forever; you open the one you came for.
+- **44 paths out of the box** — 41 configs and 3 secrets — plus whatever you add, grouped into eleven areas. Nothing scrolls forever; you open the one you came for.
 - **Directories, not just files.** `~/.config/nvim/` is one row with a file count; a change anywhere inside it says so, and `.git` inside a tracked tree is never copied.
 - **Change detection that tells the truth.** Every file is compared by content against the copy in your repo, so editing one says so immediately — and putting it back clears the warning by itself. Badges: ● changed here · ↑ saved here, not pushed · ◆ saved on GitHub · ○ untouched default · ⊘ not synced.
 - **24 settings from the panel**, in units people use — the lock screen is *10 min*, not *600*.

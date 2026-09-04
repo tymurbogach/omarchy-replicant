@@ -2394,6 +2394,7 @@ core_status() {
     plugin_version=$(jq -r '.version // ""' "$PLUGIN_DIR/manifest.json" 2>/dev/null || true)
     jq -nc --arg branch "$branch" --arg remote "$remote" --arg remote_name "$remote_name" \
       --arg repo_dir "$REPO_DIR" --arg machine "$MACHINE" --arg plugin_version "$plugin_version" \
+      --arg home "$HOME" \
       --arg last_save "$last_save" --arg last_subject "$last_subject" \
       --argjson dirty "$dirty" --argjson untracked "$untracked" --argjson ahead "$ahead" --argjson behind "$behind" \
       --arg pending "$pending_groups" --argjson configs "$configs_json" --argjson secrets "$secrets_json" \
@@ -2401,7 +2402,7 @@ core_status() {
       --argjson setting_groups "$groups_json" --argjson machines "$machines_json" \
       --arg profile "$(current_profile)" --argjson profiles "$profiles_json" \
       '{initialized:true, branch:$branch, remote:$remote, remote_name:$remote_name,
-        repo_dir:$repo_dir, machine:$machine, plugin_version:$plugin_version,
+        repo_dir:$repo_dir, machine:$machine, plugin_version:$plugin_version, home:$home,
         profile:$profile, profiles:$profiles,
         last_save:$last_save, last_subject:$last_subject,
         dirty:$dirty, untracked:$untracked, ahead:$ahead, behind:$behind, pending:$pending,

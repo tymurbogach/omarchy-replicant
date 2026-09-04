@@ -55,8 +55,8 @@ disk when this machine has unsaved changes, a cloud with an up arrow when there 
 push, a cloud with a down arrow when another machine saved something, a warning when the two have
 diverged, and a plus before you have set anything up.
 
-The panel takes the keyboard too: `1`–`4` for the tabs, `/` to filter, `r` to refresh, `s` to
-save, `c` to collapse every open area, `Esc` to back out. To open it from a keybinding, bind
+The panel takes the keyboard too: `1`–`4` for the tabs, `/` to filter, `a` to jump to *Add more
+files*, `r` to refresh, `s` to save, `c` to collapse every open area, `Esc` to back out. To open it from a keybinding, bind
 `omarchy shell replicant toggle`.
 
 ## 3b. Two machines, one repo

@@ -88,6 +88,15 @@ Panel {
   // different character. Each was rendered against the shell's own font and
   // looked at before being used.
   function mdi(cp) { return String.fromCodePoint(cp) }
+
+  // Paths are shown the way the CLI shows them. A row is about 40 characters
+  // wide once the scope button and five actions have taken their share, and
+  // "/home/cyberdyne" is a third of that spent saying nothing.
+  function pretty(p) {
+    var h = root.repoState.home || ""
+    if (h !== "" && String(p).indexOf(h) === 0) return "~" + String(p).slice(h.length)
+    return String(p)
+  }
   readonly property string icRefresh: root.mdi(0xF0450)    // refresh
   readonly property string icPush: root.mdi(0xF0167)    // cloud-upload
   readonly property string icPull: root.mdi(0xF0162)    // cloud-download
@@ -590,6 +599,13 @@ Panel {
         else if (t === "r") root.refresh()
         else if (t === "s" && root.ready && !root.busy) root.doSavegame()
         else if (t === "c") root.closeAllCards()
+        // Straight to "what else could I be backing up?". The card lives at the
+        // bottom of a long list on purpose — it must not compete with the areas —
+        // which makes it the one thing in the panel that is a scroll away.
+        else if (t === "a") {
+          root.activeTab = "configs"
+          if (!root.isOpen("__suggest")) root.toggleCard("__suggest")
+        }
         // "/" filters where you already are. It used to always jump to Configs,
         // which was right when that was the only list with a filter.
         else if (t === "/") {
@@ -2008,13 +2024,15 @@ Panel {
           // Secrets describe themselves by what they ARE, never by what they
           // contain: a kind, a mode, and for env files the names of the
           // variables. No value ever reaches the screen.
-          text: frow.missing ? (frow.config.src + "  — not on this machine")
+          // The count goes FIRST for a directory. Behind the path it was the
+          // first thing elided, on the one row whose whole point is the count.
+          text: frow.missing ? (root.pretty(frow.config.src) + "  — not on this machine")
               : frow.config.is_dir === true
-                ? (frow.config.src + "  ·  " + frow.config.nfiles + " files")
+                ? (frow.config.nfiles + " files  ·  " + root.pretty(frow.config.src))
               : frow.isSecret
                 ? (frow.config.kind + "  ·  mode " + (frow.config.mode || "?")
                    + (frow.config.var_count > 0 ? "  ·  " + frow.config.var_count + " variables" : ""))
-                : frow.config.src
+                : root.pretty(frow.config.src)
           color: frow.isSecret && frow.config.kind === "private key" && frow.config.mode !== "600" ? Color.urgent : root.dim
           font.family: root.ff; font.pixelSize: Style.font.caption
           elide: Text.ElideRight

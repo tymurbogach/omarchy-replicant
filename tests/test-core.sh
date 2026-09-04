@@ -507,7 +507,7 @@ section "status --json is well-formed"
 st=$(core_status --json 2>/dev/null)
 check "valid JSON"        "0"    "$(printf '%s' "$st" | jq empty >/dev/null 2>&1; echo $?)"
 check "reports initialized" "true" "$(printf '%s' "$st" | jq -r '.initialized')"
-for field in branch remote remote_name repo_dir machine plugin_version last_save dirty untracked ahead behind configs secrets settings categories setting_groups machines; do
+for field in branch remote remote_name repo_dir home machine plugin_version last_save dirty untracked ahead behind configs secrets settings categories setting_groups machines; do
   check "status carries $field" "true" "$(printf '%s' "$st" | jq --arg f "$field" 'has($f)')"
 done
 

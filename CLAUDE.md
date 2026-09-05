@@ -143,7 +143,31 @@ the machine. Check first, and wait rather than restart:
 loginctl show-session "$(loginctl | awk '/'"$USER"'/{print $1; exit}')" -p LockedHint
 ```
 
-`LockedHint=yes` means the only safe action is to leave it alone. This matters more
+`LockedHint=yes` means the only safe action is to leave it alone. **But `LockedHint=no` does not
+mean unlocked.** On 2026-09-05 at 02:05 the shell's lock screen was up and cycling the fingerprint
+prompt while logind reported `LockedHint=no`, `IdleHint=no`, `Active=yes` — every one of them
+wrong. The hint is set by whoever calls `SetLockedHint`, and a shell that was restarted (or killed)
+while locked never gets to set it. Ask the thing that is actually locked instead:
+
+```bash
+journalctl --user --since "60 seconds ago" | grep -q 'pam.subprocess.*omarchy-lock' && echo LOCKED
+```
+
+A lock session runs `omarchy-lock-fingerprint` (or `-password`) through PAM and re-arms it every
+30 s, so a hit inside the last minute is live evidence. `LockedHint=yes` is still conclusive; only
+its `no` is worthless. Check both, and prefer the journal.
+
+Two more things learned the same night, both about the restart itself:
+
+- **`omarchy restart shell` must be allowed to finish.** Killed halfway it leaves the old shell
+  running and starts a second one — two bars, two panels, and a `quickshell -n -p` pair in `ps`.
+- **`omarchy-launch-shell` is a supervisor**, so killing the `quickshell` it watches just makes it
+  spawn a replacement. The one to remove is the orphan whose PPID is 1 (systemd); the supervised
+  one has `omarchy-launch-shell` as its parent and a short-lived child of its own, which is normal.
+
+And a false alarm worth not repeating: **`grim` blocking forever usually means the display is
+DPMS-off**, not that anything is wedged. `hyprctl monitors -j | jq '.[].dpmsStatus'` answers it in
+one line — `false` means powered down and there are no frames to copy. This matters more
 than it looks: the shell restart is the innermost loop of working on this plugin, and
 the person at the keyboard has no way to tell a restart from a crash.
 

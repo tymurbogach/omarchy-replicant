@@ -643,7 +643,13 @@ That is why `category_field`/`setting_field` no longer call their split array `f
   a name. Fourteen mutations found three: the prune pass's `is_excluded` guard, `lid_blocked_by`
   (no test referenced it at all), and `plural`. The first one guards documented, silent data loss.
 
-  It also found the shape to watch for: **a section named after a guarantee it does not check.**
+  **The QML greps in `run-all.sh` deserve the same treatment**, and they are cheaper: plant each
+  trap in a copy of `Panel.qml`, run the guard section, confirm it fires. All seven did on
+  2026-09-05 — an unqualified `state.`, `rowPaddingY`, a `console.log`, a `local/bin` reference, a
+  pasted PUA glyph, a `sync_state` the core never emits, and a missing `Qt.resolvedUrl`. A grep
+  that has never been seen to fail is a grep nobody has tested.
+
+  Mutation also found the shape to watch for: **a section named after a guarantee it does not check.**
   "switching a file off keeps what the repo already had" tested `hypr/monitors.lua`, which is
   profile-scoped out of the box and so never had a `config/` copy to keep — every check in it
   passed whether or not the prune pass honoured the off list.

@@ -31,7 +31,7 @@ and each part has one correct way to be put back.
 | **Hyprland** | copies the Lua | copies, then `hyprctl reload` **and** checks `configerrors` |
 | **Terminals** | wait for a reboot | `omarchy restart terminal` |
 | **Plugins** | commits someone else's source | works out each origin — even for one you wrote — and reinstalls it |
-| **Shortcuts** | snapshots all 227 bindings | tracks only *your* overrides — Omarchy's 227 defaults ship with the distro |
+| **Shortcuts** | snapshots every binding on the machine | tracks only *your* overrides — Omarchy's own defaults ship with the distro |
 | **Reset** | `rm` and re-copy | `omarchy refresh config <file>` |
 
 The panel names the method under every area before you press anything.

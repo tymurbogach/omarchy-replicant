@@ -250,6 +250,32 @@ check_true "the other machine's version is still in the repo" \
 check "…and the desktop's own file was saved as normal" "saved" \
   "$(state_of desktop hypr/input.lua)"
 
+# The escape hatch, which CLAUDE.md and getting-started.md both promise and
+# nothing tested: `save-file <id>` names one file, so it overrules the hold-back
+# and saves THIS machine's version. If it did not, the documentation would be
+# telling people the only way out of an incoming file is to accept it.
+printf 'the desktop insists\n' > "$D/.config/nvim/lua/plugins.lua"
+before_head=$(git -C "$DREPO" rev-parse HEAD)
+on desktop save-file nvim/ -m "config: the desktop's version wins" >/dev/null 2>&1
+check_true "save-file overrules the hold-back and commits" \
+  bash -c '[[ "$(git -C "$1" rev-parse HEAD)" != "$2" ]]' _ "$DREPO" "$before_head"
+check_true "…with this machine's version, not the repo's" \
+  grep -q 'the desktop insists' "$DREPO/config/nvim/lua/plugins.lua"
+check "…and the row goes quiet, because they now match" "saved" "$(state_of desktop nvim/)"
+
+# Put the laptop's version back so the rest of the journey reads as written.
+printf 'return { "a", "b" }\n' > "$D/.config/nvim/lua/plugins.lua"
+on desktop save-file nvim/ -m "config: back to the laptop's" >/dev/null 2>&1
+
+# The record is machine-local and hand-editable, so it is untrusted input. A
+# stale id, a blank line, a comment and a path that tries to climb out must all
+# be nothing worse than ignored — status is what the panel calls on every
+# refresh, and a status that dies renders an empty panel.
+printf 'gone/since.conf\n\n# a comment\n../../etc/passwd\n' \
+  > "$TMP/desktop/replicant/incoming"
+check "a junk incoming record cannot break status" "saved" "$(state_of desktop nvim/)"
+rm -f "$TMP/desktop/replicant/incoming"
+
 on desktop restore --apply --only development --yes >/dev/null 2>&1
 check_true "the desktop picked the edit up" \
   grep -q '"b"' "$D/.config/nvim/lua/plugins.lua"

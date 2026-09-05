@@ -778,12 +778,33 @@ cmd_save_file() {
   # shellcheck disable=SC1090
   source "$CORE" 2>/dev/null || true
   local src; src=$(resolve_manifest_src "$id") || fail "unknown id: $id"
-  [[ -f "$src" ]] || fail "$src does not exist on this machine"
-  local dst="$CONFIG_DIR/$id"
-  case "$id" in ssh/*|env/*) dst="$SECRETS_DIR/$id" ;; esac
-  mkdir -p "$(dirname "$dst")"
-  if [[ "$dst" == "$SECRETS_DIR"/* ]]; then install -m 600 "$src" "$dst"; else cp -f "$src" "$dst"; fi
-  local repo_rel="${dst#$REPO_DIR/}"
+
+  # Through the core's own answers, not a second copy of them. This function
+  # used to work out the destination itself and got all three cases wrong:
+  #
+  #   * `[[ -f "$src" ]]` is false for a DIRECTORY entry, so `save-file nvim/`
+  #     died with "does not exist on this machine" — and that command is the
+  #     documented escape hatch for a file another machine has a newer copy of.
+  #   * `"$CONFIG_DIR/$id"` ignores scope, so a profile-scoped entry was written
+  #     to the shared tree while every other pass read it from
+  #     profiles/<profile>/. repo_path_for is meant to be the only thing that
+  #     knows where a copy lives, precisely so a file cannot be saved to one
+  #     path and restored from another.
+  #   * `case "$id" in ssh/*|env/*)` keys on the path prefix — the exact bug
+  #     hard rule 11 exists for. A secret the user tracked under any other name
+  #     (`gh/hosts.yml`) was written into config/ at 644 with the token in it,
+  #     next to the correct 600 copy in secrets/. The panel's per-file Save
+  #     button calls this command, so it was one click away on any such row.
+  local dst; dst=$(repo_copy_for_rel "$id")
+  if is_dir_entry "$id"; then
+    [[ -d "${src%/}" ]] || fail "${src%/} does not exist on this machine"
+    copy_tree_into_repo "$src" "$dst" || fail "could not copy $id into the repo"
+  else
+    [[ -f "$src" ]] || fail "$src does not exist on this machine"
+    mkdir -p "$(dirname "$dst")"
+    if is_secret_rel "$id"; then install -m 600 "$src" "$dst"; else cp -f "$src" "$dst"; fi
+  fi
+  local repo_rel="${dst%/}"; repo_rel="${repo_rel#"$REPO_DIR"/}"
   if git_repo diff --quiet -- "$repo_rel" 2>/dev/null && ! git_repo status --porcelain -- "$repo_rel" 2>/dev/null | grep -q .; then
     ok "$id is already saved — nothing to commit"; return 0
   fi

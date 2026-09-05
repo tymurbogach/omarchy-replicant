@@ -290,6 +290,58 @@ check "a real file at that path is left alone" "1" "$(ls "$PATH_LINK" 2>/dev/nul
 check_false "…and link refuses to clobber it" "$CLI" link
 rm -f "$PATH_LINK"
 
+section "save-file asks the core where a copy goes"
+# It used to work the destination out itself, in three lines, and got all three
+# cases wrong. The panel's per-file Save button calls this command.
+#
+# 1. A DIRECTORY entry. `[[ -f "$src" ]]` is false for one, so `save-file nvim/`
+#    died with "does not exist on this machine" — and that command is the
+#    documented escape hatch for a file another machine has a newer copy of.
+mkdir -p "$HOME/.config/nvim/lua"
+printf 'require("plugins")\n' > "$HOME/.config/nvim/init.lua"
+printf 'return { "a" }\n'     > "$HOME/.config/nvim/lua/plugins.lua"
+run savegame --auto --no-push >/dev/null 2>&1
+printf 'return { "a", "b" }\n' > "$HOME/.config/nvim/lua/plugins.lua"
+out=$(run save-file nvim/)
+check_true "save-file takes a directory entry" \
+  grep -q '"b"' "$REPO/config/nvim/lua/plugins.lua"
+check_false "…and still refuses one that is not on this machine" \
+  bash -c 'rm -rf "$1/.config/nvim"; "$2" save-file nvim/' _ "$HOME" "$CLI"
+
+# 2. A PROFILE-SCOPED entry. It wrote to the shared tree while every other pass
+#    read from profiles/<profile>/ — repo_path_for is meant to be the only thing
+#    that knows where a copy lives, so that a file cannot be saved to one path
+#    and restored from another.
+printf 'monitor = eDP-1\n' > "$HOME/.config/hypr/monitors.lua"
+run scope hypr/monitors.lua profile >/dev/null 2>&1
+run savegame --auto --no-push >/dev/null 2>&1
+printf 'monitor = eDP-1, changed\n' > "$HOME/.config/hypr/monitors.lua"
+run save-file hypr/monitors.lua >/dev/null 2>&1
+check "…writes nothing into the shared tree" "0" \
+  "$(ls "$REPO/config/hypr/monitors.lua" 2>/dev/null | wc -l)"
+# Whichever profile this fake machine guessed itself into — the point is that
+# the copy is under profiles/, not that it is under a particular name.
+check "…and the profile copy carries the change" "1" \
+  "$(grep -rl changed "$REPO/profiles/" --include=monitors.lua 2>/dev/null | wc -l)"
+
+# 3. A SECRET the user tracked under a name that is neither ssh/ nor env/. The
+#    old code keyed on the path prefix — the exact bug hard rule 11 exists for —
+#    and wrote the credential into config/ at 644 beside the correct 600 copy.
+#    Assembled from pieces so this file holds no scannable token.
+P_GH="gh""o_"
+mkdir -p "$HOME/.config/gh"
+printf 'github.com:\n  oauth_token: %sNOTREAL0000000000000000000000000000\n' "$P_GH" \
+  > "$HOME/.config/gh/hosts.yml"
+run track "$HOME/.config/gh/hosts.yml" --secret >/dev/null 2>&1
+run savegame --auto --no-push >/dev/null 2>&1
+printf 'github.com:\n  oauth_token: %sNOTREAL1111111111111111111111111111\n' "$P_GH" \
+  > "$HOME/.config/gh/hosts.yml"
+run save-file gh/hosts.yml >/dev/null 2>&1
+check "a tracked secret is never written into config/" "0" \
+  "$(ls "$REPO/config/gh/hosts.yml" 2>/dev/null | wc -l)"
+check "…and its copy in secrets/ is 600" "600" \
+  "$(stat -c%a "$REPO/secrets/gh/hosts.yml" 2>/dev/null || echo none)"
+
 section "the safety net you can actually reach"
 # Every write this plugin makes keeps what it overwrote as <file>.bak.<epoch>.
 # For four releases the only code that could FIND one was purge, which removes

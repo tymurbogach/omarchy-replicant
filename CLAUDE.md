@@ -53,6 +53,7 @@ the truth:
 | What does closing the lid do? | `99-lid.conf`, which this plugin wrote | logind — a `block` inhibitor makes the file inert (`lid_blocked_by`) |
 | Which theme is on? | the name saved in the repo | `omarchy-theme-current`, compared normalised |
 | Is the session locked? | `LockedHint` | the lock's own PAM session in the journal |
+| Where does this file's copy live? | a path built on the spot | `repo_copy_for_rel` → `is_secret_rel` + `repo_path_for` |
 
 Every one of those shipped, and every one looked correct in review. Before writing a reader for
 anything, ask which side of the line it sits on: **a value read back from a file this plugin wrote

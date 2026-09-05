@@ -1593,9 +1593,12 @@ core_backup() {
   # sweeps config/ and the profile tree, never state/ — so a retired file would
   # sit there looking current. Only THIS machine's directory is touched; another
   # machine's inventory is not ours to tidy.
+  # Only names a RELEASED version wrote. Two more were in this list — sistema.txt
+  # and packages.txt — from before the plugin was published, so no user's repo
+  # can contain them and no upgrade path leads through them. One of them was
+  # also the only Spanish string left in the source.
   local _retired
-  for _retired in system.txt mise.txt npm-global.txt containers.txt \
-                  system-services.txt sistema.txt packages.txt; do
+  for _retired in system.txt mise.txt npm-global.txt containers.txt system-services.txt; do
     rm -f "$STATE_DIR/$_retired"
   done
 

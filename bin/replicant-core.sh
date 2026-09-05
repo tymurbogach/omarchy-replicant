@@ -428,6 +428,53 @@ guess_profile() {
   if [[ -d /proc/acpi/button/lid ]]; then echo laptop; else echo desktop; fi
 }
 
+# ensure_profile_recorded — write down which profile THIS machine is in, once,
+# if nobody has said.
+#
+# guess_profile asks the chassis, so every laptop guesses `laptop`. Two laptops
+# on one repo therefore both wrote profiles/laptop/config/hypr/monitors.lua and
+# the second save silently overwrote the first machine's only backup of its
+# screen layout — reproduced, and it eats the one file that is profile-scoped
+# out of the box. This is the bug state/<hostname>/ was introduced to fix, one
+# level up: profiles are named by ROLE, and roles collide.
+#
+# Recording the guess makes the collision visible to the next machine, which
+# then falls back to its hostname — unique by construction. It only ever ASSIGNS
+# and never reassigns, so an existing machine keeps the profile it already has
+# and nothing moves in a repo that is already working.
+ensure_profile_recorded() {
+  [[ -d "$REPO_DIR/.git" ]] || return 0
+  [[ -n "${REPLICANT_PROFILE:-}" ]] && return 0
+  profile_for_machine "$MACHINE" >/dev/null 2>&1 && return 0
+  local want taken=0 line k v d
+  want=$(guess_profile)
+
+  # Claimed by name: another machine is recorded under this role.
+  while IFS= read -r line; do
+    k="${line%%=*}"; v="${line#*=}"
+    k="${k//[[:space:]]/}"; v="${v//[[:space:]]/}"
+    [[ -z "$k" ]] && continue
+    [[ "$v" == "$want" && "$k" != "$MACHINE" ]] && { taken=1; break; }
+  done < <(read_profile_map)
+
+  # Claimed by occupancy: the tree exists but nobody is recorded under it —
+  # which is every repo written before this check existed. The tree is only
+  # SOMEBODY ELSE'S if somebody else has actually saved here; on a repo with one
+  # machine it is that machine's own, and taking a different name would orphan
+  # its backup instead of protecting it.
+  if (( ! taken )) && [[ -d "$REPO_DIR/profiles/$want" ]]; then
+    for d in "$STATE_ROOT"/*/; do
+      [[ -d "$d" ]] || continue
+      [[ "$(basename "$d")" == "$MACHINE" ]] && continue
+      taken=1; break
+    done
+  fi
+
+  (( taken )) && want="$MACHINE"
+  core_profile_set "$want" >/dev/null 2>&1 || true
+  return 0
+}
+
 read_profile_map() {
   [[ -f "$PROFILE_FILE" ]] || return 0
   sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$PROFILE_FILE" 2>/dev/null || true
@@ -1353,6 +1400,10 @@ GI
 
 core_backup() {
   ensure_repo_layout
+  # Before anything is copied, because it decides WHERE profile-scoped copies
+  # go. Called here and not from ensure_repo_layout, which core_profile_set
+  # calls itself.
+  ensure_profile_recorded
   echo "→ Copying configuration (fixed MANIFEST, savegame)" >&2
   copied=0; missing=0
   local skipped=0 held=0

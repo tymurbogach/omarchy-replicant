@@ -213,6 +213,37 @@ check_true "…alongside the laptop's own"            test -d "$LREPO/state/lapt
 check_true "…and so is the desktop's profile tree"  \
   test -f "$LREPO/profiles/desktop/config/hypr/monitors.lua"
 
+section "two machines cannot be handed the same profile"
+# guess_profile asks the chassis, so every laptop guesses `laptop`. Two laptops
+# on one repo both wrote profiles/laptop/config/hypr/monitors.lua and the second
+# save silently overwrote the first machine's only backup of its screen layout —
+# the bug state/<hostname>/ was introduced to fix, one level up, and it eats the
+# one file that is profile-scoped out of the box.
+#
+# Recording the guess is what makes the collision visible to the next machine,
+# which then falls back to its hostname. It only ever ASSIGNS: a machine that
+# already has a profile keeps it, so nothing moves in a repo already working.
+# A third machine whose chassis guess collides with a tree that is already
+# occupied. Nobody in this fixture is RECORDED (it forces REPLICANT_PROFILE),
+# which is deliberately the harder case: it is what every repo written before
+# this check looks like.
+THIRD="$TMP/lap2"
+mkdir -p "$THIRD/home/.config/hypr"
+printf 'monitor = eDP-2, 2880x1800\n' > "$THIRD/home/.config/hypr/monitors.lua"
+LAPTOP_KEPT=$(cat "$LREPO/profiles/laptop/config/hypr/monitors.lua")
+HOME="$THIRD/home" OMARCHY_REPLICANT_HOME="$THIRD/rep" REPLICANT_MACHINE=lap2 \
+  "$CLI" clone "$TMP/origin.git" >/dev/null 2>&1
+T3="$THIRD/rep/repo"
+git -C "$T3" config user.email t@example.com; git -C "$T3" config user.name Test
+HOME="$THIRD/home" OMARCHY_REPLICANT_HOME="$THIRD/rep" REPLICANT_MACHINE=lap2 \
+  "$CLI" savegame --auto >/dev/null 2>&1
+check_true "a machine whose guess is taken gets its own tree" \
+  test -f "$T3/profiles/lap2/config/hypr/monitors.lua"
+check "…and the machine that had the name keeps its backup" "$LAPTOP_KEPT" \
+  "$(cat "$T3/profiles/laptop/config/hypr/monitors.lua" 2>/dev/null)"
+check "…which is not the newcomer's layout" "0" \
+  "$(grep -c '2880x1800' "$T3/profiles/laptop/config/hypr/monitors.lua" 2>/dev/null || true)"
+
 section "which way does the difference point"
 # The one mistake in this tool that destroys work belonging to somebody else.
 # "Is this file the same as its copy in the repo" has two opposite answers —

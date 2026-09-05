@@ -136,6 +136,17 @@ shapes that look fine with a single machine:
 - **`state/` is scoped by hostname** (`state/<machine>/`). A shared inventory meant each machine
   overwrote the other's package list on every save and every pull looked like a change.
   `ensure_repo_layout` migrates a flat `state/*.txt` under the current machine.
+- **A profile is claimed, never assumed.** `guess_profile` asks the chassis, so every laptop
+  guesses `laptop` — and two laptops on one repo both wrote
+  `profiles/laptop/config/hypr/monitors.lua`, the second save silently overwriting the first
+  machine's only backup of its screen layout. That is the bug `state/<hostname>/` was introduced
+  to fix, one level up: profiles are named by ROLE, and roles collide. `ensure_profile_recorded`
+  writes the resolved name into `.replicant-profiles` on the first save, so the next machine can
+  see the role is taken and fall back to its hostname, which is unique by construction. A role
+  counts as taken when another machine is *recorded* under it **or** when its tree exists and some
+  other machine has saved into this repo — the second half is what covers every repo written
+  before the check existed. It only ever assigns: a machine that already has a profile keeps it,
+  so nothing moves in a repo that is already working.
 - **Every tracked file has a scope** — `shared`, `profile` or `off` — in `.replicant-sync` **in the
   repo**, because "monitors are machine-specific" is a fact about the setup, not about one machine.
   `profile` is the one that makes two machines practical: the file lives at

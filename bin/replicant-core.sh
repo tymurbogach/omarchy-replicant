@@ -3339,6 +3339,38 @@ local_only_plugins() {
   done
 }
 
+# cloned_plugins — ids whose only origin is `omarchy plugin clone <built-in>`.
+#
+# These have a recorded origin, so local_only_plugins never names them and
+# doctor reported "every installed plugin can be reinstalled from its origin" —
+# which is true of the plugin and false of the work in it. `clone` reinstalls
+# the BUILT-IN; a clone exists because somebody edited it, and the edits are the
+# whole reason it is there. On the machine this was written on that was one
+# hand-written indicator and a Matrix-rain lock screen, shader and all, existing
+# nowhere else on earth.
+#
+# No diff against the built-in: `clone` means edited by construction, the built-in
+# lives at a path this function would have to go hunting for, and a check that
+# can be wrong about whether your work is backed up is worse than one that always
+# tells you where it stands. Same answer as a hand-made theme — track the
+# directory.
+cloned_plugins() {
+  local pmf pid pdir porigin pmethod
+  for pmf in "$HOME/.config/omarchy/plugins"/*/manifest.json; do
+    [[ -f "$pmf" ]] || continue
+    pdir="$(dirname "$pmf")"
+    pid=$(jq -r '.id // empty' "$pmf" 2>/dev/null) || continue
+    [[ -n "$pid" ]] || continue
+    IFS=$'\t' read -r porigin pmethod < <(resolve_plugin_origin "$pdir" "$pid" "$pmf")
+    [[ "$pmethod" == "clone" ]] && printf '%s\t%s\n' "$pid" "$pdir"
+  done
+  # The loop's last `&&` decides the exit status, so a run whose final plugin is
+  # not a clone "failed" — and under the CLI's `set -e` that killed doctor in
+  # the middle, silently, still exiting 0 through a pipe. Same shape as the
+  # `grep -q` under pipefail trap: an incidental status read as an error.
+  return 0
+}
+
 # Plugins are not files to copy back — they are repos to reinstall. The saved
 # inventory records each one's id and git origin so a second machine can be
 # rebuilt with the command Omarchy itself provides.
@@ -3518,6 +3550,7 @@ elif [[ "${1:-}" == "profile-set" ]]; then core_profile_set "${2:-}"
 elif [[ "${1:-}" == "profile-get" ]]; then current_profile
 elif [[ "${1:-}" == "profile-list" ]]; then list_profiles
 elif [[ "${1:-}" == "local-only-plugins" ]]; then local_only_plugins
+elif [[ "${1:-}" == "cloned-plugins" ]]; then cloned_plugins
 elif [[ "${1:-}" == "local-only-themes" ]]; then local_only_themes
 elif [[ "${1:-}" == "track" ]]; then shift; core_track "$@"
 elif [[ "${1:-}" == "untrack" ]]; then core_untrack "${2:-}"

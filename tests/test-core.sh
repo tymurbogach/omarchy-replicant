@@ -447,6 +447,45 @@ STUB
 check "nobody holding it says nothing" "" \
   "$(PATH="$TMP/fakebin:$PATH" lid_blocked_by)"
 
+section "a cloned plugin has an origin and still cannot be recovered"
+# `omarchy plugin clone <built-in>` is a real origin, so local_only_plugins never
+# named these and doctor reported "every installed plugin can be reinstalled from
+# its origin" — true of the plugin, false of the work in it. A clone exists
+# because somebody edited it; reinstalling gives back the stock built-in and the
+# edits are gone. On the machine this was written on that was a hand-written
+# indicator and a Matrix-rain lock screen, shader and all, existing nowhere else.
+mkdir -p "$HOME/.config/omarchy/plugins/mine.lock"
+# The key is .omarchy.clonedFrom, nested — a top-level clonedFrom is ignored,
+# which is what a first draft of this test got wrong.
+printf '{"id":"mine.lock","version":"1.0.0","omarchy":{"clonedFrom":"omarchy.lock"}}\n' \
+  > "$HOME/.config/omarchy/plugins/mine.lock/manifest.json"
+check "a clone is named as one" "mine.lock" \
+  "$(cloned_plugins | awk -F'\t' '$1=="mine.lock"{print $1}')"
+# The loop's last `&&` used to decide the exit status, so a run whose final
+# plugin was not a clone "failed" — and under the CLI's `set -e` that killed
+# doctor in the middle, silently, still exiting 0 through a pipe.
+mkdir -p "$HOME/.config/omarchy/plugins/zz.plain"
+printf '{"id":"zz.plain","version":"1.0.0"}\n' \
+  > "$HOME/.config/omarchy/plugins/zz.plain/manifest.json"
+check_true "…and it succeeds even when the last plugin is not one" cloned_plugins
+rm -rf "$HOME/.config/omarchy/plugins/zz.plain"
+
+# The answer is the same as for a hand-made theme: track the directory. Prove it
+# round-trips, including the binaries a QML plugin carries.
+printf 'import QtQuick\nItem { }\n' > "$HOME/.config/omarchy/plugins/mine.lock/MatrixRain.qml"
+head -c 512 /dev/urandom > "$HOME/.config/omarchy/plugins/mine.lock/matrix.frag.qsb"
+core_track "$HOME/.config/omarchy/plugins/mine.lock/" >/dev/null 2>&1
+core_backup >/dev/null 2>&1
+before_clone=$(find "$HOME/.config/omarchy/plugins/mine.lock" -type f -exec md5sum {} + | sort | md5sum)
+rm -rf "$HOME/.config/omarchy/plugins/mine.lock"
+core_restore_file "omarchy/plugins/mine.lock/" >/dev/null 2>&1
+check "a tracked clone comes back byte for byte" "$before_clone" \
+  "$(find "$HOME/.config/omarchy/plugins/mine.lock" -type f -exec md5sum {} + 2>/dev/null | sort | md5sum)"
+check_true "…including the compiled shader beside the QML" \
+  test -f "$HOME/.config/omarchy/plugins/mine.lock/matrix.frag.qsb"
+core_untrack "omarchy/plugins/mine.lock/" >/dev/null 2>&1
+rm -rf "$HOME/.config/omarchy/plugins/mine.lock"
+
 section "counts read as English"
 # Every count the CLI and the panel print goes through this one function, and
 # nothing asserted the singular.

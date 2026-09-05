@@ -1073,6 +1073,28 @@ cmd_doctor() {
     printf '      push them to a git remote, or they are lost with this machine\n' >&2
   fi
 
+  # A clone HAS an origin, so the check above calls it fine — and it is, about
+  # the plugin. It is not fine about the work in it: `omarchy plugin clone`
+  # reinstalls the BUILT-IN, and a clone exists because somebody edited it.
+  # Reinstalling gives back the stock version and the edits are gone. The
+  # inventory says so in its own header; nothing said it to the person.
+  local cl n_cl cl_id cl_dir untracked_clones=""
+  cl=$(bash "$CORE" cloned-plugins 2>/dev/null || true)
+  n_cl=$(printf '%s' "$cl" | grep -c . || true)
+  if (( n_cl > 0 )); then
+    while IFS=$'\t' read -r cl_id cl_dir; do
+      [[ -n "$cl_id" ]] || continue
+      is_tracked_path "$cl_dir/" 2>/dev/null && continue
+      untracked_clones+="      $cl_id  →  omarchy-replicant track ${cl_dir/#$HOME/\~}/"$'\n'
+    done <<< "$cl"
+  fi
+  if [[ -n "$untracked_clones" ]]; then
+    chk_warn "$(plural "$(printf '%s' "$untracked_clones" | grep -c .)" "cloned plugin") would come back as the built-in, losing your edits:"
+    printf '%s' "$untracked_clones" >&2
+  elif (( n_cl > 0 )); then
+    chk_ok "$(plural "$n_cl" "cloned plugin") tracked, so your edits come back too"
+  fi
+
   # Two machines, one repo, upgraded on different days. Until every machine runs
   # 0.7.0 or newer, the older one still prunes what this one tracks — it has no
   # guard to check, because the guard did not exist when it shipped.

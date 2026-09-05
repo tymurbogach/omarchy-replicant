@@ -219,6 +219,16 @@ Same shape as plugins, and the honest caveat is the same: reinstalling gets the 
 local edits. A hand-made theme has no origin — `doctor` names it and the answer is to track its
 directory.
 
+**A cloned plugin is the same hole with an origin in front of it.** `omarchy plugin clone <built-in>`
+is a real, recorded origin, so `local_only_plugins` never named one and `doctor` reported "every
+installed plugin can be reinstalled from its origin" — true of the plugin, false of the work in it.
+A clone exists *because* somebody edited it; reinstalling gives back the stock built-in. On this
+machine that was a hand-written bar indicator and a Matrix-rain lock screen, compiled shader and
+all, existing nowhere else. `cloned_plugins` names them and `doctor` says to track the directory,
+which round-trips binaries intact. No diff against the built-in: `clone` means edited by
+construction, the built-in lives at a path this would have to hunt for, and a check that can be
+wrong about whether your work is backed up is worse than one that always tells you where it stands.
+
 Theme names are compared **normalised**: `omarchy-theme-current` answers "Enter The Matrix" and the
 file records "enter-the-matrix". They differ in case *and* separator, so case-folding alone still
 made every restore claim the theme needed re-applying.

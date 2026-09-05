@@ -35,77 +35,6 @@ CLI output, docs).
   themes, idle/lock, keybindings, the bar — invoke the `omarchy` skill rather than improvising
   from memory.
 
-## Hard rules
-
-1. **Never edit `/usr/share/omarchy/` or `~/.local/share/omarchy`** (symlink to the pacman
-   package). It gets overwritten on every `omarchy update` — any change there is lost, and it
-   can also break "is this identical to the default" detection (`is_default_file()` in
-   `bin/replicant-core.sh`), which compares directly against those paths.
-2. **Any operation that writes to the real system is dry-run by default** (`reset-all`,
-   `restore`) and **backs up as `.bak.<epoch>`** before overwriting an existing file (`poner()`
-   in `bin/replicant-core.sh`). Don't add a new writing command that skips this pattern.
-3. **`reset-all` (everything → Omarchy defaults) and `restore --apply --all` (everything → what's
-   saved on GitHub) are two distinct actions** — never merge them. The UI (`Panel.qml`, the
-   **Restore** tab) and the CLI keep them as separate commands so the user never confuses
-   "factory" with "what's in my repo".
-4. **Any visual change to `Panel.qml`/`BarWidget.qml` is verified with a real screenshot**
-   (`grim`) after reloading the plugin — a process not crashing, or just reading the QML, is not
-   enough. `repoState.configs[].sync_state` is the source of truth for the badges
-   (● unsaved / ↑ unpushed / ◆ saved / ○ default / ⊘ off / · missing); if a new state is added,
-   verify it by actually triggering it on a test file, not just by reading the code.
-5. **Global destructive commands ask for a single summary confirmation** (not per-file) unless
-   `--yes`/`-y` is passed explicitly — this applies to `reset-all` and `restore --apply --all`.
-6. **The panel never opens a terminal the user has to dismiss.** Editing a file launches the
-   editor directly (`omarchy-launch-editor`), a diff renders inline in the panel, and a
-   destructive action confirms in the panel and then runs headless with `--yes`. The one
-   exception is `create` and `clone`, which genuinely prompt (GitHub login, a repo URL).
-   `omarchy-launch-floating-terminal-with-presentation` wraps whatever it runs in the Omarchy
-   logo *and* a "press a key to close" prompt, so using it for a read-only action costs two
-   interactions to see one file. The user asked for this to stop; don't reintroduce it.
-7. **The UI never looks for the CLI on `PATH`.** `omarchy plugin add` runs no install hook, so
-   nothing puts `omarchy-replicant` in `~/.local/bin` — a fresh install that pointed there left
-   every button in the panel silently doing nothing while the bar icon looked fine. All three QML
-   entry points resolve it with `Qt.resolvedUrl("bin/omarchy-replicant")`, which is correct even
-   for a symlinked dev checkout. `link`/`unlink` are the opt-in for terminal use.
-   `tests/run-all.sh` fails if a `.qml` mentions `local/bin` or drops the `Qt.resolvedUrl` form.
-8. **The plugin writes nothing outside its own folder and `~/.local/share/omarchy-replicant/`, and
-   `purge` can name every trace of it.** That includes the `.bak.<epoch>` copies it leaves beside
-   the files it overwrites — and a *directory* entry's backup is a whole tree next to the original
-   (`~/.config/nvim.bak.<epoch>`). Globbing `"$src".bak.*` on an entry whose src ends in `/` looks
-   *inside* the directory and finds nothing, and `rm -f` on a directory silently does nothing, so
-   purge listed the tree and then left it. Strip the trailing slash, glob with `ls -1d`, remove
-   with `rm -rf`. `tests/test-cli.sh` plants a directory backup and fails on both halves.
-   Anything a future feature leaves elsewhere must be listed in `cmd_purge`, so removing the
-   plugin can never leave a user guessing what is still on disk. `purge` is dry-run by default
-   and never touches the GitHub repo.
-9. **The restore plan is derived from `MANIFEST`, never hand-written.** `plan_for_category()`
-   computes "repo path → destination → mode" from the one list. There used to be a second,
-   hand-maintained copy of that mapping inside `cmd_restore`, which meant adding a file to
-   `MANIFEST` backed it up but never restored it — a bug you only discover on the day you need
-   the backup. `tests/test-core.sh` fails if any saved file is absent from every category's plan.
-10. **Restoring is not copying.** Every category declares what has to run afterwards
-   (`apply_for_category`): Hyprland gets `hyprctl reload` plus a `configerrors` check, terminals
-   get `omarchy restart terminal`, the theme is replayed through `omarchy-theme-set` rather than
-   copied, plugins are reinstalled with `omarchy plugin add` from the recorded origin. This is the
-   plugin's stated selling point ("the right way to back up Omarchy"), it is shown in the panel
-   under every open category, and it is in the README table — don't add a category that copies
-   files and stops.
-11. **Never render a secret — and ask the entry, not the filename.** Every rule that protects a
-   secret used to key on the path prefix `ssh/` or `env/`, which held for the three the plugin
-   ships. `track --secret` then let a user add one under any name — `~/.config/gh/hosts.yml`
-   derives to `gh/hosts.yml` — and all of them silently stopped applying: it was copied *into*
-   `secrets/` and read back *out of* `config/` (so the panel called a saved file unsaved and
-   revert-to-repo could never find it), it would have been restored at mode 644 with an OAuth
-   token in it, and `core_diff` did not recognise it as a secret at all. `is_secret_rel()` asks
-   `TRACKED_SECRETS` instead; `repo_copy_for_rel`, `restore_mode_for` and `core_diff` all go
-   through it. `tests/test-core.sh` plants a token and greps every output for it. `core_diff` refuses to print the contents of any tracked secret
-   (`.pub` files excepted) and says only whether they differ; `build_secrets_json` carries a kind,
-   a mode and variable *names*, never values. A diff on screen is a diff on any screen share.
-12. **Names that are already taken.** `state` is a built-in property of every QML Item (see below),
-   and `GROUPS` is a bash special variable — `local GROUPS=(...)` aborts the enclosing function
-   with "variable may not be assigned value", which silently turned `restore` into a no-op for
-   an entire release. Before naming a shell array or a QML property, check it is yours to use.
-
 ## The one bug this project keeps having
 
 Four sections below are the same bug wearing different clothes, and naming it once is worth more
@@ -129,20 +58,337 @@ Every one of those shipped, and every one looked correct in review. Before writi
 anything, ask which side of the line it sits on: **a value read back from a file this plugin wrote
 is reporting intent, not effect.** They agree right up until something else has an opinion.
 
-## Adding to this file
+## Hard rules
 
-It is six hundred lines. Nobody reads six hundred lines before touching code — including the
-assistant it is written for — so every addition spends attention the existing rules were paying
-for. It grew by a fifth in a single session, which is how a set of rules quietly becomes an
-archive.
+1. **Never edit `/usr/share/omarchy/` or `~/.local/share/omarchy`** (symlink to the pacman
+   package). It gets overwritten on every `omarchy update` — any change there is lost, and it
+   can also break "is this identical to the default" detection (`is_default_file()` in
+   `bin/replicant-core.sh`), which compares directly against those paths.
+2. **Any operation that writes to the real system is dry-run by default** (`reset-all`,
+   `restore`) and **backs up as `.bak.<epoch>`** before overwriting an existing file
+   (`install_file` / `install_tree` in `bin/replicant-core.sh`). Don't add a new writing command that skips this pattern.
+3. **`reset-all` (everything → Omarchy defaults) and `restore --apply --all` (everything → what's
+   saved on GitHub) are two distinct actions** — never merge them. The UI (`Panel.qml`, the
+   **Restore** tab) and the CLI keep them as separate commands so the user never confuses
+   "factory" with "what's in my repo".
+4. **Any visual change to `Panel.qml`/`BarWidget.qml` is verified with a real screenshot**
+   (`grim`) after reloading the plugin — a process not crashing, or just reading the QML, is not
+   enough. `repoState.configs[].sync_state` is the source of truth for the badges
+   (● unsaved / ↓ incoming / ↑ unpushed / ◆ saved / ○ default / ⊘ off / · missing); if a new state is added,
+   verify it by actually triggering it on a test file, not just by reading the code.
+5. **Global destructive commands ask for a single summary confirmation** (not per-file) unless
+   `--yes`/`-y` is passed explicitly — this applies to `reset-all` and `restore --apply --all`.
+6. **The panel never opens a terminal the user has to dismiss.** Editing a file launches the
+   editor directly (`omarchy-launch-editor`), a diff renders inline in the panel, and a
+   destructive action confirms in the panel and then runs headless with `--yes`. The one
+   exception is `create` and `clone`, which genuinely prompt (GitHub login, a repo URL).
+   `omarchy-launch-floating-terminal-with-presentation` wraps whatever it runs in the Omarchy
+   logo *and* a "press a key to close" prompt, so using it for a read-only action costs two
+   interactions to see one file. The user asked for this to stop; don't reintroduce it.
+7. **The UI never looks for the CLI on `PATH`.** `omarchy plugin add` runs no install hook, so
+   nothing puts `omarchy-replicant` in `~/.local/bin` — a fresh install that pointed there left
+   every button in the panel silently doing nothing while the bar icon looked fine. All three QML
+   entry points resolve it with `Qt.resolvedUrl("bin/omarchy-replicant")`, which is correct even
+   for a symlinked dev checkout. `link`/`unlink` are the opt-in for terminal use.
+   `tests/run-all.sh` fails if a `.qml` mentions `local/bin` or drops the `Qt.resolvedUrl` form.
+8. **The plugin writes nothing outside its own folder and `~/.local/share/omarchy-replicant/`, and
+   `purge` can name every trace of it** — including the `.bak.<epoch>` copies it leaves beside the
+   files it overwrites, which for a directory entry is a whole tree next to the original. Anything
+   a future feature leaves elsewhere must be listed in `cmd_purge`. `purge` is dry-run by default
+   and never touches the GitHub repo. See *The safety net has to be reachable* for the glob that
+   finds them and why there is only one copy of it.
+9. **The restore plan is derived from `MANIFEST`, never hand-written.** `plan_for_category()`
+   computes "repo path → destination → mode" from the one list. There used to be a second,
+   hand-maintained copy of that mapping inside `cmd_restore`, which meant adding a file to
+   `MANIFEST` backed it up but never restored it — a bug you only discover on the day you need
+   the backup. `tests/test-core.sh` fails if any saved file is absent from every category's plan.
+10. **Restoring is not copying.** Every category declares what has to run afterwards
+   (`apply_for_category`): Hyprland gets `hyprctl reload` plus a `configerrors` check, terminals
+   get `omarchy restart terminal`, the theme is replayed through `omarchy-theme-set` rather than
+   copied, plugins are reinstalled with `omarchy plugin add` from the recorded origin. This is the
+   plugin's stated selling point ("the right way to back up Omarchy"), it is shown in the panel
+   under every open category, and it is in the README table — don't add a category that copies
+   files and stops.
+11. **Never render a secret — and ask the entry, not the filename.** Every rule that protects a
+   secret used to key on the path prefix `ssh/` or `env/`, which held for the three the plugin
+   ships. `track --secret` then let a user add one under any name — `~/.config/gh/hosts.yml`
+   derives to `gh/hosts.yml` — and all of them silently stopped applying: it was copied *into*
+   `secrets/` and read back *out of* `config/` (so the panel called a saved file unsaved and
+   revert-to-repo could never find it), it would have been restored at mode 644 with an OAuth
+   token in it, and `core_diff` did not recognise it as a secret at all. `is_secret_rel()` asks
+   `TRACKED_SECRETS` instead; `repo_copy_for_rel`, `restore_mode_for` and `core_diff` all go
+   through it. `tests/test-core.sh` plants a token and greps every output for it. `core_diff` refuses to print the contents of any tracked secret
+   (`.pub` files excepted) and says only whether they differ; `build_secrets_json` carries a kind,
+   a mode and variable *names*, never values. A diff on screen is a diff on any screen share.
+12. **Names that are already taken.** `state` is a built-in property of every QML Item,
+   and `GROUPS` is a bash special variable — `local GROUPS=(...)` aborts the enclosing function
+   with "variable may not be assigned value", which silently turned `restore` into a no-op for
+   an entire release. Before naming a shell array or a QML property, check it is yours to use.
 
-- A section earns its place by describing a bug that **cost more than an hour** and that
-  **re-reading the code would not have prevented**. Everything else belongs in a comment beside
-  the thing it is about, where it is read at exactly the right moment instead of hopefully.
-- **Rule first, story second.** Several sections here still open with six lines of narrative
-  before saying what to do.
-- A new instance of an existing rule is **a row in that rule's table**, not a second section.
-- Adding something is a good moment to check whether something else has stopped being true.
+# How the data works
+
+## Two machines, one repo
+
+The plugin is built for a desktop *and* a laptop sharing one private repo, which rules out two
+shapes that look fine with a single machine:
+
+- **`state/` is scoped by hostname** (`state/<machine>/`). A shared inventory meant each machine
+  overwrote the other's package list on every save and every pull looked like a change.
+  `ensure_repo_layout` migrates a flat `state/*.txt` under the current machine.
+- **Every tracked file has a scope** — `shared`, `profile` or `off` — in `.replicant-sync` **in the
+  repo**, because "monitors are machine-specific" is a fact about the setup, not about one machine.
+  `profile` is the one that makes two machines practical: the file lives at
+  `profiles/<profile>/config/<rel>`, so each profile keeps its own copy and neither overwrites the
+  other. Switching a file off means nobody gets a backup; scoping it means everybody gets their
+  own. `hypr/monitors.lua` is seeded `profile`, not off.
+- **`repo_path_for()` is the only place that knows where a file's copy lives.** The copy pass, the
+  prune pass, the restore plan and the "revert to repo" button all call it, so a file can never be
+  saved to one path and restored from another. The prune pass sweeps only `config/` and *this*
+  profile's tree — another machine's profile directory looks entirely untracked from here, and
+  pruning it would delete that machine's only backup.
+
+## The shipped list is universal; the personal list is the user's
+
+`MANIFEST` is public plugin source, so it may only name paths any Omarchy machine plausibly has.
+It used to carry one person's Claude hooks, their audit script, their `~/dev/mise.toml` and a
+fingerprint-reader unit — which every marketplace installer then saw as a screenful of "missing"
+rows for files they had never heard of, while none of their own files were tracked at all.
+
+Everything personal lives in **`.replicant-track` in the user's repo**, next to `.replicant-sync`
+and `.replicant-profiles` and for the same reason: "back up my audit script" is a decision about
+the setup, not about one machine.
+
+- `MANIFEST` + `USER_MANIFEST` are joined into **`TRACKED`** by `rebuild_tracked()`. Every loop that
+  means "everything tracked" reads `TRACKED`/`TRACKED_SECRETS`; the two source arrays are only for
+  telling a shipped row from a user row (`source: "manifest"` vs `"user"`, which is what gates the
+  panel's Untrack button).
+- **`load_user_manifest` has a read-only fallback and `ensure_track_file` does the real migration** —
+  the same split, and the same reason, as `scope_for`/`ensure_scope_file`. Without the fallback, the
+  first command after an upgrade would see a 0.6 repo's saved copies as untracked and the prune pass
+  would delete every one of them. `tests/test-core.sh` proves both halves.
+- A shipped entry that exists neither on this machine nor in the repo **draws no row**. The core list
+  is written for everybody, so any one machine is expected to be missing part of it. One the repo
+  *has* a copy of always shows, because "it was here and now it isn't" is exactly what a backup tool
+  must not hide.
+- `untrack` refuses a shipped entry and says to use `scope <id> off` instead — untracking removes the
+  row *and* the repo copy, so doing it to a core entry would make a file the next release tracks
+  again vanish with no way back.
+
+## A directory entry is a trailing slash, everywhere
+
+`MANIFEST`/`.replicant-track` entries ending in `/` are trees. The slash is carried through the id,
+the repo path and the restore plan as a plain string, which is what lets `is_dir_entry` be the only
+test anywhere. What each pass has to do differently:
+
+- **copy**: `copy_tree_into_repo` mirrors *both ways* — a file deleted on the machine goes from the
+  repo too, or a tracked directory only ever grows. It refuses a destination outside `$REPO_DIR`.
+- **prune**: a directory entry claims everything under it *by prefix*. Without that case the sweep
+  sees every file in the tree as untracked and deletes the whole thing one file at a time, on the
+  save that just wrote it. `owning_rel()` exists for the same reason: "is this switched off" is a
+  question about the *entry*, and a file three levels inside a tree has no entry of its own.
+- **`.git` is excluded** (`TREE_EXCLUDES`). A repo nested in a repo is not backed up by copying its
+  objects around.
+- **state**: `tree_same` is `cmp` over the whole tree, so the self-healing badge works unchanged —
+  edit a file inside, the entry says unsaved; put it back, it clears.
+- **diff**: `tree_diff_summary` names which files moved, never their contents. A tree is too big to
+  render, and the useful answer is the file list.
+
+## Big things are inventoried, never copied
+
+The eight custom themes on this machine are **556 MB**, 400 of it their own `.git` directories.
+Tracking `~/.config/omarchy/themes/` as a directory — which is what the plan said to do — would have
+put all of it in a git repo. Every user theme Omarchy knows about is a git clone, so what travels is
+the URL: `state/<machine>/omarchy-themes.txt` records `name<TAB>origin`, and `restore_themes` runs
+`omarchy theme install` for the missing ones **before** `restore_theme` applies the name. That order
+is the bug the pair exists to close: `omarchy theme set enter-the-matrix` on a machine that does not
+have the theme fails, and the most visible thing about the setup comes back as nothing.
+
+Same shape as plugins, and the honest caveat is the same: reinstalling gets the *upstream* copy, not
+local edits. A hand-made theme has no origin — `doctor` names it and the answer is to track its
+directory.
+
+Theme names are compared **normalised**: `omarchy-theme-current` answers "Enter The Matrix" and the
+file records "enter-the-matrix". They differ in case *and* separator, so case-folding alone still
+made every restore claim the theme needed re-applying.
+
+## An inventory earns its place or it is noise
+
+Measured on the first repo this plugin ever wrote: `state/` touched **46 of the first 100
+commits**, and almost none of them carried a real change. `system.txt` opened with `date: <now>`;
+`mise.txt` carried `(pruned in 9h)`, a countdown; `system-services.txt` listed the eighteen units
+*the distribution* enables, which move on every package update and are nobody's setup.
+
+The test an inventory file has to pass, and it is short:
+
+> **Does a restore consume it, or would a person rebuild a machine from it?**
+
+Consumed by restore: `omarchy-plugins.txt`, `omarchy-themes.txt`. Rebuilt from by a person:
+`pacman-*.txt`, `drift-vs-omarchy.txt`, `defined-secrets.txt`, `cifs-mounts.txt`. Retired for
+failing both: `system.txt`, `mise.txt` (redundant — `mise/config.toml` is tracked as config and is
+the authoritative list), `npm-global.txt`, `containers.txt`, `system-services.txt`.
+
+Two rules fall out of doing this:
+
+- **A generator that merely stops writing leaves its last output in the repo forever.** The prune
+  pass sweeps `config/` and the profile tree, never `state/`, so a retired name sits there looking
+  current. `state_snapshot` removes retired names explicitly — and only from **this machine's**
+  directory, because another machine's inventory is not ours to tidy. That is the same rule the
+  prune pass follows and it exists for the same reason.
+- **`user-services.txt` records only units whose file is in `~/.config/systemd/user`.** The
+  distribution's enabled units are not a setup decision. Paired with the unit file itself, which is
+  tracked as ordinary config, three lines are enough to bring a user's own service back — and it
+  stops moving every time a package updates.
+
+Related: a value the user changes for the mood of the day (the active theme) is scoped `off`
+rather than tracked. The *themes* are inventoried and reinstalled; which one is on right now is
+not a fact worth a commit.
+
+## What "changed" means, and who gets to answer
+
+The headline instance of the rule above, and the one that made this plugin lie about its own job.
+
+`build_configs_json` used to answer it with `git status --porcelain` on the **repo copy**, which
+only becomes true once `core_backup` has copied the live file in — so a file edited on the machine
+and never saved reported itself as **saved on GitHub**. It survived review because the test that
+covered it ran `core_backup` first, which is exactly what hid it.
+
+- **The answer is content**, `entry_differs`, OR'd with the git check: content catches "never
+  copied in", git catches "copied in, never committed".
+- **`entry_differs` is the only definition of that comparison.** Two copies of it is how a badge
+  and a bar icon come to disagree about the same file — `BarWidget.qml` read `repoState.dirty` for
+  three releases after the panel stopped, so the bar sat on the calm hexagon saying "✓ in sync"
+  over an unsaved config all day. The bar polls `--brief` and has no rows, so `count_changes`
+  sends the number down in the payload; brief went from 0.04 s to 0.18 s once a minute for it.
+- **It is self-healing.** Edit a file, put it back, `cmp` matches again and the badge clears on its
+  own. There is no flag to go stale.
+
+Three ordering rules fell out, all deliberate: **`incoming` outranks `unsaved`** (safety — the two
+look identical and ask for opposite buttons), **`unsaved` outranks `default`** (reverting to
+Omarchy's default is itself a change that needs saving, and used to show the calm ○), and
+**`default` outranks `unpushed`** (before the first push every untouched file would light up as
+"to push" and drown the few that changed).
+
+**When you rename a state, the QML does not follow.** `Panel.qml` compared
+`sync_state === "modified"` after the core stopped emitting it, so every category card said
+"in sync" while its own rows showed unsaved changes. Both sides are bare strings and nothing
+connects them — guard 7 in `tests/run-all.sh` now fails when the QML tests for a state the core
+never emits.
+
+## A difference has a direction, and only one moment knows it
+
+`unsaved` is `! cmp -s "$src" "$(repo_path_for "$rel")"`, which is the right question and half an
+answer: it says the two copies differ, never which one is newer. With two machines on one repo —
+the premise of the whole plugin — the other half is the difference between a backup and a
+delete. Pull a change the laptop made and the desktop showed the red ● whose button is Save;
+pressing it committed the desktop's older file over the laptop's work, in one click, with the
+panel having recommended exactly that.
+
+Content cannot answer it and no flag on a file can be trusted to stay true. What *is* certain is
+the moment the commits arrive, so that is where it is written down:
+
+- **`cmd_pull` → `core_incoming <before> <after>`** maps the changed repo paths back to the rows a
+  person can press a button on (`owning_rel`, so a file three levels inside a tracked tree marks
+  the tree's row) and records them in **`$REPLICANT_HOME/incoming`** — machine-local, because
+  "what this machine has not caught up with" is not a fact about the setup and has no business in
+  the repo. Only *this* profile's `profiles/<p>/config/` counts; the other machine's profile copy
+  is deliberately not shared and marking it incoming would tell the desktop to restore the
+  laptop's monitor layout onto itself.
+- **`is_incoming_rel` is never trusted alone.** Every caller ANDs it with "and the copies still
+  differ", which is what makes the mark self-healing in exactly the way the unsaved badge is:
+  restore the file and it clears, save over it deliberately and it clears. Nothing has to remember.
+- **`incoming` outranks `unsaved`** in the badge precedence, and it is the only ordering rule here
+  that is about safety rather than tidiness.
+- **`core_backup` holds incoming entries back** and names them. "Save everything" is never a
+  request to commit a stale copy over another machine's work; the escape hatch is naming the file
+  (`save-file <id>`), and the panel's per-file Save is disabled on those rows for the same reason.
+
+`tests/test-journey.sh` walks the whole thing, because every unit either side of the gap was
+already passing when the bug existed.
+
+## The safety net has to be reachable or it is not a net
+
+Every write to the real machine keeps what it overwrote as `<file>.bak.<epoch>` — `install_file`,
+`install_tree` and `root_apply` all do it, and every confirmation dialog in the panel promises it.
+For four releases the only code that could *find* one was `cmd_purge`, which removes the plugin.
+Eleven of them were sitting on this machine, unnamed and unreachable: that is a mess, not a net.
+
+- **`list_backups [rel]`** in the core is the single glob. `cmd_purge` goes through it too — the
+  trailing-slash bug hard rule 8 exists for lived in that glob, and two copies of it is how purge
+  and `backups` would come to disagree about what is on the machine.
+- **`core_undo` is a swap, not a restore.** Obeying rule 2 naively would leave a second backup on
+  every undo, so undoing twice grows the pile it exists to drain. It consumes the newest backup and
+  writes what it replaced in its place: the count stays where it was, and undo can be undone —
+  which is the one thing anybody pressing that button wants to be sure of.
+- **It does not run the category's apply step.** `restore-file` does, because it is putting the
+  saved setup back. Undo is "that was wrong, give me the previous minute", and reloading Hyprland
+  under someone who has just realised they made a mistake is not a favour.
+- The panel puts it at the bottom of **Restore**, under "If a restore went wrong", one row per id
+  (the newest, since that is the one Undo takes) with the rest counted as "+N older". A `same`
+  backup — byte-identical to the live file — disables its own Undo and says why: a button that
+  would change nothing is worse than no button.
+
+## `suggest` proposes; a blocklist would never have worked
+
+The first version of `core_suggest` offered 1Password's `Local State`, Chromium's `Preferences`, a
+`.sock.pid` and a log file — the things under `~/.config` that are *not* config outnumber the things
+that are, and they are invented faster than anyone can exclude them. It is now a **positive** test:
+a known config extension, or an executable in `~/.local/bin`, or a systemd unit. On top of that,
+`is_app_state_dir` catches the whole Chromium/Electron profile layout by its own marker files, which
+is what removes 1Password, Code and chromium in one rule rather than three.
+
+`suggest_kind` marks a file that holds a credential (`gh/hosts.yml`, `.netrc`, `*token*`) so it is
+offered as a **secret**. Tracking one as ordinary config would leave an OAuth token world-readable
+in a git checkout.
+
+## An older machine must never delete what a newer one tracks
+
+The prune pass removes whatever is not in the **running** version's list. With two machines on one
+repo — the premise of the whole plugin — the machine still on the old release therefore deletes
+every file the upgraded one tracks, on its next save. This is not a hypothetical: while building
+0.7.0 the `~/.config/nvim` tree the new code had just saved was gone by the time anyone looked,
+because the installed plugin was still 0.6.3 and had saved once in between.
+
+`.replicant-version` in the repo records the highest version that has ever written it, and
+`may_prune()` refuses when the running client is older. The client still copies its own files in;
+it just does not get to decide that somebody else's are stale. `record_repo_version` only ever
+raises the number, so an old client saving cannot lower it and re-arm the deletion.
+
+**This only protects from 0.7.0 onwards** — an already-released client cannot be taught to check.
+For a 0.6 machine the answer is to upgrade it, and `doctor` says exactly that. The reproduction, run
+against the real v0.6.3 core, is in `tests/test-core.sh`.
+
+## Every writer of a repo-shape file must migrate first
+
+`core_scope` once rewrote `.replicant-sync` from whatever `read_scopes` returned. On a repo that
+still had the v0.5 `.replicant-exclude`, that read returned nothing — so changing one file's scope
+silently discarded the user's entire off-list. Reading has a fallback (`scope_for` honours the
+legacy file until the migration runs); **writing needs the real migration**, so every writer calls
+`ensure_scope_file` first. `tests/test-core.sh` fails if it does not.
+
+The general rule: a fallback that makes reads correct does not make writes correct. A read-modify-
+write against a file the fallback invented is a delete.
+
+## Root-owned files: ask, or say you could not
+
+`/etc/systemd/logind.conf.d/99-lid.conf` is the one thing worth configuring that is not ours to
+write. `root_apply()` tries pkexec, then passwordless `sudo -n`, and otherwise prints the exact
+command and fails **leaving /etc untouched**. Omarchy ships no polkit agent by default, so the
+third branch is the common one in the panel — which is the point: a settings control that quietly
+does nothing is worse than one that explains. The whole file is staged under `$HOME` first, so the
+privileged step is a single copy of a file the user could have read, never an editor run as root.
+
+## Values are stored in one unit and shown in another
+
+`SETTINGS` fields 14/15 (`scale`, `display`) exist because Omarchy stores idle timers in seconds
+and nobody thinks in "600". The panel edits minutes and multiplies back; **the CLI always speaks
+the stored unit** (`set idle.lock 600` is still seconds) so scripts never have to know what the
+panel happens to display. `value_text` carries the exact current value written out in full — the
+stepper rounds 150 s to 3 min, and the row says "2 min 30 s" underneath so the rounding can never
+be mistaken for the value.
+
+Comparisons for the two revert buttons are made on the *rendered* text, not the raw string:
+`shell.toml` holding `1` and a fallback of `1.0` are the same density, and a revert button that
+would change nothing is worse than no button.
 
 ## Repo conventions
 
@@ -178,6 +424,8 @@ archive.
 - Commits to this repo (code) use normal engineering messages — don't confuse this with the
   "one commit per decision, with the why" convention of the **data** repo, which is a different
   thing and lives in the other repo.
+
+# The panel
 
 ## Quickshell caches compiled QML — clear it or you are testing old code
 
@@ -294,308 +542,7 @@ printf '\U000F0450 F0450   \U000F0167 F0167\n' > /tmp/g.txt
 magick -background '#101315' -fill '#cacccc' -font "$F" -pointsize 26 label:@/tmp/g.txt /tmp/g.png
 ```
 
-## "Has this changed?" is a question about content, never about git alone
-
-`build_configs_json` used to answer it with `git status --porcelain` on the **repo copy**. That
-only becomes true once `core_backup` has copied the live file in, so a file edited on the machine
-and never saved reported itself as **saved on GitHub** — a backup tool telling you your change was
-safe when it existed nowhere but that machine. It survived review because the test that covered it
-ran `core_backup` first, which is exactly what hid the bug.
-
-The state is now `! cmp -s "$src" "$(repo_path_for "$rel")"`, OR'd with the git check (content
-catches "never copied in", git catches "copied in, never committed"). Comparing content is also
-what makes the warning **self-healing**: edit a file and put it back and `cmp` matches again, so
-the badge clears on its own. There is no flag to go stale.
-
-Two ordering rules fell out of it, both deliberate:
-
-- **`unsaved` outranks `default`.** Reverting a customised file to Omarchy's default is itself a
-  change that needs saving; it used to show the calm ○ while the repo still held the old version.
-- **`default` outranks `unpushed`.** Before the first push nothing is on GitHub, so every untouched
-  default file would light up as "to push" and drown the few rows that actually changed.
-
-**When you rename a state, the QML does not follow.** `Panel.qml` compared
-`sync_state === "modified"` after the core stopped emitting it, so every category card said
-"in sync" while its own rows showed unsaved changes. Both sides are bare strings and nothing
-connects them — guard 7 in `tests/run-all.sh` now fails when the QML tests for a state the core
-never emits.
-
-## Every writer of a repo-shape file must migrate first
-
-`core_scope` once rewrote `.replicant-sync` from whatever `read_scopes` returned. On a repo that
-still had the v0.5 `.replicant-exclude`, that read returned nothing — so changing one file's scope
-silently discarded the user's entire off-list. Reading has a fallback (`scope_for` honours the
-legacy file until the migration runs); **writing needs the real migration**, so every writer calls
-`ensure_scope_file` first. `tests/test-core.sh` fails if it does not.
-
-The general rule: a fallback that makes reads correct does not make writes correct. A read-modify-
-write against a file the fallback invented is a delete.
-
-## The shipped list is universal; the personal list is the user's
-
-`MANIFEST` is public plugin source, so it may only name paths any Omarchy machine plausibly has.
-It used to carry one person's Claude hooks, their audit script, their `~/dev/mise.toml` and a
-fingerprint-reader unit — which every marketplace installer then saw as a screenful of "missing"
-rows for files they had never heard of, while none of their own files were tracked at all.
-
-Everything personal lives in **`.replicant-track` in the user's repo**, next to `.replicant-sync`
-and `.replicant-profiles` and for the same reason: "back up my audit script" is a decision about
-the setup, not about one machine.
-
-- `MANIFEST` + `USER_MANIFEST` are joined into **`TRACKED`** by `rebuild_tracked()`. Every loop that
-  means "everything tracked" reads `TRACKED`/`TRACKED_SECRETS`; the two source arrays are only for
-  telling a shipped row from a user row (`source: "manifest"` vs `"user"`, which is what gates the
-  panel's Untrack button).
-- **`load_user_manifest` has a read-only fallback and `ensure_track_file` does the real migration** —
-  the same split, and the same reason, as `scope_for`/`ensure_scope_file`. Without the fallback, the
-  first command after an upgrade would see a 0.6 repo's saved copies as untracked and the prune pass
-  would delete every one of them. `tests/test-core.sh` proves both halves.
-- A shipped entry that exists neither on this machine nor in the repo **draws no row**. The core list
-  is written for everybody, so any one machine is expected to be missing part of it. One the repo
-  *has* a copy of always shows, because "it was here and now it isn't" is exactly what a backup tool
-  must not hide.
-- `untrack` refuses a shipped entry and says to use `scope <id> off` instead — untracking removes the
-  row *and* the repo copy, so doing it to a core entry would make a file the next release tracks
-  again vanish with no way back.
-
-## Big things are inventoried, never copied
-
-The eight custom themes on this machine are **556 MB**, 400 of it their own `.git` directories.
-Tracking `~/.config/omarchy/themes/` as a directory — which is what the plan said to do — would have
-put all of it in a git repo. Every user theme Omarchy knows about is a git clone, so what travels is
-the URL: `state/<machine>/omarchy-themes.txt` records `name<TAB>origin`, and `restore_themes` runs
-`omarchy theme install` for the missing ones **before** `restore_theme` applies the name. That order
-is the bug the pair exists to close: `omarchy theme set enter-the-matrix` on a machine that does not
-have the theme fails, and the most visible thing about the setup comes back as nothing.
-
-Same shape as plugins, and the honest caveat is the same: reinstalling gets the *upstream* copy, not
-local edits. A hand-made theme has no origin — `doctor` names it and the answer is to track its
-directory.
-
-Theme names are compared **normalised**: `omarchy-theme-current` answers "Enter The Matrix" and the
-file records "enter-the-matrix". They differ in case *and* separator, so case-folding alone still
-made every restore claim the theme needed re-applying.
-
-## A directory entry is a trailing slash, everywhere
-
-`MANIFEST`/`.replicant-track` entries ending in `/` are trees. The slash is carried through the id,
-the repo path and the restore plan as a plain string, which is what lets `is_dir_entry` be the only
-test anywhere. What each pass has to do differently:
-
-- **copy**: `copy_tree_into_repo` mirrors *both ways* — a file deleted on the machine goes from the
-  repo too, or a tracked directory only ever grows. It refuses a destination outside `$REPO_DIR`.
-- **prune**: a directory entry claims everything under it *by prefix*. Without that case the sweep
-  sees every file in the tree as untracked and deletes the whole thing one file at a time, on the
-  save that just wrote it. `owning_rel()` exists for the same reason: "is this switched off" is a
-  question about the *entry*, and a file three levels inside a tree has no entry of its own.
-- **`.git` is excluded** (`TREE_EXCLUDES`). A repo nested in a repo is not backed up by copying its
-  objects around.
-- **state**: `tree_same` is `cmp` over the whole tree, so the self-healing badge works unchanged —
-  edit a file inside, the entry says unsaved; put it back, it clears.
-- **diff**: `tree_diff_summary` names which files moved, never their contents. A tree is too big to
-  render, and the useful answer is the file list.
-
-## `suggest` proposes; a blocklist would never have worked
-
-The first version of `core_suggest` offered 1Password's `Local State`, Chromium's `Preferences`, a
-`.sock.pid` and a log file — the things under `~/.config` that are *not* config outnumber the things
-that are, and they are invented faster than anyone can exclude them. It is now a **positive** test:
-a known config extension, or an executable in `~/.local/bin`, or a systemd unit. On top of that,
-`is_app_state_dir` catches the whole Chromium/Electron profile layout by its own marker files, which
-is what removes 1Password, Code and chromium in one rule rather than three.
-
-`suggest_kind` marks a file that holds a credential (`gh/hosts.yml`, `.netrc`, `*token*`) so it is
-offered as a **secret**. Tracking one as ordinary config would leave an OAuth token world-readable
-in a git checkout.
-
-## An older machine must never delete what a newer one tracks
-
-The prune pass removes whatever is not in the **running** version's list. With two machines on one
-repo — the premise of the whole plugin — the machine still on the old release therefore deletes
-every file the upgraded one tracks, on its next save. This is not a hypothetical: while building
-0.7.0 the `~/.config/nvim` tree the new code had just saved was gone by the time anyone looked,
-because the installed plugin was still 0.6.3 and had saved once in between.
-
-`.replicant-version` in the repo records the highest version that has ever written it, and
-`may_prune()` refuses when the running client is older. The client still copies its own files in;
-it just does not get to decide that somebody else's are stale. `record_repo_version` only ever
-raises the number, so an old client saving cannot lower it and re-arm the deletion.
-
-**This only protects from 0.7.0 onwards** — an already-released client cannot be taught to check.
-For a 0.6 machine the answer is to upgrade it, and `doctor` says exactly that. The reproduction, run
-against the real v0.6.3 core, is in `tests/test-core.sh`.
-
-## A difference has a direction, and only one moment knows it
-
-`unsaved` is `! cmp -s "$src" "$(repo_path_for "$rel")"`, which is the right question and half an
-answer: it says the two copies differ, never which one is newer. With two machines on one repo —
-the premise of the whole plugin — the other half is the difference between a backup and a
-delete. Pull a change the laptop made and the desktop showed the red ● whose button is Save;
-pressing it committed the desktop's older file over the laptop's work, in one click, with the
-panel having recommended exactly that.
-
-Content cannot answer it and no flag on a file can be trusted to stay true. What *is* certain is
-the moment the commits arrive, so that is where it is written down:
-
-- **`cmd_pull` → `core_incoming <before> <after>`** maps the changed repo paths back to the rows a
-  person can press a button on (`owning_rel`, so a file three levels inside a tracked tree marks
-  the tree's row) and records them in **`$REPLICANT_HOME/incoming`** — machine-local, because
-  "what this machine has not caught up with" is not a fact about the setup and has no business in
-  the repo. Only *this* profile's `profiles/<p>/config/` counts; the other machine's profile copy
-  is deliberately not shared and marking it incoming would tell the desktop to restore the
-  laptop's monitor layout onto itself.
-- **`is_incoming_rel` is never trusted alone.** Every caller ANDs it with "and the copies still
-  differ", which is what makes the mark self-healing in exactly the way the unsaved badge is:
-  restore the file and it clears, save over it deliberately and it clears. Nothing has to remember.
-- **`incoming` outranks `unsaved`** in the badge precedence, and it is the only ordering rule here
-  that is about safety rather than tidiness.
-- **`core_backup` holds incoming entries back** and names them. "Save everything" is never a
-  request to commit a stale copy over another machine's work; the escape hatch is naming the file
-  (`save-file <id>`), and the panel's per-file Save is disabled on those rows for the same reason.
-
-`tests/test-journey.sh` walks the whole thing, because every unit either side of the gap was
-already passing when the bug existed.
-
-## The bar icon and the panel must count the same thing
-
-`build_configs_json` was fixed in 0.6.1 to ask about content; `BarWidget.qml` was not, and went on
-reading `repoState.dirty` — git's view of the *repo* working tree, which only ever sees files
-`core_backup` has already copied in. Edit a tracked config and never press Save and the bar sat at
-the calm hexagon with a tooltip reading "✓ in sync", all day. That is the single thing this plugin
-exists to tell you, and the one surface that is on screen without being opened was the one lying
-about it.
-
-The bar polls `--brief` and has no rows to count, so the count comes down in the payload:
-`count_changes` in the core answers `<unsaved> <incoming>` for both `--brief` and the full
-payload. Brief went from 0.04 s to 0.18 s for it, once a minute, which is the whole price.
-
-`entry_differs` exists so the content comparison has exactly one definition. Two copies of it is
-how a badge and an icon come to disagree about the same file — put anything new that asks "has
-this changed" through it.
-
-## The safety net has to be reachable or it is not a net
-
-Every write to the real machine keeps what it overwrote as `<file>.bak.<epoch>` — `install_file`,
-`install_tree` and `root_apply` all do it, and every confirmation dialog in the panel promises it.
-For four releases the only code that could *find* one was `cmd_purge`, which removes the plugin.
-Eleven of them were sitting on this machine, unnamed and unreachable: that is a mess, not a net.
-
-- **`list_backups [rel]`** in the core is the single glob. `cmd_purge` goes through it too — the
-  trailing-slash bug hard rule 8 exists for lived in that glob, and two copies of it is how purge
-  and `backups` would come to disagree about what is on the machine.
-- **`core_undo` is a swap, not a restore.** Obeying rule 2 naively would leave a second backup on
-  every undo, so undoing twice grows the pile it exists to drain. It consumes the newest backup and
-  writes what it replaced in its place: the count stays where it was, and undo can be undone —
-  which is the one thing anybody pressing that button wants to be sure of.
-- **It does not run the category's apply step.** `restore-file` does, because it is putting the
-  saved setup back. Undo is "that was wrong, give me the previous minute", and reloading Hyprland
-  under someone who has just realised they made a mistake is not a favour.
-- The panel puts it at the bottom of **Restore**, under "If a restore went wrong", one row per id
-  (the newest, since that is the one Undo takes) with the rest counted as "+N older". A `same`
-  backup — byte-identical to the live file — disables its own Undo and says why: a button that
-  would change nothing is worse than no button.
-
-## An inventory earns its place or it is noise
-
-Measured on the first repo this plugin ever wrote: `state/` touched **46 of the first 100
-commits**, and almost none of them carried a real change. `system.txt` opened with `date: <now>`;
-`mise.txt` carried `(pruned in 9h)`, a countdown; `system-services.txt` listed the eighteen units
-*the distribution* enables, which move on every package update and are nobody's setup.
-
-The test an inventory file has to pass, and it is short:
-
-> **Does a restore consume it, or would a person rebuild a machine from it?**
-
-Consumed by restore: `omarchy-plugins.txt`, `omarchy-themes.txt`. Rebuilt from by a person:
-`pacman-*.txt`, `drift-vs-omarchy.txt`, `defined-secrets.txt`, `cifs-mounts.txt`. Retired for
-failing both: `system.txt`, `mise.txt` (redundant — `mise/config.toml` is tracked as config and is
-the authoritative list), `npm-global.txt`, `containers.txt`, `system-services.txt`.
-
-Two rules fall out of doing this:
-
-- **A generator that merely stops writing leaves its last output in the repo forever.** The prune
-  pass sweeps `config/` and the profile tree, never `state/`, so a retired name sits there looking
-  current. `state_snapshot` removes retired names explicitly — and only from **this machine's**
-  directory, because another machine's inventory is not ours to tidy. That is the same rule the
-  prune pass follows and it exists for the same reason.
-- **`user-services.txt` records only units whose file is in `~/.config/systemd/user`.** The
-  distribution's enabled units are not a setup decision. Paired with the unit file itself, which is
-  tracked as ordinary config, three lines are enough to bring a user's own service back — and it
-  stops moving every time a package updates.
-
-Related: a value the user changes for the mood of the day (the active theme) is scoped `off`
-rather than tracked. The *themes* are inventoried and reinstalled; which one is on right now is
-not a fact worth a commit.
-
-## Two machines, one repo
-
-The plugin is built for a desktop *and* a laptop sharing one private repo, which rules out two
-shapes that look fine with a single machine:
-
-- **`state/` is scoped by hostname** (`state/<machine>/`). A shared inventory meant each machine
-  overwrote the other's package list on every save and every pull looked like a change.
-  `ensure_repo_layout` migrates a flat `state/*.txt` under the current machine.
-- **Every tracked file has a scope** — `shared`, `profile` or `off` — in `.replicant-sync` **in the
-  repo**, because "monitors are machine-specific" is a fact about the setup, not about one machine.
-  `profile` is the one that makes two machines practical: the file lives at
-  `profiles/<profile>/config/<rel>`, so each profile keeps its own copy and neither overwrites the
-  other. Switching a file off means nobody gets a backup; scoping it means everybody gets their
-  own. `hypr/monitors.lua` is seeded `profile`, not off.
-- **`repo_path_for()` is the only place that knows where a file's copy lives.** The copy pass, the
-  prune pass, the restore plan and the "revert to repo" button all call it, so a file can never be
-  saved to one path and restored from another. The prune pass sweeps only `config/` and *this*
-  profile's tree — another machine's profile directory looks entirely untracked from here, and
-  pruning it would delete that machine's only backup.
-
-## Root-owned files: ask, or say you could not
-
-`/etc/systemd/logind.conf.d/99-lid.conf` is the one thing worth configuring that is not ours to
-write. `root_apply()` tries pkexec, then passwordless `sudo -n`, and otherwise prints the exact
-command and fails **leaving /etc untouched**. Omarchy ships no polkit agent by default, so the
-third branch is the common one in the panel — which is the point: a settings control that quietly
-does nothing is worse than one that explains. The whole file is staged under `$HOME` first, so the
-privileged step is a single copy of a file the user could have read, never an editor run as root.
-
-## Values are stored in one unit and shown in another
-
-`SETTINGS` fields 14/15 (`scale`, `display`) exist because Omarchy stores idle timers in seconds
-and nobody thinks in "600". The panel edits minutes and multiplies back; **the CLI always speaks
-the stored unit** (`set idle.lock 600` is still seconds) so scripts never have to know what the
-panel happens to display. `value_text` carries the exact current value written out in full — the
-stepper rounds 150 s to 3 min, and the row says "2 min 30 s" underneath so the rounding can never
-be mistaken for the value.
-
-Comparisons for the two revert buttons are made on the *rendered* text, not the raw string:
-`shell.toml` holding `1` and a fallback of `1.0` are the same density, and a revert button that
-would change nothing is worse than no button.
-
-## `grep -q` on a pipeline under `pipefail` reports failure on success
-
-`plan_for_category "$c" | grep -q "$x"` fails for every match that is not the last line: `grep -q`
-exits at the first hit, the writer takes a SIGPIPE, and `set -o pipefail` turns that into a
-non-zero pipeline. Capture first (`p=$(plan_for_category "$c"); grep -qF "$x" <<<"$p"`). This cost
-a confusing test failure where the value being searched for was visibly present in the output.
-
-## A test fixture that looks like a credential IS one
-
-`tests/test-cli.sh` checks the secret scanner one shape at a time, and the first
-version wrote each shape out whole. GitHub's push protection rejected the commit —
-correctly. Every scanner in the chain, theirs and ours, sees a string, not an
-intention, and a repo that cannot be pushed is worse than a test that is slightly
-awkward to read.
-
-The prefixes are therefore assembled from pieces (`P_SLACK="xo""xb-"`), so the file
-on disk contains no scannable token while the string handed to the scanner is exact.
-Run `bin/scan-secrets.sh tests bin` before committing anything that adds one.
-
-## A test must never open a window on the user's screen
-
-`tests/test-cli.sh` exercises `edit --wait`, and its fake `$HOME` did nothing to stop the command
-from finding the machine's real `omarchy-launch-editor`: the suite opened nvim on the screen of
-whoever was running it, twice, on a file called `input.lua` that was not theirs. Stub every escape
-hatch (`omarchy-launch-editor`, `xdg-open`, and the editor named in the fixture) into a directory
-placed first on `PATH`. This is not only manners — a window the user closes mid-measurement changes
-what the command returns, so the test can lie.
+# Tests and verification
 
 ## The parts can all be right while the trip is broken
 
@@ -620,27 +567,49 @@ It was written last and immediately found two things every unit test had passed 
 Both are the same shape: a whole-journey failure that sits in the gap between two functions that
 are each correct.
 
+## A test fixture that looks like a credential IS one
+
+`tests/test-cli.sh` checks the secret scanner one shape at a time, and the first
+version wrote each shape out whole. GitHub's push protection rejected the commit —
+correctly. Every scanner in the chain, theirs and ours, sees a string, not an
+intention, and a repo that cannot be pushed is worse than a test that is slightly
+awkward to read.
+
+The prefixes are therefore assembled from pieces (`P_SLACK="xo""xb-"`), so the file
+on disk contains no scannable token while the string handed to the scanner is exact.
+Run `bin/scan-secrets.sh tests bin` before committing anything that adds one.
+
+## A test must never open a window on the user's screen
+
+`tests/test-cli.sh` exercises `edit --wait`, and its fake `$HOME` did nothing to stop the command
+from finding the machine's real `omarchy-launch-editor`: the suite opened nvim on the screen of
+whoever was running it, twice, on a file called `input.lua` that was not theirs. Stub every escape
+hatch (`omarchy-launch-editor`, `xdg-open`, and the editor named in the fixture) into a directory
+placed first on `PATH`. This is not only manners — a window the user closes mid-measurement changes
+what the command returns, so the test can lie.
+
+## `grep -q` on a pipeline under `pipefail` reports failure on success
+
+`plan_for_category "$c" | grep -q "$x"` fails for every match that is not the last line: `grep -q`
+exits at the first hit, the writer takes a SIGPIPE, and `set -o pipefail` turns that into a
+non-zero pipeline. Capture first (`p=$(plan_for_category "$c"); grep -qF "$x" <<<"$p"`). This cost
+a confusing test failure where the value being searched for was visibly present in the output.
+
 ## Verify before calling it done
 
-**shellcheck is not optional and a missing one is not a pass.** For four releases that section
-printed "skipped" in yellow and the suite still ended in "Everything passed" — a linter that is not
-there had been folded into a green result. The first run that ever happened found `SC2318` in
-`suggest_skip_reason`: `local f="$1" base="${f##*/}"` reads a `$f` that the same line has not
-assigned yet, so every check in that function was computing from the caller's scope and worked only
-because the one caller happens to name its loop variable `f` too. Rename it there and eleven
-guarantees the README makes go quietly dead.
-
-Install it without root — the same way this machine did, and it travels in the tracked
-`mise/config.toml`:
+**shellcheck is not optional and a missing one is not a pass.** For four releases the section
+printed "skipped" in yellow and the suite still ended in "Everything passed". `run-all.sh` looks on
+`PATH` then in `~/.local/share/mise/shims`, and **fails** when it finds neither:
 
 ```bash
-mise use -g shellcheck@latest
+mise use -g shellcheck@latest     # no root, and it travels in the tracked mise/config.toml
 ```
 
-`run-all.sh` looks on `PATH` and then in `~/.local/share/mise/shims`, and **fails** when it finds
-neither. Bash's dynamic scoping is why this class of bug is invisible here: a `local` in one
-function is readable by everything it calls, so a name collision substitutes for a real value. That
-is also why `category_field`/`setting_field` no longer call their split array `f`.
+The first run it ever had found `SC2318` in `suggest_skip_reason`: `local f="$1" base="${f##*/}"`
+reads an `$f` the same line has not assigned yet, so every check in that function computed from the
+*caller's* scope — and worked only because the one caller happens to name its loop variable `f` too.
+**Bash scopes dynamically, so a name collision substitutes for a real value and nothing errors.**
+That is why `category_field`/`setting_field` no longer call their split array `f` either.
 
 - **`./tests/run-all.sh`** — the four suites (core, settings, CLI, journey) plus `bash -n`, shellcheck,
   qmllint, the QML-trap greps and `omarchy-plugin-validate`. This is the one command; everything
@@ -670,3 +639,20 @@ is also why `category_field`/`setting_field` no longer call their split array `f
   one committed and pushed) — confirm `default`/`unsaved`/`unpushed`/`saved` show up correctly.
 - `omarchy-replicant reset-all --dry-run` and `omarchy-replicant restore --dry-run` must not
   touch any file — compare hashes before/after if in doubt.
+
+# Maintaining this file
+
+## Adding to this file
+
+It is six hundred lines. Nobody reads six hundred lines before touching code — including the
+assistant it is written for — so every addition spends attention the existing rules were paying
+for. It grew by a fifth in a single session, which is how a set of rules quietly becomes an
+archive.
+
+- A section earns its place by describing a bug that **cost more than an hour** and that
+  **re-reading the code would not have prevented**. Everything else belongs in a comment beside
+  the thing it is about, where it is read at exactly the right moment instead of hopefully.
+- **Rule first, story second.** Several sections here still open with six lines of narrative
+  before saying what to do.
+- A new instance of an existing rule is **a row in that rule's table**, not a second section.
+- Adding something is a good moment to check whether something else has stopped being true.

@@ -2086,8 +2086,17 @@ Panel {
     // verticalCenter-anchored to it, so a height derived from them is the
     // parent-height <-> child-position loop that renders the row at nothing.
     // 44 is what fits on one line at the panel's width, measured on a capture.
-    readonly property bool twoLine: srow.subtitleText.length > 44
-    implicitHeight: Style.space(srow.twoLine ? 66 : 50)
+    readonly property string noticeText: String(srow.setting.notice || "")
+    readonly property int subtitleLines: srow.subtitleText.length > 44 ? 2 : 1
+    // The notice is counted too, and it was not. A row carrying one rendered
+    // four lines of text in the two-line height and the notice was cut in half
+    // — "Overridden: Omarchy Sleepwalker is blocki…", losing the clause that
+    // said what the consequence was. Same character count, same reason: this
+    // row's children are verticalCenter-anchored to it, so a height derived
+    // from their own implicitHeight is the polish() loop that renders nothing.
+    readonly property int noticeLines: srow.noticeText === "" ? 0
+                                     : (srow.noticeText.length > 44 ? 2 : 1)
+    implicitHeight: Style.space(34 + 16 * srow.subtitleLines + 16 * srow.noticeLines)
     opacity: srow.setting.available === true ? 1.0 : 0.45
 
     Row {
@@ -2121,9 +2130,11 @@ Panel {
         // is always on; a row that says nothing is a row that is fine.
         Text {
           width: parent.width
-          visible: String(srow.setting.notice || "") !== ""
-          text: String(srow.setting.notice || "")
+          visible: srow.noticeText !== ""
+          text: srow.noticeText
           color: Color.accent; font.family: root.ff; font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+          maximumLineCount: 2
           elide: Text.ElideRight
         }
       }

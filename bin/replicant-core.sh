@@ -2603,7 +2603,11 @@ build_settings_json() {
         # configured is not what happens. Something else is holding the lid
         # switch and logind is ignoring this file.
         elif (.id | startswith("lid.")) and $lidblock != ""
-          then "Overridden: \($lidblock) is blocking the lid switch, so closing the lid does nothing."
+          # Two lines of about 34 characters is what the row gives it, so the
+          # sentence has to fit in ~66 — the first attempt said the same thing
+          # in 91 and lost "does nothing" to the ellipsis, which was the half
+          # worth reading.
+          then "Overridden by \($lidblock) — the lid does nothing."
         else "" end) })'
 }
 

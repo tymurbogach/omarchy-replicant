@@ -383,6 +383,78 @@ check "the panel shows it as off" "off" \
 check "the panel reports its scope too" "off" \
   "$(build_configs_json | jq -r '[.[] | select(.id=="hypr/monitors.lua")][0].scope')"
 
+# …and now the promise this section is NAMED after, which it was not testing.
+# monitors.lua is profile-scoped out of the box, so it never had a config/ copy
+# to keep — every check above passes whether or not the prune pass honours the
+# off list. Use a file that really was saved first.
+#
+# Removing the `is_excluded` guard from the prune pass passes all four suites.
+# What it breaks is documented behaviour and silent: a file that was shared,
+# saved, and later switched off has its copy deleted from the repo on the very
+# next save, which is the one thing switching a file off is promised not to do.
+core_scope hypr/input.lua shared >/dev/null 2>&1
+core_backup >/dev/null 2>&1
+check "a shared file has a copy in the repo to begin with" "1" \
+  "$(ls "$CONFIG_DIR/hypr/input.lua" 2>/dev/null | wc -l)"
+core_scope hypr/input.lua off >/dev/null 2>&1
+core_backup >/dev/null 2>&1
+check "switching it off AFTERWARDS keeps the copy already saved" "1" \
+  "$(ls "$CONFIG_DIR/hypr/input.lua" 2>/dev/null | wc -l)"
+core_scope hypr/input.lua shared >/dev/null 2>&1
+core_backup >/dev/null 2>&1
+
+section "the lid switch: what is in force, not what the file says"
+# lid_blocked_by had no test at all — `grep -rn lid_blocked_by tests/` was empty
+# — and it is the whole reason the panel stopped reporting a lid setting that
+# something else was overriding. Silence from it is indistinguishable from
+# "nobody is holding the lid", so a regression here is invisible.
+mkdir -p "$TMP/fakebin"
+cat > "$TMP/fakebin/systemd-inhibit" <<'STUB'
+#!/bin/sh
+echo "WHO   UID  USER  PID  COMM  WHAT  WHY  MODE"
+echo "Network Manager 0 root 982 NetworkManager sleep needs-network delay"
+echo "Omarchy Sleepwalker 1000 u 1463 systemd-inhibit handle-lid-switch keep-working block"
+STUB
+chmod +x "$TMP/fakebin/systemd-inhibit"
+check "a block inhibitor on the lid is named, spaces and all" "Omarchy Sleepwalker" \
+  "$(PATH="$TMP/fakebin:$PATH" lid_blocked_by)"
+# systemd prints several whats colon-joined in one column, and testing that
+# column for equality matched only a holder that wanted the lid and nothing else.
+cat > "$TMP/fakebin/systemd-inhibit" <<'STUB'
+#!/bin/sh
+echo "WHO   UID  USER  PID  COMM  WHAT  WHY  MODE"
+echo "Some Daemon 1000 u 22 caffeine sleep:idle:handle-lid-switch why block"
+STUB
+check "…including one holding several things at once" "Some Daemon" \
+  "$(PATH="$TMP/fakebin:$PATH" lid_blocked_by)"
+# A delay inhibitor is normal — NetworkManager and UPower each hold one — and
+# does NOT override the setting. Only block does.
+cat > "$TMP/fakebin/systemd-inhibit" <<'STUB'
+#!/bin/sh
+echo "WHO   UID  USER  PID  COMM  WHAT  WHY  MODE"
+echo "Some Daemon 1000 u 22 caffeine handle-lid-switch why delay"
+STUB
+check "a delay inhibitor is not an override" "" \
+  "$(PATH="$TMP/fakebin:$PATH" lid_blocked_by)"
+# And nobody holding anything at all. NOT an empty PATH entry: a directory that
+# does not exist simply falls through to the machine's real systemd-inhibit,
+# which on the laptop this was written on answers "Omarchy Sleepwalker" and made
+# this check pass or fail depending on whose machine ran it.
+cat > "$TMP/fakebin/systemd-inhibit" <<'STUB'
+#!/bin/sh
+echo "WHO   UID  USER  PID  COMM  WHAT  WHY  MODE"
+STUB
+check "nobody holding it says nothing" "" \
+  "$(PATH="$TMP/fakebin:$PATH" lid_blocked_by)"
+
+section "counts read as English"
+# Every count the CLI and the panel print goes through this one function, and
+# nothing asserted the singular.
+check "one is singular"        "1 file"          "$(plural 1 file)"
+check "more than one is not"   "2 files"         "$(plural 2 file)"
+check "zero is plural too"     "0 files"         "$(plural 0 file)"
+check "an irregular is spelt out" "1 stale file" "$(plural 1 "stale file")"
+
 section "changing scope moves the copy the repo already holds"
 # Changing your mind must not strand a backup at the path nothing reads any more.
 core_scope hypr/input.lua shared >/dev/null 2>&1

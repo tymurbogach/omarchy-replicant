@@ -2683,9 +2683,13 @@ lid_blocked_by() {
   # is neither $1 nor a greedy regex — both got it wrong. Between WHO and WHAT
   # there are exactly four columns (UID USER PID COMM), so WHO is everything
   # up to five fields before the one reading handle-lid-switch.
+  # An inhibitor may hold SEVERAL whats at once, and systemd prints them
+  # colon-joined in one column: `sleep:idle:handle-lid-switch`. Testing the
+  # field for equality missed every one of those — it only ever matched a holder
+  # that wanted the lid and nothing else.
   systemd-inhibit --list --no-pager 2>/dev/null | awk '
     $NF == "block" {
-      for (i = 1; i <= NF; i++) if ($i == "handle-lid-switch") {
+      for (i = 1; i <= NF; i++) if ($i ~ /(^|:)handle-lid-switch(:|$)/) {
         who = ""
         for (j = 1; j <= i - 5; j++) who = who (j > 1 ? " " : "") $j
         if (who != "") { print who; exit }

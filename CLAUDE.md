@@ -638,6 +638,16 @@ That is why `category_field`/`setting_field` no longer call their split array `f
   | `tests/test-cli.sh` | 23 s | subcommands, purge, backups, `--help` |
   | `tests/test-journey.sh` | 17 s | two machines and one repo, end to end |
 
+- **Mutation testing is how you find out whether the suite is lying.** Copy the repo, break one
+  line of production code, run the suites, revert. Anything nobody notices is a coverage hole with
+  a name. Fourteen mutations found three: the prune pass's `is_excluded` guard, `lid_blocked_by`
+  (no test referenced it at all), and `plural`. The first one guards documented, silent data loss.
+
+  It also found the shape to watch for: **a section named after a guarantee it does not check.**
+  "switching a file off keeps what the repo already had" tested `hypr/monitors.lua`, which is
+  profile-scoped out of the box and so never had a `config/` copy to keep — every check in it
+  passed whether or not the prune pass honoured the off list.
+
 - **Measure before refactoring anything about noise or cost.** The inventory purge came out of one
   command, not an opinion — and it named files nobody would have guessed:
 

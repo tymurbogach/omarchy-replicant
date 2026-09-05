@@ -434,16 +434,34 @@ core_scope git/config shared >/dev/null 2>&1
 core_scope hypr/monitors.lua profile >/dev/null 2>&1
 core_scope hypr/input.lua shared >/dev/null 2>&1
 check "the inventory is scoped by hostname" "$STATE_ROOT/$MACHINE" "$STATE_DIR"
-check "…and that is where it was written"   "1" "$(ls "$STATE_DIR/system.txt" 2>/dev/null | wc -l)"
-# The inventory used to open with `date: <now>`, which changed on every single
-# run and nothing else did. So every save produced a commit called "state:
-# <machine> inventory (packages, plugins, themes)" that recorded no packages,
-# no plugins and no themes — just a clock reading — the panel's Last save row
-# showed one of those instead of the file the user had actually saved, and two
-# machines sharing a repo diverged every time either of them saved. git already
-# records when a commit was made.
-check "the inventory carries no timestamp of its own" "0" \
-  "$(grep -cE '^date:|[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]' "$STATE_DIR/system.txt" 2>/dev/null || true)"
+check "…and that is where it was written"   "1" "$(ls "$STATE_DIR/omarchy-plugins.txt" 2>/dev/null | wc -l)"
+# An inventory earns its place by being what a restore consumes, or what a
+# person rebuilds a machine from. Measured over one repo's first hundred
+# commits, state/ touched forty-six of them and almost none carried a real
+# change: system.txt opened with `date: <now>`, mise.txt carried "(pruned in
+# 9h)" — a countdown — and neither file was ever read back by anything. These
+# names are retired, and a generator that merely stops writing leaves its last
+# output in the repo for good: the prune pass sweeps config/ and the profile
+# tree, never state/.
+for retired in system.txt mise.txt npm-global.txt containers.txt system-services.txt; do
+  printf 'left over\n' > "$STATE_DIR/$retired"
+done
+core_backup >/dev/null 2>&1
+check "a retired inventory file is removed, not left looking current" "0" \
+  "$(ls "$STATE_DIR"/system.txt "$STATE_DIR"/mise.txt "$STATE_DIR"/npm-global.txt \
+        "$STATE_DIR"/containers.txt "$STATE_DIR"/system-services.txt 2>/dev/null | wc -l)"
+# Another machine's inventory is not ours to tidy — the same rule the prune
+# pass follows, and for the same reason.
+mkdir -p "$STATE_ROOT/otherbox"; printf 'theirs\n' > "$STATE_ROOT/otherbox/system.txt"
+core_backup >/dev/null 2>&1
+check "…and only in THIS machine's directory" "1" \
+  "$(ls "$STATE_ROOT/otherbox/system.txt" 2>/dev/null | wc -l)"
+rm -rf "$STATE_ROOT/otherbox"
+# Enabled units: the distribution's are not the user's setup and move on every
+# package update. Only a unit whose file is in this HOME is claimed.
+check "only units this HOME actually owns are recorded" "0" \
+  "$(while read -r u; do [[ -n "$u" && ! -f "$HOME/.config/systemd/user/$u" ]] && echo x; done \
+     < "$STATE_DIR/user-services.txt" 2>/dev/null | wc -l)"
 before_idle=$(hash_tree "$STATE_DIR")
 core_backup >/dev/null 2>&1
 check "…so a save that changes nothing writes nothing" "$before_idle" "$(hash_tree "$STATE_DIR")"
@@ -455,13 +473,13 @@ check "…and not left behind at the top"                 "0" "$(ls "$STATE_ROOT
 # The half-migrated case: a scoped copy already exists AND the old flat one is
 # still there. `mv -n` exits 0 and does nothing here, which left every repo
 # carrying two copies of its inventory for good.
-printf 'stale\n' > "$STATE_ROOT/system.txt"
+printf 'stale\n' > "$STATE_ROOT/pacman-official.txt"
 ensure_repo_layout >/dev/null 2>&1
-check "a flat copy alongside a scoped one is cleared" "0" "$(ls "$STATE_ROOT/system.txt" 2>/dev/null | wc -l)"
-check "…and the scoped one is the survivor"           "1" "$(ls "$STATE_DIR/system.txt" 2>/dev/null | wc -l)"
+check "a flat copy alongside a scoped one is cleared" "0" "$(ls "$STATE_ROOT/pacman-official.txt" 2>/dev/null | wc -l)"
+check "…and the scoped one is the survivor"           "1" "$(ls "$STATE_DIR/pacman-official.txt" 2>/dev/null | wc -l)"
 check "…with the machine's own content, not the stale copy" "0" \
-  "$(grep -c '^stale$' "$STATE_DIR/system.txt" 2>/dev/null || true)"
-mkdir -p "$STATE_ROOT/otherbox"; printf 'x\n' > "$STATE_ROOT/otherbox/system.txt"
+  "$(grep -c '^stale$' "$STATE_DIR/pacman-official.txt" 2>/dev/null || true)"
+mkdir -p "$STATE_ROOT/otherbox"; printf 'x\n' > "$STATE_ROOT/otherbox/pacman-official.txt"
 check "status lists every machine that has saved here" "2" \
   "$(core_status --json --no-fetch 2>/dev/null | jq '.machines | length')"
 check "…and marks which one is this one" "1" \

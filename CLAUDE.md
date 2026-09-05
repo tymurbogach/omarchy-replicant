@@ -24,6 +24,17 @@ machine- or user-specific except through `MANIFEST`/`SECRETS_MANIFEST` in
   still English — this is a developer's personal tool, not a localized product, and mixing
   languages makes future edits error-prone (partial greps, inconsistent tone).
 
+## Talking with Claude Code
+
+This is about the conversation with the assistant, not the project — the Language rule above
+still applies with no exception to anything that ends up in the repo (code, comments, commits,
+CLI output, docs).
+
+- End each turn with a final summary in simple, plain Spanish (castellano simple).
+- Whenever a task calls for it — editing Hyprland/Omarchy desktop config, terminal configs,
+  themes, idle/lock, keybindings, the bar — invoke the `omarchy` skill rather than improvising
+  from memory.
+
 ## Hard rules
 
 1. **Never edit `/usr/share/omarchy/` or `~/.local/share/omarchy`** (symlink to the pacman
@@ -445,6 +456,38 @@ Eleven of them were sitting on this machine, unnamed and unreachable: that is a 
   (the newest, since that is the one Undo takes) with the rest counted as "+N older". A `same`
   backup — byte-identical to the live file — disables its own Undo and says why: a button that
   would change nothing is worse than no button.
+
+## An inventory earns its place or it is noise
+
+Measured on the first repo this plugin ever wrote: `state/` touched **46 of the first 100
+commits**, and almost none of them carried a real change. `system.txt` opened with `date: <now>`;
+`mise.txt` carried `(pruned in 9h)`, a countdown; `system-services.txt` listed the eighteen units
+*the distribution* enables, which move on every package update and are nobody's setup.
+
+The test an inventory file has to pass, and it is short:
+
+> **Does a restore consume it, or would a person rebuild a machine from it?**
+
+Consumed by restore: `omarchy-plugins.txt`, `omarchy-themes.txt`. Rebuilt from by a person:
+`pacman-*.txt`, `drift-vs-omarchy.txt`, `defined-secrets.txt`, `cifs-mounts.txt`. Retired for
+failing both: `system.txt`, `mise.txt` (redundant — `mise/config.toml` is tracked as config and is
+the authoritative list), `npm-global.txt`, `containers.txt`, `system-services.txt`.
+
+Two rules fall out of doing this:
+
+- **A generator that merely stops writing leaves its last output in the repo forever.** The prune
+  pass sweeps `config/` and the profile tree, never `state/`, so a retired name sits there looking
+  current. `state_snapshot` removes retired names explicitly — and only from **this machine's**
+  directory, because another machine's inventory is not ours to tidy. That is the same rule the
+  prune pass follows and it exists for the same reason.
+- **`user-services.txt` records only units whose file is in `~/.config/systemd/user`.** The
+  distribution's enabled units are not a setup decision. Paired with the unit file itself, which is
+  tracked as ordinary config, three lines are enough to bring a user's own service back — and it
+  stops moving every time a package updates.
+
+Related: a value the user changes for the mood of the day (the active theme) is scoped `off`
+rather than tracked. The *themes* are inventoried and reinstalled; which one is on right now is
+not a fact worth a commit.
 
 ## Two machines, one repo
 

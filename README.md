@@ -105,6 +105,7 @@ your own checkout.
 - **Two ways back for every value** — one button to Omarchy's default, one to what your repo has.
 - **Secrets stay secret.** SSH keys and `.env` files are stored at mode 600; the panel shows a kind, a mode and a variable *count*. No value is ever drawn on screen, and the diff refuses to render one.
 - **An undo for the undo.** Every write keeps the version it replaced as `.bak.<epoch>` — and Restore now lists them, says how long ago each was made and whether it still differs from what you have, and puts one back with a button. Undo is a swap, so it is itself reversible and the backups never pile up.
+- **An inventory that only moves when something moved.** A file earns its place by being what a restore consumes or what a person rebuilds a machine from. Versions that bump on their own, countdowns, and the units your distribution enables are not that, and they used to cost a commit every single save.
 - **No terminal pop-ups.** Editing opens your editor, diffs render in the panel, destructive actions confirm in the panel.
 
 ## Second machine

@@ -1587,7 +1587,12 @@ core_backup() {
     done
   } > "$STATE_DIR/omarchy-themes.txt"
 
-  mise ls 2>/dev/null > "$STATE_DIR/mise.txt" || true
+  # `mise ls` marks stale installs "(pruned in 9h)" — a COUNTDOWN, so the file
+  # differs from itself every hour and every save committed it. That is the
+  # `date:` line this inventory already lost once, wearing a different hat.
+  # Those rows are a version on its way out; what belongs in an inventory is
+  # what is installed, so they are dropped and the countdown with them.
+  mise ls 2>/dev/null | grep -v '(pruned in ' > "$STATE_DIR/mise.txt" || true
   npm ls -g --depth=0 2>/dev/null > "$STATE_DIR/npm-global.txt" || true
   systemctl list-unit-files --state=enabled --no-pager --no-legend 2>/dev/null | awk '{print $1}' > "$STATE_DIR/system-services.txt" || true
   systemctl --user list-unit-files --state=enabled --no-pager --no-legend 2>/dev/null | awk '{print $1}' > "$STATE_DIR/user-services.txt" || true
@@ -2557,7 +2562,7 @@ build_settings_json() {
       default_value: .[20], default_text: .[21],
       repo_value: .[22], repo_text: .[23],
       can_revert_default: (.[24]|flag), can_revert_repo: (.[25]|flag)
-    })' | jq -c '
+    })' | jq -c --arg lidblock "$(lid_blocked_by)" '
     # A second pass, because a notice is about how settings sit RELATIVE to each
     # other and the per-setting record cannot see its siblings.
     #
@@ -2576,7 +2581,40 @@ build_settings_json() {
     | map(. + { notice: (
         if .id == "idle.screensaver" and ($ss != null and $lock != null and $lock > 0 and $ss >= $lock)
           then "The screen locks first, so this screensaver never appears."
+        # Not a warning about how you configured it — a statement that what you
+        # configured is not what happens. Something else is holding the lid
+        # switch and logind is ignoring this file.
+        elif (.id | startswith("lid.")) and $lidblock != ""
+          then "Overridden: \($lidblock) is blocking the lid switch, so closing the lid does nothing."
         else "" end) })'
+}
+
+# lid_blocked_by — who, if anyone, is holding a `block` inhibitor on the lid
+# switch. Empty when nobody is.
+#
+# This exists because the panel was telling a confident lie. It reported
+# lid.close by reading /etc/systemd/logind.conf.d/99-lid.conf — the file it
+# writes itself — while a plugin (Omarchy Sleepwalker) held a block inhibitor
+# that makes logind ignore the lid entirely. The config said
+# "suspend-then-hibernate"; closing the lid did nothing at all.
+#
+# Same shape as the bug that opened this whole line of work: answering a
+# question about the SYSTEM by reading the ARTIFACT you wrote. A `delay`
+# inhibitor is not this — those are normal and transient (NetworkManager and
+# UPower each hold one). Only `block` overrides the setting.
+lid_blocked_by() {
+  # WHO is free text and often contains spaces ("Omarchy Sleepwalker"), so it
+  # is neither $1 nor a greedy regex — both got it wrong. Between WHO and WHAT
+  # there are exactly four columns (UID USER PID COMM), so WHO is everything
+  # up to five fields before the one reading handle-lid-switch.
+  systemd-inhibit --list --no-pager 2>/dev/null | awk '
+    $NF == "block" {
+      for (i = 1; i <= NF; i++) if ($i == "handle-lid-switch") {
+        who = ""
+        for (j = 1; j <= i - 5; j++) who = who (j > 1 ? " " : "") $j
+        if (who != "") { print who; exit }
+      }
+    }'
 }
 
 build_setting_groups_json() {

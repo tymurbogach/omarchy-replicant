@@ -106,6 +106,44 @@ CLI output, docs).
    with "variable may not be assigned value", which silently turned `restore` into a no-op for
    an entire release. Before naming a shell array or a QML property, check it is yours to use.
 
+## The one bug this project keeps having
+
+Four sections below are the same bug wearing different clothes, and naming it once is worth more
+than finding it a fifth time:
+
+> **A question about the SYSTEM is answered by asking the system — never by reading the artifact
+> you wrote.**
+
+The artifact is always right there, always cheaper to read, and always one indirection away from
+the truth:
+
+| The question | The artifact that lied | What actually answers it |
+| --- | --- | --- |
+| Has this file changed? | `git status` on the repo copy | `entry_differs` — `cmp` against the live file |
+| Does this machine have unsaved work? | `repoState.dirty` | `count_changes`, the rows the panel counts |
+| What does closing the lid do? | `99-lid.conf`, which this plugin wrote | logind — a `block` inhibitor makes the file inert (`lid_blocked_by`) |
+| Which theme is on? | the name saved in the repo | `omarchy-theme-current`, compared normalised |
+| Is the session locked? | `LockedHint` | the lock's own PAM session in the journal |
+
+Every one of those shipped, and every one looked correct in review. Before writing a reader for
+anything, ask which side of the line it sits on: **a value read back from a file this plugin wrote
+is reporting intent, not effect.** They agree right up until something else has an opinion.
+
+## Adding to this file
+
+It is six hundred lines. Nobody reads six hundred lines before touching code — including the
+assistant it is written for — so every addition spends attention the existing rules were paying
+for. It grew by a fifth in a single session, which is how a set of rules quietly becomes an
+archive.
+
+- A section earns its place by describing a bug that **cost more than an hour** and that
+  **re-reading the code would not have prevented**. Everything else belongs in a comment beside
+  the thing it is about, where it is read at exactly the right moment instead of hopefully.
+- **Rule first, story second.** Several sections here still open with six lines of narrative
+  before saying what to do.
+- A new instance of an existing rule is **a row in that rule's table**, not a second section.
+- Adding something is a good moment to check whether something else has stopped being true.
+
 ## Repo conventions
 
 - `bin/omarchy-replicant` is the CLI (subcommand parsing, terminal UX); `bin/replicant-core.sh`
@@ -607,6 +645,24 @@ is also why `category_field`/`setting_field` no longer call their split array `f
 - **`./tests/run-all.sh`** — the four suites (core, settings, CLI, journey) plus `bash -n`, shellcheck,
   qmllint, the QML-trap greps and `omarchy-plugin-validate`. This is the one command; everything
   below it is what that command already does, plus the things a script cannot check.
+
+  It takes about **five minutes**, which is long enough that waiting for it after every edit is
+  most of a session. While iterating, run the one suite that covers what you touched; keep the
+  full run for before the commit.
+
+  | suite | time | covers |
+  | --- | ---: | --- |
+  | `tests/test-settings.sh` | 59 s | the SETTINGS registry and its writers |
+  | `tests/test-core.sh` | 33 s | MANIFEST, scopes, state, the JSON payloads |
+  | `tests/test-cli.sh` | 23 s | subcommands, purge, backups, `--help` |
+  | `tests/test-journey.sh` | 17 s | two machines and one repo, end to end |
+
+- **Measure before refactoring anything about noise or cost.** The inventory purge came out of one
+  command, not an opinion — and it named files nobody would have guessed:
+
+  ```bash
+  git -C "$REPO" log -200 --name-only --format='' -- . | grep -v '^$' | sort | uniq -c | sort -rn
+  ```
 - `omarchy-plugin-validate` on this directory after any structural change.
 - Reload the plugin and visually inspect with `grim` (bar icon + open panel).
 - `omarchy-replicant status --json | jq '.configs[] | {id, sync_state}'` after forcing the states

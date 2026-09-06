@@ -60,17 +60,24 @@ report() {
 
 if [[ ${1:-} == --stdin ]]; then
   label=${2:-input}
-  content=$(cat)
+  # Through a file, not a variable. The pre-commit hook feeds every staged file
+  # in, and once a plugin's compiled shader and its PNG were tracked those
+  # arrived as binary — bash cannot hold a NUL in a variable and printed
+  # "warning: command substitution: ignored null byte in input" on every commit.
+  # A binary is also not what this looks for: every pattern here is a text
+  # token, so grep -I skips them and says so instead of half-reading them.
+  tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT
+  cat > "$tmp"
 
   for entry in "${PATTERNS[@]}"; do
-    hits=$(printf '%s\n' "$content" | grep -nE "${entry%:*}" | grep -vE "$PLACEHOLDER") || true
+    hits=$(grep -InE "${entry%:*}" "$tmp" | grep -vE "$PLACEHOLDER") || true
     report "$label — ${entry##*:}" "$hits"
   done
 else
   (( $# )) || { echo "usage: $0 PATH... | $0 --stdin PATH" >&2; exit 2; }
 
   for entry in "${PATTERNS[@]}"; do
-    hits=$(grep -rnE --exclude-dir=.git --exclude-dir=secrets "${entry%:*}" "$@" 2>/dev/null \
+    hits=$(grep -rInE --exclude-dir=.git --exclude-dir=secrets "${entry%:*}" "$@" 2>/dev/null \
       | grep -vE "$PLACEHOLDER") || true
     report "${entry##*:}" "$hits"
   done

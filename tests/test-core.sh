@@ -468,6 +468,19 @@ mkdir -p "$HOME/.config/omarchy/plugins/zz.plain"
 printf '{"id":"zz.plain","version":"1.0.0"}\n' \
   > "$HOME/.config/omarchy/plugins/zz.plain/manifest.json"
 check_true "…and it succeeds even when the last plugin is not one" cloned_plugins
+
+# A clone a pack REBUILDS is not a clone anybody has to back up — freezing a
+# copy is precisely what the deriver exists to avoid, since the frozen one stops
+# receiving the built-in's own fixes. The convention is omarchy.derivedBy naming
+# the command; doctor reads it and stops offering to copy the directory.
+check "a plain clone names no deriver" "" \
+  "$(cloned_plugins | awk -F'\t' '$1=="mine.lock"{print $3}')"
+printf '{"id":"mine.lock","version":"1.0.0","omarchy":{"clonedFrom":"omarchy.lock","derivedBy":"omarchy-matrix"}}\n' \
+  > "$HOME/.config/omarchy/plugins/mine.lock/manifest.json"
+check "…and a derived one says who rebuilds it" "omarchy-matrix" \
+  "$(cloned_plugins | awk -F'\t' '$1=="mine.lock"{print $3}')"
+printf '{"id":"mine.lock","version":"1.0.0","omarchy":{"clonedFrom":"omarchy.lock"}}\n' \
+  > "$HOME/.config/omarchy/plugins/mine.lock/manifest.json"
 rm -rf "$HOME/.config/omarchy/plugins/zz.plain"
 
 # The answer is the same as for a hand-made theme: track the directory. Prove it

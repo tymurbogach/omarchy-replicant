@@ -3362,7 +3362,16 @@ cloned_plugins() {
     pid=$(jq -r '.id // empty' "$pmf" 2>/dev/null) || continue
     [[ -n "$pid" ]] || continue
     IFS=$'\t' read -r porigin pmethod < <(resolve_plugin_origin "$pdir" "$pid" "$pmf")
-    [[ "$pmethod" == "clone" ]] && printf '%s\t%s\n' "$pid" "$pdir"
+    # A third column: the command that regenerates this clone, if it says so.
+    # `omarchy plugin clone` produces a directory nobody owns, but a pack can
+    # own one — omarchy-matrix derives its lock screen from Omarchy's current
+    # source on every update precisely so a frozen copy cannot fall behind.
+    # Backing that up is worse than not: you freeze the thing it exists to avoid.
+    # The convention is `omarchy.derivedBy` in the clone's manifest, naming the
+    # command; anything else is hand-made and on its own.
+    local pderiv
+    pderiv=$(jq -r '.omarchy.derivedBy // empty' "$pmf" 2>/dev/null || true)
+    [[ "$pmethod" == "clone" ]] && printf '%s\t%s\t%s\n' "$pid" "$pdir" "$pderiv"
   done
   # The loop's last `&&` decides the exit status, so a run whose final plugin is
   # not a clone "failed" — and under the CLI's `set -e` that killed doctor in
@@ -3551,6 +3560,7 @@ elif [[ "${1:-}" == "profile-get" ]]; then current_profile
 elif [[ "${1:-}" == "profile-list" ]]; then list_profiles
 elif [[ "${1:-}" == "local-only-plugins" ]]; then local_only_plugins
 elif [[ "${1:-}" == "cloned-plugins" ]]; then cloned_plugins
+elif [[ "${1:-}" == "repo-path" ]]; then repo_copy_for_rel "${2:-}"
 elif [[ "${1:-}" == "local-only-themes" ]]; then local_only_themes
 elif [[ "${1:-}" == "track" ]]; then shift; core_track "$@"
 elif [[ "${1:-}" == "untrack" ]]; then core_untrack "${2:-}"

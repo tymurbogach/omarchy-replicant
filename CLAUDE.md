@@ -284,8 +284,9 @@ Two rules fall out of doing this:
   stops moving every time a package updates.
 
 Related: a value the user changes for the mood of the day (the active theme) is scoped `off`
-rather than tracked. The *themes* are inventoried and reinstalled; which one is on right now is
-not a fact worth a commit.
+rather than tracked. The *themes* are inventoried, and a pending one is installed on request
+(`install-theme <name>`, never automatically); which one is on right now is not a fact worth a
+commit.
 
 ## What "changed" means, and who gets to answer
 

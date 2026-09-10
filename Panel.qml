@@ -1223,7 +1223,7 @@ Panel {
             RestoreCard {
               width: parent.width
               title: "Restore from GitHub"
-              body: "Brings every config, secret and setting saved in your repo down onto this machine — and then runs whatever Omarchy needs to make it take effect: the theme is re-applied with omarchy theme set, Hyprland is reloaded, missing plugins are reinstalled with omarchy plugin add."
+              body: "Brings every config, secret and setting saved in your repo down onto this machine — and then runs whatever Omarchy needs to make it take effect: the theme is re-applied with omarchy theme set, Hyprland is reloaded. Third-party plugins and themes are never reinstalled automatically — pending ones are listed below, one Install button each."
               actionText: "Restore everything"
               actionAccent: true
               onPreview: {

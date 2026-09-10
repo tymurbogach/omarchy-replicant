@@ -1072,6 +1072,27 @@ list_backups() {
   done | sort -t$'\t' -k4,4nr
 }
 
+# build_pending_reinstalls_json — third-party themes/plugins the inventory
+# knows about but this machine does not have. `restore` never installs these
+# on its own (restore_themes/restore_plugins in the CLI only report them) —
+# this is the list the panel renders as its own row, one Install button per
+# item, so fetching someone else's current code is always a decision made in
+# the moment, not a side effect of "bring my stuff back".
+build_pending_reinstalls_json() {
+  {
+    while IFS=$'\t' read -r tname torigin; do
+      [[ -n "$tname" ]] || continue
+      jq -nc --arg id "$tname" --arg origin "$torigin" \
+        '{kind:"theme", id:$id, origin:$origin, method:""}'
+    done < <(missing_themes)
+    while IFS=$'\t' read -r pid porigin pmethod; do
+      [[ -n "$pid" ]] || continue
+      jq -nc --arg id "$pid" --arg origin "$porigin" --arg method "$pmethod" \
+        '{kind:"plugin", id:$id, origin:$origin, method:$method}'
+    done < <(missing_plugins)
+  } | jq -sc '.'
+}
+
 # build_backups_json — what the panel renders. One entry per backup, carrying
 # the id it belongs to so the panel can put an Undo next to the right name.
 build_backups_json() {
@@ -3046,12 +3067,13 @@ core_status() {
     return 0
   fi
   if (( json )); then
-    local configs_json secrets_json settings_json categories_json groups_json machines_json
+    local configs_json secrets_json settings_json categories_json groups_json machines_json pending_reinstalls_json
     configs_json=$(build_configs_json)
     secrets_json=$(build_secrets_json)
     settings_json=$(build_settings_json)
     categories_json=$(build_categories_json)
     groups_json=$(build_setting_groups_json)
+    pending_reinstalls_json=$(build_pending_reinstalls_json)
     # Every machine that has ever saved into this repo, newest first. With one
     # machine it is a footnote; with two it is the answer to "did the desktop
     # actually push?", which is the whole reason the repo exists.
@@ -3094,6 +3116,7 @@ core_status() {
       --argjson settings "$settings_json" --argjson categories "$categories_json" \
       --argjson setting_groups "$groups_json" --argjson machines "$machines_json" \
       --arg profile "$(current_profile)" --argjson profiles "$profiles_json" \
+      --argjson pending_reinstalls "$pending_reinstalls_json" \
       '{initialized:true, branch:$branch, remote:$remote, remote_name:$remote_name,
         repo_dir:$repo_dir, machine:$machine, plugin_version:$plugin_version, home:$home,
         profile:$profile, profiles:$profiles,
@@ -3101,7 +3124,8 @@ core_status() {
         dirty:$dirty, untracked:$untracked, ahead:$ahead, behind:$behind, pending:$pending,
         unsaved:$unsaved, incoming:$incoming,
         configs:$configs, secrets:$secrets, settings:$settings,
-        categories:$categories, setting_groups:$setting_groups, machines:$machines}'
+        categories:$categories, setting_groups:$setting_groups, machines:$machines,
+        pending_reinstalls:$pending_reinstalls}'
   else
     echo "branch: $branch"
     echo "remote: ${remote:-<none>}"

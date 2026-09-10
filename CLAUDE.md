@@ -79,6 +79,11 @@ is reporting intent, not effect.** They agree right up until something else has 
    verify it by actually triggering it on a test file, not just by reading the code.
 5. **Global destructive commands ask for a single summary confirmation** (not per-file) unless
    `--yes`/`-y` is passed explicitly — this applies to `reset-all` and `restore --apply --all`.
+   **Deliberate exception: `install-theme`/`install-plugin`.** Fetching a third party's *current*
+   code is a different risk class from overwriting a file the user already put in their own
+   manifest, so each one asks on its own, every time, with no `--yes` bypass from the panel side.
+   Don't "fix" this into a single bulk confirmation to match the rest of this rule — see
+   "Big things are inventoried, never copied" below for why.
 6. **The panel never opens a terminal the user has to dismiss.** Editing a file launches the
    editor directly (`omarchy-launch-editor`), a diff renders inline in the panel, and a
    destructive action confirms in the panel and then runs headless with `--yes`. The one
@@ -228,6 +233,19 @@ all, existing nowhere else. `cloned_plugins` names them and `doctor` says to tra
 which round-trips binaries intact. No diff against the built-in: `clone` means edited by
 construction, the built-in lives at a path this would have to hunt for, and a check that can be
 wrong about whether your work is backed up is worse than one that always tells you where it stands.
+
+**Reinstalling from an origin used to be automatic; it is not any more.** A 2026-09 marketplace
+security review flagged `restore` fetching a third party's theme/plugin origin at whatever HEAD
+it currently points to, with no record of the commit that was actually reviewed at install time —
+and there is no fix available at the call site: neither `omarchy theme install` nor
+`omarchy plugin add` accepts a ref, so pinning is not this plugin's decision to make. The honest
+fix is not silence, it is consent: `restore_themes`/`restore_plugins` only ever report a pending
+theme/plugin now (`skip "... — third-party ..., not auto-installed: omarchy-replicant install-X ..."`),
+and `install-theme <name>` / `install-plugin <id>` are the explicit actions that actually fetch one,
+each confirmed on its own in the panel. `doctor` names them too, for anyone who never opens the
+panel. The clone/reinstall of the user's OWN private backup repo (`clone`, `pull`) is unaffected —
+there is no third party in that trust chain, and pinning it would break the point of the tool
+(bringing down the latest state pushed from another machine).
 
 Theme names are compared **normalised**: `omarchy-theme-current` answers "Enter The Matrix" and the
 file records "enter-the-matrix". They differ in case *and* separator, so case-folding alone still

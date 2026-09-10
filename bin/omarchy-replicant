@@ -1017,6 +1017,28 @@ cmd_restore_file() {
   core_restore_file "$id" || exit 1
 }
 
+# cmd_install_theme <name> — install ONE third-party theme recorded in the
+# inventory, on request. `restore` reports these as pending and never installs
+# them itself (see restore_themes below) — this is the explicit action.
+cmd_install_theme() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || fail "usage: omarchy-replicant install-theme <name>"
+  ensure_core
+  # shellcheck disable=SC1090
+  source "$CORE" 2>/dev/null || true
+  core_install_theme "$name" || exit 1
+}
+
+# cmd_install_plugin <id> — the same action for a plugin.
+cmd_install_plugin() {
+  local id="${1:-}"
+  [[ -n "$id" ]] || fail "usage: omarchy-replicant install-plugin <id>"
+  ensure_core
+  # shellcheck disable=SC1090
+  source "$CORE" 2>/dev/null || true
+  core_install_plugin "$id" || exit 1
+}
+
 # cmd_shortcuts — what you changed about the keyboard, and what is actually
 # bound right now. Omarchy's model is defaults + your overrides, so only the
 # overrides are backed up; a snapshot of all 227 active bindings would be stale
@@ -1434,6 +1456,8 @@ Putting things back            (dry run by default; .bak.<epoch> kept for everyt
   restore-file <id>           One file or directory back from the repo
   reset <id>                  One file back to Omarchy's default
   reset-all [--apply] [--yes] Everything with a known default back to factory
+  install-theme <name>        Install one third-party theme from your inventory — never automatic
+  install-plugin <id>         Install one third-party plugin from your inventory — never automatic
 
 Second machine
   clone <url>                 Point this machine at the repo you already have
@@ -1586,8 +1610,17 @@ Dry-run by default, like everything here that writes.
   Put back what is saved in your repo. A dry run by default, and every file it
   overwrites is kept as .bak.<epoch> first.
   Restoring is not copying: each area also runs what has to happen afterwards —
-  hyprctl reload, a terminal restart, omarchy-theme-set, plugin reinstalls.
-  This is not the same thing as 'reset-all', which goes to Omarchy's defaults."
+  hyprctl reload, a terminal restart, omarchy-theme-set. Third-party plugins
+  and themes are NOT reinstalled by this command — see 'install-theme' /
+  'install-plugin'. This is not the same thing as 'reset-all', which goes to
+  Omarchy's defaults."
+  [install-theme]="install-theme <name>
+  Install one third-party theme recorded in your inventory, fetching whatever
+  is at its origin right now. 'restore' only ever reports these as pending —
+  this is the action that actually fetches one, on purpose."
+  [install-plugin]="install-plugin <id>
+  The same thing for a plugin: 'restore' reports it as pending, this installs
+  it, fetching whatever is at its origin right now."
 )
 
 
@@ -1646,6 +1679,8 @@ main() {
     push) shift; cmd_push "$@";;
     pull) shift; cmd_pull "$@";;
     clone) shift; cmd_clone "$@";;
+    install-theme) shift; cmd_install_theme "$@";;
+    install-plugin) shift; cmd_install_plugin "$@";;
     restore) shift; cmd_restore "$@";;
     *) fail "unknown command $cmd — --help";;
   esac

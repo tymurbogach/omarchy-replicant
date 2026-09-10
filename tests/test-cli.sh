@@ -272,6 +272,32 @@ check "doctor changes nothing in ~/.config" "$before_home" "$(hash_tree "$HOME/.
 check "doctor changes nothing in the repo"  "$before_repo" "$(hash_tree "$REPO")"
 check_contains "doctor reports on the repo" "local repo" "$(run doctor)"
 
+section "install-theme / install-plugin are on-demand, not part of restore"
+mkdir -p "$TMP/fakebin"
+FAKE_LOG="$TMP/omarchy-calls.log"
+cat > "$TMP/fakebin/omarchy" <<EOF
+#!/bin/bash
+echo "\$*" >> "$FAKE_LOG"
+exit 0
+EOF
+chmod +x "$TMP/fakebin/omarchy"
+# MACHINE in replicant-core.sh is `hostnamectl --static` first, plain
+# `hostname` as its fallback — never `hostname -s`. Guessing it from the test
+# host's real hostname would silently point at the wrong state directory, so
+# REPLICANT_MACHINE pins it to a fixed, test-only value instead.
+STATEDIR="$REPO/state/testhost"
+mkdir -p "$STATEDIR"
+printf '# name\torigin\nmine\thttps://example.com/omarchy-mine-theme\n' > "$STATEDIR/omarchy-themes.txt"
+: > "$FAKE_LOG"
+check_true "install-theme installs a pending theme" \
+  env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" install-theme mine
+check_contains "…by calling omarchy theme install" \
+  "theme install https://example.com/omarchy-mine-theme" "$(cat "$FAKE_LOG")"
+check_false "install-theme with no name fails" \
+  env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" install-theme
+check_false "install-plugin with no id fails" \
+  env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" install-plugin
+
 section "link / unlink is reversible and touches nothing else"
 export PATH_LINK="$HOME/.local/bin/omarchy-replicant"
 check "nothing on PATH before linking" "0" "$(ls "$PATH_LINK" 2>/dev/null | wc -l)"

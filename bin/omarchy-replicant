@@ -518,19 +518,18 @@ cmd_restore() {
   # most visible thing about the setup came back as nothing. Themes are git
   # clones, so they are reinstalled the way plugins are — by URL, from the
   # inventory — and this has to happen BEFORE the name is applied.
+  # A third-party theme is never installed by `restore` itself — see the
+  # 2026-09 marketplace security review: `omarchy theme install` has no way
+  # to pin a commit, so an automatic reinstall here silently trusts whatever
+  # is at that origin TODAY, not what was there when the theme was first
+  # installed. `install-theme <name>` is the explicit, on-purpose version of
+  # this same action.
   restore_themes() {
-    local dry="$1" tname torigin n=0
-    while IFS=$'\t' read -r tname torigin; do
+    local tname n=0
+    while IFS=$'\t' read -r tname _; do
       [[ -n "$tname" ]] || continue
       n=$((n + 1))
-      if (( dry )); then
-        skip "dry-run: would run omarchy theme install $torigin  ($tname)" >&2
-      else
-        echo "  → omarchy theme install $torigin" >&2
-        omarchy theme install "$torigin" >/dev/null 2>&1 \
-          && ok "$tname installed" >&2 \
-          || warn "$tname — omarchy theme install failed ($torigin)" >&2
-      fi
+      skip "$tname — third-party theme, not auto-installed: omarchy-replicant install-theme $tname" >&2
     done < <(missing_themes)
     (( n == 0 )) && skip "every theme in the inventory is already installed" >&2
     return 0
@@ -563,29 +562,16 @@ cmd_restore() {
 
   # Plugins are reinstalled, not copied. `omarchy plugin add <origin>` is the
   # only thing that leaves a plugin in a state Omarchy itself will maintain.
+  # Same reasoning as restore_themes: a third-party plugin is code Quickshell
+  # will run once enabled, so reinstalling it automatically on every restore
+  # means silently trusting whatever the origin holds today. install-plugin
+  # <id> is the explicit version.
   restore_plugins() {
-    local dry="$1" pid porigin pmethod verb n=0
-    while IFS=$'\t' read -r pid porigin pmethod; do
+    local pid n=0
+    while IFS=$'\t' read -r pid _; do
       [[ -n "$pid" ]] || continue
       n=$((n + 1))
-      # Two different Omarchy commands, because they rebuild two different
-      # things: a third-party plugin comes from its git remote, while an edited
-      # copy of a built-in is re-cloned from the built-in it came from. Using
-      # `add` on the second would fail — "omarchy.indicators" is not a URL.
-      [[ "$pmethod" == "clone" ]] && verb="clone" || verb="add"
-      if (( dry )); then
-        skip "dry-run: would run omarchy plugin $verb $porigin  ($pid)" >&2
-      else
-        echo "  → omarchy plugin $verb $porigin" >&2
-        if [[ "$verb" == "clone" ]]; then
-          omarchy plugin clone "$porigin" >/dev/null 2>&1 \
-            && ok "$pid re-cloned from $porigin (any edits you made are not in this)" >&2 \
-            || warn "$pid — omarchy plugin clone failed" >&2
-        else
-          omarchy plugin add "$porigin" --enable --yes >/dev/null 2>&1 \
-            && ok "$pid installed" >&2 || warn "$pid — omarchy plugin add failed" >&2
-        fi
-      fi
+      skip "$pid — third-party plugin, not auto-installed: omarchy-replicant install-plugin $pid" >&2
     done < <(missing_plugins)
     (( n == 0 )) && skip "every plugin in the inventory is already installed" >&2
     return 0
@@ -606,11 +592,11 @@ cmd_restore() {
       # it — but it is installed and then applied, never copied (see
       # restore_themes / restore_theme). Order matters: applying a theme that
       # is not on the machine yet is the bug this pair exists to close.
-      restore_themes "$DRY"
+      restore_themes
       restore_theme "$DRY"
     fi
     if [[ "$cat" == "plugins" ]]; then
-      restore_plugins "$DRY"
+      restore_plugins
     fi
 
     pending=()

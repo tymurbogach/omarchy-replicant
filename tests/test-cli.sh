@@ -298,6 +298,13 @@ check_false "install-theme with no name fails" \
 check_false "install-plugin with no id fails" \
   env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" install-plugin
 
+section "restore never installs third-party code on its own"
+: > "$FAKE_LOG"
+out=$(env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" restore --apply --all --yes 2>&1)
+check "restore --apply --all --yes does not call omarchy theme install" "0" \
+  "$(grep -c 'theme install' "$FAKE_LOG" || true)"
+check_contains "…and says how to install it instead" "install-theme mine" "$out"
+
 section "link / unlink is reversible and touches nothing else"
 export PATH_LINK="$HOME/.local/bin/omarchy-replicant"
 check "nothing on PATH before linking" "0" "$(ls "$PATH_LINK" 2>/dev/null | wc -l)"

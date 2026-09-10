@@ -1368,7 +1368,10 @@ Panel {
                     onClicked: root.ask(
                       reinstallRow.modelData.kind === "theme" ? "install-theme" : "install-plugin",
                       reinstallRow.modelData.id,
-                      "Install the " + reinstallRow.modelData.kind + " \"" + reinstallRow.modelData.id + "\" from " + reinstallRow.modelData.origin + "?\n\nThis fetches whatever is at that address right now — not necessarily what you reviewed when you first installed it.",
+                      "Install the " + reinstallRow.modelData.kind + " \"" + reinstallRow.modelData.id + "\" from " + reinstallRow.modelData.origin + "?\n\nThis fetches whatever is at that address right now — not necessarily what you reviewed when you first installed it."
+                        + (reinstallRow.modelData.kind === "theme"
+                           ? "\n\nInstalling a theme also makes it the active theme: your desktop changes to it right away."
+                           : ""),
                       "Install")
                   }
                 }

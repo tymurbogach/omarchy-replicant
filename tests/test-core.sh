@@ -817,6 +817,18 @@ check_contains "…and calls omarchy theme install with the recorded origin" \
 check_false "install-theme refuses an id that is not pending" \
   env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_theme not-a-theme"
 
+# One name, two origins: two machines diverged, or the URL moved. The name on
+# its own no longer says what the user agreed to fetch, so nothing is fetched.
+printf '# name\torigin\ntwotone\thttps://example.com/omarchy-twotone\ntwotone\thttps://evil.example/omarchy-twotone\n' \
+  > "$STATE_DIR/omarchy-themes.txt"
+: > "$FAKE_LOG"
+check_false "install-theme refuses a name recorded with two origins" \
+  env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_theme twotone"
+check "…and installs neither of them" "" "$(cat "$FAKE_LOG")"
+check_contains "…and names both origins" "evil.example" \
+  "$(env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_theme twotone" 2>&1)"
+printf '# name\torigin\nfreshtheme\thttps://example.com/omarchy-freshtheme\n' > "$STATE_DIR/omarchy-themes.txt"
+
 section "installing one pending plugin on demand"
 mkdir -p "$STATE_DIR"
 printf '# id\tversion\torigin\tmethod\ndemo.widget\t1.0.0\thttps://example.com/demo-widget\tadd\n' \
@@ -828,6 +840,16 @@ check_contains "…and calls omarchy plugin add with the recorded origin" \
   "plugin add https://example.com/demo-widget --enable --yes" "$(cat "$FAKE_LOG")"
 check_false "install-plugin refuses an id that is not pending" \
   env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_plugin not-a-plugin"
+
+# method 'clone' means an edited built-in, and it needs the other command:
+# `omarchy plugin add` on a built-in id is not the same action.
+printf '# id\tversion\torigin\tmethod\ndemo.clone\t1.0.0\thttps://example.com/demo-clone\tclone\n' \
+  > "$STATE_DIR/omarchy-plugins.txt"
+: > "$FAKE_LOG"
+check_true "install-plugin succeeds for a pending clone" \
+  env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_plugin demo.clone"
+check "…and calls omarchy plugin clone, not plugin add" "plugin clone https://example.com/demo-clone" \
+  "$(cat "$FAKE_LOG")"
 
 section "pending reinstalls, as JSON for the panel"
 # NOT "mine" — see Task 1's note: that name already has an installed

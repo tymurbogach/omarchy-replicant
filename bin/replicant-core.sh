@@ -321,7 +321,7 @@ CATEGORIES=(
   "terminal|󰆍|Terminal & shell|Alacritty, foot, bashrc and which terminal opens|Copied back, then omarchy restart terminal"
   "development|󰅴|Development|git, editors, Claude and opencode, mise, VS Code|Copied back; nothing needs restarting"
   "secrets|󰌆|Secrets & keys|SSH keys, tokens and .env files — private, mode 600|Copied back as mode 600; contents are never printed"
-  "plugins|󰐱|Plugins|Plugin settings, plus every plugin's id and git origin|Reinstalled with omarchy plugin add, then their settings copied back"
+  "plugins|󰐱|Plugins|Plugin settings, plus every plugin's id and git origin|Plugin settings copied back; third-party plugins are installed only on request"
   "scripts|󰈙|Scripts|Your helper scripts under ~/.local/bin and Omarchy hooks|Copied back with the executable bit kept"
   "system|󰋊|System|systemd drop-ins for lid, sleep and fingerprint|Copied back with sudo, then systemctl daemon-reload"
   "other|󰈔|Other|Anything else you asked Replicant to track|Copied back as-is"
@@ -1079,18 +1079,21 @@ list_backups() {
 # item, so fetching someone else's current code is always a decision made in
 # the moment, not a side effect of "bring my stuff back".
 build_pending_reinstalls_json() {
+  # One TSV stream for both kinds, one jq — the same shape build_backups_json
+  # below uses, instead of one jq process per pending item.
   {
     while IFS=$'\t' read -r tname torigin; do
       [[ -n "$tname" ]] || continue
-      jq -nc --arg id "$tname" --arg origin "$torigin" \
-        '{kind:"theme", id:$id, origin:$origin, method:""}'
+      printf 'theme\t%s\t%s\t\n' "$tname" "$torigin"
     done < <(missing_themes)
     while IFS=$'\t' read -r pid porigin pmethod; do
       [[ -n "$pid" ]] || continue
-      jq -nc --arg id "$pid" --arg origin "$porigin" --arg method "$pmethod" \
-        '{kind:"plugin", id:$id, origin:$origin, method:$method}'
+      printf 'plugin\t%s\t%s\t%s\n' "$pid" "$porigin" "$pmethod"
     done < <(missing_plugins)
-  } | jq -sc '.'
+  } | jq -Rsc '
+    split("\n") | map(select(length > 0) | split("\t") | {
+      kind: .[0], id: .[1], origin: .[2], method: (.[3] // "")
+    })'
 }
 
 # build_backups_json — what the panel renders. One entry per backup, carrying
@@ -1618,6 +1621,8 @@ core_backup() {
   # copying a plugin's source into a backup repo only ages badly.
   {
     echo "# id<TAB>version<TAB>origin<TAB>method"
+    echo "# A restore never fetches one. Install it yourself, one at a time:"
+    echo "#   omarchy-replicant install-plugin <id>     (asks first, every time)"
     echo "# method 'add'   -> omarchy plugin add <origin>"
     echo "# method 'clone' -> omarchy plugin clone <origin>   (an edited copy of a built-in;"
     echo "#                  this restores the built-in, not the edits made to it)"
@@ -1642,9 +1647,9 @@ core_backup() {
   # trap: the eight installed here are 556 MB, 400 of it their own .git. Every
   # user theme Omarchy knows about is a git clone, so what travels is the URL.
   {
-    echo "# name<TAB>origin — user-installed themes, reinstalled with:"
-    echo "#   omarchy theme install <origin>"
-    echo "# Local edits to a theme are NOT here: this reinstalls the upstream copy."
+    echo "# name<TAB>origin — user-installed themes. A restore never fetches one."
+    echo "#   omarchy-replicant install-theme <name>    (asks first, every time)"
+    echo "# Local edits to a theme are NOT here: this installs the upstream copy."
     local tdir tname torigin
     for tdir in "$HOME/.config/omarchy/themes"/*/; do
       [[ -d "$tdir" ]] || continue
@@ -3442,41 +3447,71 @@ missing_themes() {
 # origin, on demand. Never called automatically: `restore` only ever reports
 # a theme as pending (see restore_themes in the CLI) and this is the explicit
 # action that actually fetches whatever is at that origin right now.
+#
+# Two machines can record the same theme name with two different origins. A
+# name alone then does not say which address the user agreed to, so this
+# refuses and prints both rather than install the first match it finds.
 core_install_theme() {
   local want="${1:-}" tname torigin
+  local -a origins=()
   [[ -n "$want" ]] || { echo "usage: install-theme <name>" >&2; return 1; }
   while IFS=$'\t' read -r tname torigin; do
     [[ "$tname" == "$want" ]] || continue
-    command -v omarchy >/dev/null 2>&1 || { echo "omarchy not found on PATH" >&2; return 1; }
-    omarchy theme install "$torigin" || { echo "$tname — omarchy theme install failed ($torigin)" >&2; return 1; }
-    echo "$tname installed from $torigin" >&2
-    return 0
+    origins+=("$torigin")
   done < <(missing_themes)
-  echo "$want is not a pending third-party theme (already installed, or not in the inventory)" >&2
-  return 1
+  local -a unique_origins=()
+  if (( ${#origins[@]} > 0 )); then
+    mapfile -t unique_origins < <(printf '%s\n' "${origins[@]}" | sort -u)
+  fi
+  if (( ${#unique_origins[@]} == 0 )); then
+    echo "$want is not a pending third-party theme (already installed, or not in the inventory)" >&2
+    return 1
+  fi
+  if (( ${#unique_origins[@]} > 1 )); then
+    echo "$want is recorded with more than one origin — refusing to guess which one to install:" >&2
+    printf '  %s\n' "${unique_origins[@]}" >&2
+    return 1
+  fi
+  command -v omarchy >/dev/null 2>&1 || { echo "omarchy not found on PATH" >&2; return 1; }
+  omarchy theme install "${unique_origins[0]}" || { echo "$want — omarchy theme install failed (${unique_origins[0]})" >&2; return 1; }
+  echo "$want installed from ${unique_origins[0]} — this also makes it the active theme" >&2
 }
 
 # core_install_plugin <id> — the same action for a plugin. `missing_plugins`
 # already carries the method column that tells clone (an edited built-in)
 # from add (a real third-party plugin) — same two commands restore_plugins
 # already knew how to call, just no longer called without being asked.
+# Ambiguity is refused here too, on the origin and the method together.
 core_install_plugin() {
   local want="${1:-}" pid porigin pmethod
+  local -a pairs=()
   [[ -n "$want" ]] || { echo "usage: install-plugin <id>" >&2; return 1; }
   while IFS=$'\t' read -r pid porigin pmethod; do
     [[ "$pid" == "$want" ]] || continue
-    command -v omarchy >/dev/null 2>&1 || { echo "omarchy not found on PATH" >&2; return 1; }
-    if [[ "$pmethod" == "clone" ]]; then
-      omarchy plugin clone "$porigin" || { echo "$pid — omarchy plugin clone failed" >&2; return 1; }
-      echo "$pid re-cloned from $porigin (any edits you made are not in this)" >&2
-    else
-      omarchy plugin add "$porigin" --enable --yes || { echo "$pid — omarchy plugin add failed" >&2; return 1; }
-      echo "$pid installed from $porigin" >&2
-    fi
-    return 0
+    pairs+=("$porigin"$'\t'"$pmethod")
   done < <(missing_plugins)
-  echo "$want is not a pending third-party plugin (already installed, or not in the inventory)" >&2
-  return 1
+  local -a unique_pairs=()
+  if (( ${#pairs[@]} > 0 )); then
+    mapfile -t unique_pairs < <(printf '%s\n' "${pairs[@]}" | sort -u)
+  fi
+  if (( ${#unique_pairs[@]} == 0 )); then
+    echo "$want is not a pending third-party plugin (already installed, or not in the inventory)" >&2
+    return 1
+  fi
+  if (( ${#unique_pairs[@]} > 1 )); then
+    echo "$want is recorded with more than one origin — refusing to guess which one to install:" >&2
+    printf '  %s\n' "${unique_pairs[@]}" | sed 's/\t/ (method: /; s/$/)/' >&2
+    return 1
+  fi
+  local origin="${unique_pairs[0]%%$'\t'*}" method="${unique_pairs[0]#*$'\t'}"
+  command -v omarchy >/dev/null 2>&1 || { echo "omarchy not found on PATH" >&2; return 1; }
+  if [[ "$method" == "clone" ]]; then
+    omarchy plugin clone "$origin" || { echo "$want — omarchy plugin clone failed" >&2; return 1; }
+    echo "$want re-cloned from $origin (any edits you made are not in this)" >&2
+  else
+    omarchy plugin add "$origin" --enable --yes || { echo "$want — omarchy plugin add failed" >&2; return 1; }
+    echo "$want installed from $origin" >&2
+  fi
 }
 
 # A theme installed here that no origin can be worked out for — a hand-made one

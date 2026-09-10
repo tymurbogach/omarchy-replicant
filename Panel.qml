@@ -317,6 +317,13 @@ Panel {
     return out
   }
 
+  // Third-party themes/plugins the inventory knows about but this machine
+  // does not have. `restore` reports these, it never installs them — see
+  // restore_themes/restore_plugins in the CLI. One row, one Install button,
+  // so fetching someone else's current code is always a decision made here,
+  // not a side effect of restoring your own settings.
+  readonly property var pendingReinstalls: root.repoState.pending_reinstalls || []
+
   readonly property int statColumns: root.nIncoming > 0 ? 5 : 4
   readonly property int countChanged: root.nDirty
   readonly property int countOff: (root.repoState.configs || []).filter(function(c){ return c.synced === false }).length
@@ -555,6 +562,8 @@ Panel {
     // required because --yes was only honoured through it, which read like a
     // contradiction. It is not needed any more.
     else if (a === "restore-cat")  { root.busyLabel = "Restoring " + arg + "…"; dangerProc.command = [root.cli, "restore", "--apply", "--yes", "--only", arg] }
+    else if (a === "install-theme")  { root.busyLabel = "Installing " + arg + "…"; dangerProc.command = [root.cli, "install-theme", arg] }
+    else if (a === "install-plugin") { root.busyLabel = "Installing " + arg + "…"; dangerProc.command = [root.cli, "install-plugin", arg] }
     else if (a === "untrack")      { root.doUntrack(arg); return }
     else if (a === "undo")          { root.doUndo(arg); return }
     else if (a === "prune-backups") { root.doPruneBackups(); return }
@@ -1306,6 +1315,61 @@ Panel {
                     onClicked: root.ask("restore-cat", areaRow.modelData.id,
                       "Restore " + areaRow.modelData.label + " from your repo?\n\n" + areaRow.modelData.method + "\n\nEvery file it overwrites is backed up as .bak.<epoch> first.",
                       "Restore")
+                  }
+                }
+              }
+            }
+
+            PanelSeparator { width: parent.width; visible: root.pendingReinstalls.length > 0 }
+            PanelSectionHeader {
+              width: parent.width
+              text: "Third-party plugins & themes"
+              foreground: root.fg; fontFamily: root.ff
+              visible: root.pendingReinstalls.length > 0
+            }
+            Text {
+              width: parent.width
+              visible: root.pendingReinstalls.length > 0
+              text: "Recorded in your inventory but not installed here. These come from someone else's repo, so restoring never fetches them on its own — Install brings in whatever is at that address right now."
+              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
+            }
+            Repeater {
+              model: root.pendingReinstalls
+              delegate: Item {
+                id: reinstallRow
+                required property var modelData
+                width: content.width
+                implicitHeight: Style.space(30)
+                Row {
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(8)
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(18)
+                    text: root.icFolder
+                    color: root.dim; font.family: root.ff; font.pixelSize: Style.font.body
+                  }
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - Style.space(18) - reinstallBtn.width - parent.spacing * 2
+                    text: reinstallRow.modelData.id + "   " + reinstallRow.modelData.origin
+                    color: root.fg; font.family: root.ff; font.pixelSize: Style.font.caption
+                    elide: Text.ElideRight
+                  }
+                  Button {
+                    id: reinstallBtn
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Install"; iconText: root.icFromRepo; bordered: false
+                    foreground: root.fg; fontFamily: root.ff
+                    enabled: !root.busy
+                    tooltipText: "Fetch " + reinstallRow.modelData.origin + " and install it now"
+                    onClicked: root.ask(
+                      reinstallRow.modelData.kind === "theme" ? "install-theme" : "install-plugin",
+                      reinstallRow.modelData.id,
+                      "Install the " + reinstallRow.modelData.kind + " \"" + reinstallRow.modelData.id + "\" from " + reinstallRow.modelData.origin + "?\n\nThis fetches whatever is at that address right now — not necessarily what you reviewed when you first installed it.",
+                      "Install")
                   }
                 }
               }

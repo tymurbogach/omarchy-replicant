@@ -3414,6 +3414,47 @@ missing_themes() {
   done | sort -u
 }
 
+# core_install_theme <name> — install ONE third-party theme from its recorded
+# origin, on demand. Never called automatically: `restore` only ever reports
+# a theme as pending (see restore_themes in the CLI) and this is the explicit
+# action that actually fetches whatever is at that origin right now.
+core_install_theme() {
+  local want="${1:-}" tname torigin
+  [[ -n "$want" ]] || { echo "usage: install-theme <name>" >&2; return 1; }
+  while IFS=$'\t' read -r tname torigin; do
+    [[ "$tname" == "$want" ]] || continue
+    command -v omarchy >/dev/null 2>&1 || { echo "omarchy not found on PATH" >&2; return 1; }
+    omarchy theme install "$torigin" || { echo "$tname — omarchy theme install failed ($torigin)" >&2; return 1; }
+    echo "$tname installed from $torigin" >&2
+    return 0
+  done < <(missing_themes)
+  echo "$want is not a pending third-party theme (already installed, or not in the inventory)" >&2
+  return 1
+}
+
+# core_install_plugin <id> — the same action for a plugin. `missing_plugins`
+# already carries the method column that tells clone (an edited built-in)
+# from add (a real third-party plugin) — same two commands restore_plugins
+# already knew how to call, just no longer called without being asked.
+core_install_plugin() {
+  local want="${1:-}" pid porigin pmethod
+  [[ -n "$want" ]] || { echo "usage: install-plugin <id>" >&2; return 1; }
+  while IFS=$'\t' read -r pid porigin pmethod; do
+    [[ "$pid" == "$want" ]] || continue
+    command -v omarchy >/dev/null 2>&1 || { echo "omarchy not found on PATH" >&2; return 1; }
+    if [[ "$pmethod" == "clone" ]]; then
+      omarchy plugin clone "$porigin" || { echo "$pid — omarchy plugin clone failed" >&2; return 1; }
+      echo "$pid re-cloned from $porigin (any edits you made are not in this)" >&2
+    else
+      omarchy plugin add "$porigin" --enable --yes || { echo "$pid — omarchy plugin add failed" >&2; return 1; }
+      echo "$pid installed from $porigin" >&2
+    fi
+    return 0
+  done < <(missing_plugins)
+  echo "$want is not a pending third-party plugin (already installed, or not in the inventory)" >&2
+  return 1
+}
+
 # A theme installed here that no origin can be worked out for — a hand-made one
 # in ~/.config/omarchy/themes. Nothing reinstalls it, so `doctor` says so and
 # the answer is to track that directory in .replicant-track.

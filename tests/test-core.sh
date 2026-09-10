@@ -798,6 +798,37 @@ check "…and not once it is installed" "" "$(missing_themes)"
 check "a theme with no origin is never proposed for install" "" \
   "$(printf 'other\t-\n' >> "$STATE_DIR/omarchy-themes.txt"; missing_themes)"
 
+section "installing one pending theme on demand"
+mkdir -p "$TMP/fakebin"
+FAKE_LOG="$TMP/omarchy-calls.log"
+cat > "$TMP/fakebin/omarchy" <<EOF
+#!/bin/bash
+echo "\$*" >> "$FAKE_LOG"
+exit 0
+EOF
+chmod +x "$TMP/fakebin/omarchy"
+rm -f "$STATE_DIR/omarchy-themes.txt"
+printf '# name\torigin\nmine\thttps://example.com/omarchy-mine-theme\n' > "$STATE_DIR/omarchy-themes.txt"
+: > "$FAKE_LOG"
+check_true "install-theme succeeds for a pending theme" \
+  env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_theme mine"
+check_contains "…and calls omarchy theme install with the recorded origin" \
+  "theme install https://example.com/omarchy-mine-theme" "$(cat "$FAKE_LOG")"
+check_false "install-theme refuses an id that is not pending" \
+  env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_theme not-a-theme"
+
+section "installing one pending plugin on demand"
+mkdir -p "$STATE_DIR"
+printf '# id\tversion\torigin\tmethod\ndemo.widget\t1.0.0\thttps://example.com/demo-widget\tadd\n' \
+  > "$STATE_DIR/omarchy-plugins.txt"
+: > "$FAKE_LOG"
+check_true "install-plugin succeeds for a pending plugin" \
+  env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_plugin demo.widget"
+check_contains "…and calls omarchy plugin add with the recorded origin" \
+  "plugin add https://example.com/demo-widget --enable --yes" "$(cat "$FAKE_LOG")"
+check_false "install-plugin refuses an id that is not pending" \
+  env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_plugin not-a-plugin"
+
 section "suggest proposes, and refuses to propose noise"
 mkdir -p "$HOME/.config/appstate" "$HOME/.local/bin"
 printf 'x\n' > "$HOME/.config/appstate/Local State"

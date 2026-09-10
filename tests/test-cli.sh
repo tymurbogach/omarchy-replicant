@@ -288,6 +288,7 @@ chmod +x "$TMP/fakebin/omarchy"
 STATEDIR="$REPO/state/testhost"
 mkdir -p "$STATEDIR"
 printf '# name\torigin\nmine\thttps://example.com/omarchy-mine-theme\n' > "$STATEDIR/omarchy-themes.txt"
+printf '# id\tversion\torigin\tmethod\ndemo.widget\t1.0.0\thttps://example.com/demo-widget\tadd\n' > "$STATEDIR/omarchy-plugins.txt"
 : > "$FAKE_LOG"
 check_true "install-theme installs a pending theme" \
   env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" install-theme mine
@@ -304,6 +305,11 @@ out=$(env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" restore --
 check "restore --apply --all --yes does not call omarchy theme install" "0" \
   "$(grep -c 'theme install' "$FAKE_LOG" || true)"
 check_contains "…and says how to install it instead" "install-theme mine" "$out"
+check "…nor omarchy plugin add" "0" \
+  "$(grep -c 'plugin add' "$FAKE_LOG" || true)"
+check "…nor omarchy plugin clone" "0" \
+  "$(grep -c 'plugin clone' "$FAKE_LOG" || true)"
+check_contains "…and says how to install the plugin instead" "install-plugin demo.widget" "$out"
 
 section "link / unlink is reversible and touches nothing else"
 export PATH_LINK="$HOME/.local/bin/omarchy-replicant"

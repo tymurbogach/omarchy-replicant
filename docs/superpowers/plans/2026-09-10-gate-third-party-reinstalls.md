@@ -123,29 +123,6 @@ rm -f "$STATE_DIR/omarchy-themes.txt"
 printf '# name\torigin\nmine\thttps://example.com/omarchy-mine-theme\n' > "$STATE_DIR/omarchy-themes.txt"
 : > "$FAKE_LOG"
 check_true "install-theme succeeds for a pending theme" \
-  bash -c "PATH='$TMP/fakebin:\$PATH' \"\$0\" mine" -c '
-  '"$(declare -f core_install_theme)"'
-'
-```
-
-That last check is awkward to express against a sourced function from a
-throwaway `bash -c` — write it directly instead, calling the function in
-this same shell (it is already sourced at the top of the file):
-
-```bash
-section "installing one pending theme on demand"
-mkdir -p "$TMP/fakebin"
-FAKE_LOG="$TMP/omarchy-calls.log"
-cat > "$TMP/fakebin/omarchy" <<EOF
-#!/bin/bash
-echo "\$*" >> "$FAKE_LOG"
-exit 0
-EOF
-chmod +x "$TMP/fakebin/omarchy"
-rm -f "$STATE_DIR/omarchy-themes.txt"
-printf '# name\torigin\nmine\thttps://example.com/omarchy-mine-theme\n' > "$STATE_DIR/omarchy-themes.txt"
-: > "$FAKE_LOG"
-check_true "install-theme succeeds for a pending theme" \
   env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_theme mine"
 check_contains "…and calls omarchy theme install with the recorded origin" \
   "theme install https://example.com/omarchy-mine-theme" "$(cat "$FAKE_LOG")"
@@ -405,21 +382,29 @@ echo "\$*" >> "$FAKE_LOG"
 exit 0
 EOF
 chmod +x "$TMP/fakebin/omarchy"
-mkdir -p "$REPO/state/$(hostname -s 2>/dev/null || echo host)"
-STATEDIR="$REPO/state/$(hostname -s 2>/dev/null || echo host)"
+# MACHINE in replicant-core.sh is `hostnamectl --static` first, plain
+# `hostname` as its fallback — never `hostname -s`. Guessing it from the test
+# host's real hostname would silently point at the wrong state directory, so
+# REPLICANT_MACHINE pins it to a fixed, test-only value instead.
+STATEDIR="$REPO/state/testhost"
+mkdir -p "$STATEDIR"
 printf '# name\torigin\nmine\thttps://example.com/omarchy-mine-theme\n' > "$STATEDIR/omarchy-themes.txt"
 : > "$FAKE_LOG"
 check_true "install-theme installs a pending theme" \
-  env PATH="$TMP/fakebin:$PATH" "$CLI" install-theme mine
+  env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" install-theme mine
 check_contains "…by calling omarchy theme install" \
   "theme install https://example.com/omarchy-mine-theme" "$(cat "$FAKE_LOG")"
-check_false "install-theme with no name fails" env PATH="$TMP/fakebin:$PATH" "$CLI" install-theme
-check_false "install-plugin with no id fails" env PATH="$TMP/fakebin:$PATH" "$CLI" install-plugin
+check_false "install-theme with no name fails" \
+  env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" install-theme
+check_false "install-plugin with no id fails" \
+  env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" install-plugin
 ```
 
 (This section runs after the repo already exists from earlier sections in
 the file — `STATEDIR` mirrors how `$REPO` and the machine's state directory
-are addressed elsewhere in this suite.)
+are addressed elsewhere in this suite. `REPLICANT_MACHINE=testhost` must be
+passed on every `$CLI` call in this section and Task 4's, so they all agree
+on which state directory holds the fixture.)
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -562,7 +547,7 @@ In `tests/test-cli.sh`, extend the section added in Task 3:
 ```bash
 section "restore never installs third-party code on its own"
 : > "$FAKE_LOG"
-out=$(env PATH="$TMP/fakebin:$PATH" "$CLI" restore --apply --all --yes 2>&1)
+out=$(env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" restore --apply --all --yes 2>&1)
 check "restore --apply --all --yes does not call omarchy theme install" "0" \
   "$(grep -c 'theme install' "$FAKE_LOG" || true)"
 check_contains "…and says how to install it instead" "install-theme mine" "$out"
@@ -765,11 +750,14 @@ git commit -m "fix: restore no longer auto-installs third-party plugins/themes"
 Add to `tests/test-cli.sh`, in the "doctor is read-only" section (after line 273):
 
 ```bash
-mkdir -p "$REPO/state/$(hostname -s 2>/dev/null || echo host)"
-STATEDIR="$REPO/state/$(hostname -s 2>/dev/null || echo host)"
+# Same REPLICANT_MACHINE=testhost reasoning as Task 3/4: MACHINE in
+# replicant-core.sh comes from `hostnamectl --static` (or plain `hostname`),
+# never `hostname -s` — pin it instead of guessing.
+STATEDIR="$REPO/state/testhost"
+mkdir -p "$STATEDIR"
 printf '# name\torigin\nmine\thttps://example.com/omarchy-mine-theme\n' > "$STATEDIR/omarchy-themes.txt"
 check_contains "doctor names a pending theme and the command to install it" \
-  "install-theme mine" "$(run doctor)"
+  "install-theme mine" "$(env REPLICANT_MACHINE=testhost "$CLI" doctor 2>&1)"
 rm -f "$STATEDIR/omarchy-themes.txt"
 ```
 

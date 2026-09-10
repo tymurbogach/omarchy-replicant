@@ -1081,6 +1081,14 @@ cmd_doctor() {
     printf '      push them to a git remote, or they are lost with this machine\n' >&2
   fi
 
+  local pp n_pp
+  pp=$(missing_plugins 2>/dev/null || true)
+  n_pp=$(printf '%s' "$pp" | grep -c . || true)
+  if (( n_pp > 0 )); then
+    chk_warn "$(plural "$n_pp" plugin) recorded but not installed here — restore does not fetch these on its own:"
+    printf '%s\n' "$pp" | awk -F'\t' '{print "      omarchy-replicant install-plugin " $1}' >&2
+  fi
+
   # A clone HAS an origin, so the check above calls it fine — and it is, about
   # the plugin. It is not fine about the work in it: `omarchy plugin clone`
   # reinstalls the BUILT-IN, and a clone exists because somebody edited it.
@@ -1143,6 +1151,13 @@ cmd_doctor() {
   n_lt=$(printf '%s' "$lt" | grep -c . || true)
   n_inv=$(awk -F'\t' '!/^#/ && NF>=2 && $2 != "-" {n++} END{print n+0}' "$STATE_DIR/omarchy-themes.txt" 2>/dev/null || echo 0)
   chk_ok "$(plural "$n_inv" "user theme") recorded with an origin — reinstalled with 'omarchy theme install'"
+  local pt n_pt
+  pt=$(missing_themes 2>/dev/null || true)
+  n_pt=$(printf '%s' "$pt" | grep -c . || true)
+  if (( n_pt > 0 )); then
+    chk_warn "$(plural "$n_pt" theme) recorded but not installed here — restore does not fetch these on its own:"
+    printf '%s\n' "$pt" | awk -F'\t' '{print "      omarchy-replicant install-theme " $1}' >&2
+  fi
   if (( n_lt > 0 )); then
     chk_warn "$(plural "$n_lt" theme) have no origin and are not tracked either:"
     printf '%s\n' "$lt" | sed 's/^/      /' >&2

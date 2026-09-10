@@ -271,6 +271,15 @@ run doctor >/dev/null 2>&1
 check "doctor changes nothing in ~/.config" "$before_home" "$(hash_tree "$HOME/.config")"
 check "doctor changes nothing in the repo"  "$before_repo" "$(hash_tree "$REPO")"
 check_contains "doctor reports on the repo" "local repo" "$(run doctor)"
+# Same REPLICANT_MACHINE=testhost reasoning as Task 3/4: MACHINE in
+# replicant-core.sh comes from `hostnamectl --static` (or plain `hostname`),
+# never `hostname -s` — pin it instead of guessing.
+STATEDIR="$REPO/state/testhost"
+mkdir -p "$STATEDIR"
+printf '# name\torigin\nmine\thttps://example.com/omarchy-mine-theme\n' > "$STATEDIR/omarchy-themes.txt"
+check_contains "doctor names a pending theme and the command to install it" \
+  "install-theme mine" "$(env REPLICANT_MACHINE=testhost "$CLI" doctor 2>&1)"
+rm -f "$STATEDIR/omarchy-themes.txt"
 
 section "install-theme / install-plugin are on-demand, not part of restore"
 mkdir -p "$TMP/fakebin"

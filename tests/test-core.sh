@@ -808,12 +808,12 @@ exit 0
 EOF
 chmod +x "$TMP/fakebin/omarchy"
 rm -f "$STATE_DIR/omarchy-themes.txt"
-printf '# name\torigin\nmine\thttps://example.com/omarchy-mine-theme\n' > "$STATE_DIR/omarchy-themes.txt"
+printf '# name\torigin\nfreshtheme\thttps://example.com/omarchy-freshtheme\n' > "$STATE_DIR/omarchy-themes.txt"
 : > "$FAKE_LOG"
 check_true "install-theme succeeds for a pending theme" \
-  env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_theme mine"
+  env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_theme freshtheme"
 check_contains "…and calls omarchy theme install with the recorded origin" \
-  "theme install https://example.com/omarchy-mine-theme" "$(cat "$FAKE_LOG")"
+  "theme install https://example.com/omarchy-freshtheme" "$(cat "$FAKE_LOG")"
 check_false "install-theme refuses an id that is not pending" \
   env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_theme not-a-theme"
 

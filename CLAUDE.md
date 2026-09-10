@@ -162,7 +162,7 @@ shapes that look fine with a single machine:
 ## The shipped list is universal; the personal list is the user's
 
 `MANIFEST` is public plugin source, so it may only name paths any Omarchy machine plausibly has.
-It used to carry one person's Claude hooks, their audit script, their `~/dev/mise.toml` and a
+It used to carry one person's Claude hooks, their audit script, their `~/Projects/mise.toml` and a
 fingerprint-reader unit — which every marketplace installer then saw as a screenful of "missing"
 rows for files they had never heard of, while none of their own files were tracked at all.
 

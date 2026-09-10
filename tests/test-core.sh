@@ -679,7 +679,7 @@ for entry in "${MANIFEST[@]}"; do
   esac
 done
 check "the shipped manifest names nobody in particular" "0" "$personal"
-check "~/dev/mise.toml is gone for good, not migrated" "0" \
+check "~/Projects/mise.toml is gone for good, not migrated" "0" \
   "$(printf '%s\n' "${LEGACY_PERSONAL[@]}" "${LEGACY_PERSONAL_SECRETS[@]}" | grep -c 'mise.toml' || true)"
 
 section "upgrading a 0.6 repo keeps tracking what it tracked"

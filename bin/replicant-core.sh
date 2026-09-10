@@ -126,7 +126,7 @@ SECRETS_MANIFEST=(
 # upgrades: ensure_track_file writes whichever of these the repo or the machine
 # actually has into the user's own list, and load_user_manifest falls back to
 # the same set for reads until that migration runs. Nothing here is offered to
-# a fresh install. `~/dev/mise.toml` is deliberately absent — it is a project
+# a fresh install. `~/Projects/mise.toml` is deliberately absent — it is a project
 # file, not machine config, and is dropped rather than migrated.
 LEGACY_PERSONAL=(
   "$HOME/.claude/hooks/cbm-code-discovery-gate:claude/hooks/cbm-code-discovery-gate"
@@ -140,8 +140,8 @@ LEGACY_PERSONAL=(
   "/etc/systemd/system/fprintd-resume.service:etc/fprintd-resume.service"
 )
 LEGACY_PERSONAL_SECRETS=(
-  "$HOME/dev/portfolio/.env:env/portfolio.env"
-  "$HOME/dev/lazytripz/backend/.env:env/lazytrip-backend.env"
+  "$HOME/Projects/portfolio/.env:env/portfolio.env"
+  "$HOME/Projects/lazytripz/backend/.env:env/lazytrip-backend.env"
 )
 
 # ─── THE USER'S OWN LIST ────────────────────────────────────────────────────
@@ -156,7 +156,7 @@ LEGACY_PERSONAL_SECRETS=(
 #   ~/.local/bin/my-script                  a file, name in the repo derived
 #   ~/.config/foo/bar.conf = foo/bar.conf   a file, name in the repo given
 #   ~/.config/nvim/                         a directory (trailing slash)
-#   secret ~/dev/app/.env                   stored 600, contents never rendered
+#   secret ~/Projects/app/.env                   stored 600, contents never rendered
 #
 USER_TRACK_FILE="$REPO_DIR/.replicant-track"
 
@@ -697,7 +697,7 @@ write_track_file() {
     echo "#   ~/.local/bin/my-script                  name in the repo derived"
     echo "#   ~/.config/foo/bar.conf = foo/bar.conf   name in the repo given"
     echo "#   ~/.config/nvim/                         a directory (trailing slash)"
-    echo "#   secret ~/dev/app/.env                   stored 600, never rendered"
+    echo "#   secret ~/Projects/app/.env                   stored 600, never rendered"
     echo "#"
     echo "# This file lives in the repo, so both your machines honour it."
     echo "# Written by the panel and by 'omarchy-replicant track'; safe to edit."
@@ -3280,7 +3280,7 @@ core_undo() {
 # (4) only resolves on the machine that holds the checkout, which is exactly
 # the machine recording the inventory. The URL it finds travels in the repo, so
 # the other machine reads a URL and never needs the checkout.
-PLUGIN_SOURCE_ROOTS=("$HOME/dev" "$HOME/src" "$HOME/code" "$HOME/projects" "$HOME/Projects" "$HOME/git" "$HOME/work")
+PLUGIN_SOURCE_ROOTS=("$HOME/Projects" "$HOME/src" "$HOME/code" "$HOME/projects" "$HOME/git" "$HOME/work")
 
 resolve_plugin_origin() {
   local pdir="$1" pid="$2" pmf="$3" origin from m mid mroot

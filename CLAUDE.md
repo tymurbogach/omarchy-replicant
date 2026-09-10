@@ -111,7 +111,8 @@ is reporting intent, not effect.** They agree right up until something else has 
 10. **Restoring is not copying.** Every category declares what has to run afterwards
    (`apply_for_category`): Hyprland gets `hyprctl reload` plus a `configerrors` check, terminals
    get `omarchy restart terminal`, the theme is replayed through `omarchy-theme-set` rather than
-   copied, plugins are reinstalled with `omarchy plugin add` from the recorded origin. This is the
+   copied, plugin settings are copied back and a third-party plugin this machine does not have is
+   *reported* as pending for `install-plugin <id>`, never fetched by the restore itself. This is the
    plugin's stated selling point ("the right way to back up Omarchy"), it is shown in the panel
    under every open category, and it is in the README table — don't add a category that copies
    files and stops.
@@ -215,12 +216,15 @@ test anywhere. What each pass has to do differently:
 The eight custom themes on this machine are **556 MB**, 400 of it their own `.git` directories.
 Tracking `~/.config/omarchy/themes/` as a directory — which is what the plan said to do — would have
 put all of it in a git repo. Every user theme Omarchy knows about is a git clone, so what travels is
-the URL: `state/<machine>/omarchy-themes.txt` records `name<TAB>origin`, and `restore_themes` runs
-`omarchy theme install` for the missing ones **before** `restore_theme` applies the name. That order
-is the bug the pair exists to close: `omarchy theme set enter-the-matrix` on a machine that does not
-have the theme fails, and the most visible thing about the setup comes back as nothing.
+the URL: `state/<machine>/omarchy-themes.txt` records `name<TAB>origin`, and `restore_themes` names
+every missing one with the `install-theme <name>` command that installs it. Historically
+`restore_themes` installed them itself, **before** `restore_theme` applied the name, because
+`omarchy theme set enter-the-matrix` on a machine that does not have the theme fails and the most
+visible thing about the setup came back as nothing. That ordering concern no longer applies: a
+third-party theme is never installed during a restore (see below), so `restore_theme` can still warn
+that the theme is missing and name `install-theme` — it does not fetch it.
 
-Same shape as plugins, and the honest caveat is the same: reinstalling gets the *upstream* copy, not
+Same shape as plugins, and the honest caveat is the same: installing gets the *upstream* copy, not
 local edits. A hand-made theme has no origin — `doctor` names it and the answer is to track its
 directory.
 

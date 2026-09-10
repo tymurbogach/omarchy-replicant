@@ -27,10 +27,10 @@ and each part has one correct way to be put back.
 
 | | Copying dotfiles | Replicant |
 | --- | --- | --- |
-| **Theme** | copies `theme.name`, or 556 MB of wallpapers | records each theme's git origin, reinstalls it, *then* applies it |
+| **Theme** | copies `theme.name`, or 556 MB of wallpapers | records each theme's git origin, re-applies the theme, and installs a missing one only when you ask |
 | **Hyprland** | copies the Lua | copies, then `hyprctl reload` **and** checks `configerrors` |
 | **Terminals** | wait for a reboot | `omarchy restart terminal` |
-| **Plugins** | commits someone else's source | works out each origin — even for one you wrote — and reinstalls it |
+| **Plugins** | commits someone else's source | works out each origin — even for one you wrote — and installs it on request |
 | **Shortcuts** | snapshots every binding on the machine | tracks only *your* overrides — Omarchy's own defaults ship with the distro |
 | **Reset** | `rm` and re-copy | `omarchy refresh config <file>` |
 
@@ -78,21 +78,24 @@ omarchy-replicant track ~/.config/nvim/                  # a whole directory
 omarchy-replicant track ~/.config/gh/hosts.yml --secret  # stored 600, never rendered
 ```
 
-## Big things are reinstalled, not copied
+## Big things are installed, not copied
 
 The eight custom themes on the machine this was built on are **556 MB**, 400 of it their own `.git`.
 Copying that into a backup repo would be absurd, so what travels is the URL.
 
-| | Recorded | Restored with |
+| | Recorded | Put back with |
 | --- | --- | --- |
-| Themes | name + git origin | `omarchy theme install`, then `omarchy theme set` |
-| Plugins | id + version + origin + method | `omarchy plugin add` / `omarchy plugin clone` |
+| Themes | name + git origin | `omarchy theme set`; a missing one via `install-theme <name>` |
+| Plugins | id + version + origin + method | settings copied back; the plugin via `install-plugin <id>` |
 | Packages | per hostname, official and AUR | your package manager |
 
-Themes are installed **before** the theme name is applied — otherwise `omarchy theme set` fails on
-a machine that does not have the theme yet, and the most visible thing about your setup comes back
-as nothing. Plugins resolve even with no obvious origin: one you wrote yourself is traced back to
-your own checkout.
+A theme or plugin that is not on this machine is **not fetched by a restore**. A restore names it
+and its origin, and you install it with `omarchy-replicant install-theme <name>` /
+`omarchy-replicant install-plugin <id>`, or the **Install** button on that row in the panel. The
+reason is that an origin holds whatever its owner pushed today, and no Omarchy install command takes
+a commit to pin to — so fetching somebody else's current code stays your decision, made each time.
+Installing a theme also makes it the active theme. Plugins resolve even with no obvious origin: one
+you wrote yourself is traced back to your own checkout.
 
 ## What else it does
 

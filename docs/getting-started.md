@@ -152,12 +152,14 @@ and suggests `--secret`, which stores it at mode 600 and never renders its conte
 
 ## 3b-3. Themes
 
-Your themes are not copied — they are reinstalled. Replicant records each user theme's name and git
-origin in the inventory, and on a restore it runs `omarchy theme install` for the ones this machine
-does not have **before** applying your theme. That order is the whole point: applying a theme that
-is not installed yet fails, and the most visible thing about your setup comes back as nothing.
+Your themes are not copied — they are installed from their origin. Replicant records each user
+theme's name and git origin in the inventory. A restore does not fetch them: it names the ones this
+machine does not have, and you install one when you want it, with
+`omarchy-replicant install-theme <name>` or the **Install** button in the panel. A theme comes from
+somebody else's git repo, and that repo holds whatever is in it today — so fetching it is always
+your decision, never a side effect of a restore. Installing a theme also makes it the active theme.
 
-A theme you wrote by hand has no origin, so nothing can reinstall it. `omarchy-replicant doctor`
+A theme you wrote by hand has no origin, so nothing can install it. `omarchy-replicant doctor`
 names those, and the answer is to track its directory:
 `omarchy-replicant track ~/.config/omarchy/themes/<name>`.
 
@@ -187,8 +189,9 @@ a time from the list underneath.
 Restoring is not just copying. Each area is put back the way Omarchy expects it: the theme is
 re-applied with `omarchy theme set` (which rewrites every terminal, editor and GTK colour, not
 just a file), Hyprland is reloaded and then checked with `hyprctl configerrors`, terminals are
-restarted, themes and plugins recorded in the inventory are reinstalled with
-`omarchy theme install` and `omarchy plugin add`.
+restarted. Themes and plugins recorded in the inventory are reported by name and origin, not
+fetched: run `omarchy-replicant install-theme <name>` or `omarchy-replicant install-plugin <id>`,
+or press **Install** on the row in the panel, for each one you want.
 Anything outside `$HOME` is never written behind your back — you get the exact `sudo` command.
 
 Everything it overwrites is kept as `<file>.bak.<epoch>` first.

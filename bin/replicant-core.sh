@@ -2018,7 +2018,12 @@ ini_set() {
   if [[ -w "$file" || ( ! -e "$file" && -w "$(dirname "$file")" ) ]]; then
     backup_before_write "$file"
     install -D -m 644 "$staged" "$file" || { rm -f "$staged"; return 1; }
-    [[ -n "$after" ]] && bash -c "$after" >/dev/null 2>&1
+    # A test redirects $file to a throwaway fixture, but "systemctl reload
+    # systemd-logind" still targets the REAL system service — polkit pops a
+    # graphical, fingerprint-eligible auth prompt for it even though nothing
+    # here calls sudo/pkexec directly. REPLICANT_NO_RELOAD is the test-only
+    # escape hatch, the same shape as REPLICANT_MACHINE/OMARCHY_PATH elsewhere.
+    [[ -n "$after" && -z "${REPLICANT_NO_RELOAD:-}" ]] && bash -c "$after" >/dev/null 2>&1
     rm -f "$staged"; return 0
   fi
   root_apply "$file" "$staged" "$after" || { rm -f "$staged"; return 1; }

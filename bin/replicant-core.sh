@@ -1501,7 +1501,7 @@ core_backup() {
     fi
   done
   if (( skipped > 0 )); then
-    echo "  $copied copied, $missing missing, $skipped not synced (switched off)" >&2
+    echo "  $copied copied, $missing missing, $skipped switched off" >&2
   else
     echo "  $copied copied, $missing missing" >&2
   fi

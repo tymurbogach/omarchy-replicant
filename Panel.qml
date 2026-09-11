@@ -173,7 +173,9 @@ Panel {
     return root.dim
   }
   function stateWord(st) {
-    if (st === "off") return "not synced"
+    // "off", the word the scope button, the legend and the card already use.
+    // This said "not synced": two words for one state, two tabs apart.
+    if (st === "off") return "switched off"
     if (st === "missing") return "not on this machine"
     // Short on purpose. These are printed beside the path on a row that also
     // carries a Save button and sits under a banner that already says "press
@@ -903,13 +905,16 @@ Panel {
               spacing: Style.space(8)
               // Five only when the fifth has something to say. A card that reads
               // 0 every day of the year is a card nobody looks at any more.
-              StatCard { columns: root.statColumns; label: "tracked";  value: String((root.repoState.configs || []).length) }
+              // Secrets included: the Configs tab lists them as tracked files
+              // like any other, and the count left them out.
+              StatCard { columns: root.statColumns; label: "tracked"
+                         value: String((root.repoState.configs || []).length + (root.repoState.secrets || []).length) }
               StatCard { columns: root.statColumns; label: "unsaved";  value: String(root.nDirty); highlight: root.nDirty > 0 }
               StatCard { columns: root.statColumns; label: "to restore"; value: String(root.nIncoming)
                          highlight: root.nIncoming > 0; highlightColor: root.warnColor
                          visible: root.nIncoming > 0 }
               StatCard { columns: root.statColumns; label: "to pull";  value: String(root.nBehind);      highlight: root.nBehind > 0 }
-              StatCard { columns: root.statColumns; label: "not synced"; value: String(root.countOff) }
+              StatCard { columns: root.statColumns; label: "switched off"; value: String(root.countOff) }
             }
 
             Row {
@@ -931,13 +936,9 @@ Panel {
                 tooltipText: "Bring down what another machine saved  (p)"
                 onClicked: root.doPull()
               }
-              Button {
-                text: "Copy only"; iconText: root.icCopy; bordered: false
-                foreground: root.fg; fontFamily: root.ff
-                enabled: !root.busy
-                tooltipText: "Refresh the local copy without committing or pushing"
-                onClicked: root.doBackup()
-              }
+              // Two verbs here, the two a person comes for. The copy-only action
+              // sat beside them as a third choice of equal weight; it is a tool,
+              // and it now lives with the other tools at the foot of this tab.
             }
 
             // The facts you would otherwise go and look up, in the units a
@@ -1079,6 +1080,13 @@ Panel {
                 foreground: root.fg; fontFamily: root.ff
                 tooltipText: root.repoState.repo_dir || ""
                 onClicked: { root.run("xdg-open " + root.shellQuote(root.repoState.repo_dir || "")); root.close() }
+              }
+              Button {
+                text: "Copy without saving"; iconText: root.icCopy; bordered: false
+                foreground: root.fg; fontFamily: root.ff
+                enabled: !root.busy
+                tooltipText: "Copy this machine into the local repo; nothing is committed or pushed"
+                onClicked: root.doBackup()
               }
             }
           }
@@ -1830,7 +1838,11 @@ Panel {
         width: parent.width
         icon: root.icPlus
         title: "Add more files"
-        subtitle: "Config on this machine that nothing is backing up yet"
+        // "(a)" is the key that jumps here, and this is the one place a person
+        // reading the list would look for it. It goes last, so it is the first
+        // thing an elided subtitle loses: 58 characters were cut on a capture,
+        // and test-usability.sh holds every literal subtitle to 57.
+        subtitle: "Config on this machine not backed up yet  (a)"
         countText: String(sc.items.length)
         statusText: "not tracked"
         statusHighlight: false

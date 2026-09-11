@@ -1107,4 +1107,171 @@ for entry in "${SETTING_GROUPS[@]}"; do
   check_true "…and is above U+FFFF" test "$(printf '%s' "${gf[1]}" | wc -c)" -ge 4
 done
 
+section "what Omarchy's commands and the settings plugins write is tracked"
+for rel in fontconfig/fonts.conf tmux/tmux.conf herdr/config.toml; do
+  check_contains "$rel is in the shipped list" ":$rel" "$(printf '%s\n' "${MANIFEST[@]}")"
+done
+check "the font is Appearance" "appearance" "$(category_for_rel fontconfig/fonts.conf)"
+check "tmux is Terminal"       "terminal"   "$(category_for_rel tmux/tmux.conf)"
+check "Herdr is Terminal"      "terminal"   "$(category_for_rel herdr/config.toml)"
+
+section "what hyprland.lua loads is saved with it"
+# OmaSettings appends require("hypr.omasettings") to hyprland.lua and keeps
+# everything its window sets in that module. The repo held the require and not
+# the module, so a restore on another machine loaded a file that was not there.
+mkdir -p "$HOME/.config/hypr/extra"
+cat > "$HOME/.config/hypr/hyprland.lua" <<'EOF'
+require("hypr.input")
+-- require("hypr.retired")
+require "hypr.extra.nested"
+require('hypr.omasettings')
+require("hypr.nowhere")
+EOF
+printf 'hl.config({ input = { touchpad = { scroll_factor = 1.0 } } })\nrequire("hypr.deeper")\n' \
+  > "$HOME/.config/hypr/omasettings.lua"
+printf -- '-- loaded by omasettings.lua\n' > "$HOME/.config/hypr/deeper.lua"
+printf -- '-- nested\n'                    > "$HOME/.config/hypr/extra/nested.lua"
+printf -- '-- nobody loads this\n'         > "$HOME/.config/hypr/retired.lua"
+load_auto_manifest
+tracked=$(printf '%s\n' "${TRACKED[@]}")
+check_contains "a module hyprland.lua requires is tracked" ":hypr/omasettings.lua" "$tracked"
+check_contains "…so is one that module requires in turn"   ":hypr/deeper.lua" "$tracked"
+check_contains "…and a dotted name maps to a subdirectory" ":hypr/extra/nested.lua" "$tracked"
+check "a commented-out require is not a load" "0" "$(grep -c 'hypr/retired.lua' <<<"$tracked" || true)"
+check "a module MANIFEST already names is not found twice" "1" "$(grep -c ':hypr/input.lua$' <<<"$tracked" || true)"
+check "a require that resolves to nothing is not tracked" "0" "$(grep -c 'nowhere' <<<"$tracked" || true)"
+check "…it is reported instead, for doctor" "hypr.nowhere" "$(unresolved_hypr_modules)"
+row=$(build_configs_json | jq -c '[.[] | select(.id=="hypr/omasettings.lua")][0]')
+check "it is filed under Hyprland" "hyprland" "$(jq -r .category <<<"$row")"
+check "…and marked as found, so the panel offers no Untrack" "auto" "$(jq -r .source <<<"$row")"
+core_backup >/dev/null 2>&1
+check_true "a save copies it into the repo" test -f "$CONFIG_DIR/hypr/omasettings.lua"
+check_contains "…and restoring Hyprland puts it back" "|$HOME/.config/hypr/omasettings.lua|" \
+  "$(plan_for_category hyprland)"
+# A machine restoring for the first time has Omarchy's stock hyprland.lua, which
+# loads nothing of the user's. What the repo's copy loads has to count too.
+cp "$HOME/.config/hypr/hyprland.lua" "$TMP/hyprland.keep"
+cp "$HOME/.config/hypr/omasettings.lua" "$TMP/omasettings.keep"
+printf 'require("hypr.input")\n' > "$HOME/.config/hypr/hyprland.lua"
+rm -f "$HOME/.config/hypr/omasettings.lua"
+load_auto_manifest
+check_contains "a module only the repo's hyprland.lua loads is still tracked" ":hypr/omasettings.lua" \
+  "$(printf '%s\n' "${TRACKED[@]}")"
+check_contains "…and still in the restore plan" "|$HOME/.config/hypr/omasettings.lua|" \
+  "$(plan_for_category hyprland)"
+cp "$TMP/hyprland.keep" "$HOME/.config/hypr/hyprland.lua"
+cp "$TMP/omasettings.keep" "$HOME/.config/hypr/omasettings.lua"
+rm -f "$HOME/.config/hypr/retired.lua"
+load_auto_manifest
+
+section "a plugin's settings survive a machine that does not have the plugin"
+# Discovery used to be only what is installed HERE, and the prune pass removes
+# whatever is not tracked: a laptop without a plugin deleted the desktop's
+# settings for it on every save. Which plugins another machine has is a
+# question for that machine's inventory.
+rm -f "$REPO_VERSION_FILE"
+mkdir -p "$STATE_ROOT/otherhost" "$CONFIG_DIR/plugins"
+printf '# id\tversion\torigin\tmethod\ncom.example.elsewhere\t1.0\thttps://example.com/elsewhere\tadd\n' \
+  > "$STATE_ROOT/otherhost/omarchy-plugins.txt"
+printf '{"theirs":true}\n' > "$CONFIG_DIR/plugins/elsewhere.json"
+printf '{"stale":true}\n'  > "$CONFIG_DIR/plugins/forgotten.json"
+load_auto_manifest
+check_contains "a config the other machine's plugin uses is tracked here" ":plugins/elsewhere.json" \
+  "$(printf '%s\n' "${TRACKED[@]}")"
+row=$(build_configs_json | jq -c '[.[] | select(.id=="plugins/elsewhere.json")][0]')
+check "…shown as not here, not hidden" "missing" "$(jq -r .sync_state <<<"$row")"
+check "…and named after the plugin it belongs to" "com.example.elsewhere" "$(jq -r .label <<<"$row")"
+core_backup >/dev/null 2>&1
+check_true  "a save from this machine keeps it" test -f "$CONFIG_DIR/plugins/elsewhere.json"
+check_false "a config no machine's plugin uses any more is pruned" test -f "$CONFIG_DIR/plugins/forgotten.json"
+rm -rf "$STATE_ROOT/otherhost" "$CONFIG_DIR/plugins/elsewhere.json"
+load_auto_manifest
+
+section "plugin settings are restored and counted like any other file"
+# They used to be copied in by a loop of their own, which the restore plan and
+# the bar's count never learned about: `restore --all` put back no plugin
+# settings, and the bar said "in sync" over an unsaved one.
+check_contains "restoring Plugins copies their settings back" "|$HOME/.config/omarchy/demo.json|" \
+  "$(plan_for_category plugins)"
+before=$(count_changes)
+printf '{"enabled":false}\n' > "$HOME/.config/omarchy/demo.json"
+after=$(count_changes)
+check "an edited plugin config is counted by the bar, as the panel shows it" \
+  "$(( ${before%% *} + 1 ))" "${after%% *}"
+printf '{"enabled":true}\n' > "$HOME/.config/omarchy/demo.json"
+
+section "a config symlinked into a dotfiles repo stays a symlink"
+DOT="$TMP/dotfiles"; mkdir -p "$DOT/tree"
+printf 'from dotfiles\n' > "$DOT/linked.conf"
+ln -s "$DOT/linked.conf" "$HOME/.config/linked.conf"
+printf 'from the repo\n' > "$TMP/incoming.conf"
+DRY=0 install_file "$TMP/incoming.conf" "$HOME/.config/linked.conf" 644 >/dev/null 2>&1
+check_true "restoring onto a symlinked file keeps the link" test -L "$HOME/.config/linked.conf"
+check "…and the dotfiles repo sees the new content" "from the repo" "$(cat "$DOT/linked.conf")"
+b=$(find "$HOME/.config" -maxdepth 1 -name 'linked.conf.bak.*' | head -n1)
+check_false "…the backup is a real file, not a link to what was just overwritten" test -L "$b"
+check "…holding what was there before" "from dotfiles" "$(cat "$b" 2>/dev/null)"
+printf 'a\n' > "$DOT/tree/a.lua"
+ln -s "$DOT/tree" "$HOME/.config/linkedtree"
+check "a symlinked directory's files are listed" "a.lua" "$(tree_files "$HOME/.config/linkedtree")"
+mkdir -p "$CONFIG_DIR/linkedtree"; printf 'a\n' > "$CONFIG_DIR/linkedtree/a.lua"
+copy_tree_into_repo "$HOME/.config/linkedtree/" "$CONFIG_DIR/linkedtree/"
+check_true "…so saving it mirrors them instead of emptying the repo's copy" test -f "$CONFIG_DIR/linkedtree/a.lua"
+mkdir -p "$TMP/repotree"; printf 'b\n' > "$TMP/repotree/a.lua"
+DRY=0 install_tree "$TMP/repotree" "$HOME/.config/linkedtree" 644 >/dev/null 2>&1
+check_true "restoring a symlinked directory keeps the link" test -L "$HOME/.config/linkedtree"
+check "…and writes into what it points at" "b" "$(cat "$DOT/tree/a.lua")"
+tb=$(find "$HOME/.config" -maxdepth 1 -name 'linkedtree.bak.*' | head -n1)
+check_false "…its backup is a real directory" test -L "$tb"
+check "…holding the old files" "a" "$(cat "$tb/a.lua" 2>/dev/null)"
+rm -rf "$HOME/.config"/linked.conf* "$HOME/.config"/linkedtree* "$CONFIG_DIR/linkedtree"
+
+section "other tools' safety copies inside a tracked tree are not config"
+mkdir -p "$TMP/exc"
+printf 'x\n' > "$TMP/exc/options.lua"
+printf 'x\n' > "$TMP/exc/options.lua.omasettings.bak"
+printf 'x\n' > "$TMP/exc/options.lua.bak.1788455372"
+check "only the real file is listed" "options.lua" "$(tree_files "$TMP/exc")"
+
+section "suggest knows Omarchy's hook and template directories"
+mkdir -p "$HOME/.config/omarchy/hooks/theme-set.d" "$HOME/.config/omarchy/themed"
+printf '#!/bin/bash\nnotify-send "$1"\n' > "$HOME/.config/omarchy/hooks/theme-set.d/tell-me"
+printf '#!/bin/bash\n' > "$HOME/.config/omarchy/hooks/theme-set.d/show-theme-notification.sample"
+printf 'background = "{{ background }}"\n' > "$HOME/.config/omarchy/themed/alacritty.toml.tpl"
+s=$(core_suggest)
+check_contains "a hook you added is offered, extension or not" "omarchy/hooks/theme-set.d/tell-me" "$s"
+check_contains "…as a hook" "an Omarchy hook you added" "$s"
+check "Omarchy's own .sample is not" "0" "$(grep -c '\.sample' <<<"$s" || true)"
+check_contains "a theme template you changed is offered" "omarchy/themed/alacritty.toml.tpl" "$s"
+check "a hook restores runnable" "755" "$(restore_mode_for omarchy/hooks/theme-set.d/tell-me)"
+check "a template is filed under Appearance" "appearance" "$(category_for_rel omarchy/themed/alacritty.toml.tpl)"
+rm -rf "$HOME/.config/omarchy/hooks" "$HOME/.config/omarchy/themed"
+
+section "a plugin with work its origin does not have"
+# Omaplug sorts plugins by this before it offers an update. For a backup it is
+# the same hole as a clone: install-plugin elsewhere fetches the origin's code.
+git init -q -b main "$TMP/edited-src"
+printf '{"id":"com.example.edited","name":"Edited"}\n' > "$TMP/edited-src/manifest.json"
+git -C "$TMP/edited-src" add -A
+git -C "$TMP/edited-src" -c user.email=t@example.com -c user.name=t commit -qm init
+git clone -q --bare "$TMP/edited-src" "$TMP/edited-origin.git"
+P="$HOME/.config/omarchy/plugins/com.example.edited"
+git clone -q "$TMP/edited-origin.git" "$P"
+check "a clean checkout is not named" "0" "$(edited_plugins | grep -c com.example.edited || true)"
+printf '// a local tweak\n' > "$P/Widget.qml"
+check "an edit made in place is, as one uncommitted change" "1" \
+  "$(edited_plugins | awk -F'\t' '$1 == "com.example.edited" {print $3}')"
+git -C "$P" add -A
+git -C "$P" -c user.email=t@example.com -c user.name=t commit -qm tweak
+check "a commit never pushed is too" "1" \
+  "$(edited_plugins | awk -F'\t' '$1 == "com.example.edited" {print $4}')"
+# The shell reloads a plugin on any write under its directory, and a plain
+# `git status` can rewrite the index. Nothing in a fake $HOME can observe that,
+# so the flag is guarded by name, the way run-all.sh guards the QML traps.
+check_true "the status read takes no index lock" \
+  grep -q -- '--no-optional-locks' <(declare -f edited_plugins)
+ln -s "$P" "$HOME/.config/omarchy/plugins/com.example.devlink"
+check "a symlinked development checkout is the project's business" "1" "$(edited_plugins | grep -c .)"
+rm -f "$HOME/.config/omarchy/plugins/com.example.devlink"; rm -rf "$P"
+
 summary

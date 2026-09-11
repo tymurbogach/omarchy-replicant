@@ -55,6 +55,7 @@ the truth:
 | Where does this file's copy live? | a path built on the spot | `repo_copy_for_rel` → `is_secret_rel` + `repo_path_for` |
 | What does the Hyprland config consist of? | the five `hypr/*.lua` names in `MANIFEST` | its own `require("hypr.…")` lines (`discover_hypr_modules`) |
 | Which plugins' settings belong in the repo? | the plugins installed on *this* machine | every machine's `omarchy-plugins.txt` (`discover_kept_plugin_configs`) |
+| Which Input value is Hyprland using? | the key in `input.lua` this plugin wrote | `hyprctl getoption` (`hypr_in_force`) — a module loaded later wins |
 
 Every one of those shipped, and every one looked correct in review. Before writing a reader for
 anything, ask which side of the line it sits on: **a value read back from a file this plugin wrote

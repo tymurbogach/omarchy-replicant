@@ -1139,7 +1139,7 @@ cmd_doctor() {
     edited_lines+="      $e_id  ·  $e_what  →  push it, or: omarchy-replicant track ${e_dir/#$HOME/\~}/"$'\n'
   done <<< "$ed"
   if [[ -n "$edited_lines" ]]; then
-    chk_warn "$(plural "$(printf '%s' "$edited_lines" | grep -c .)" plugin) with work its origin does not have — reinstalling brings back the origin's code, not this:"
+    chk_warn "$(plural "$(printf '%s' "$edited_lines" | grep -c .)" plugin) with work that exists only in this checkout — reinstalling brings back the origin's code without it:"
     printf '%s' "$edited_lines" >&2
   fi
 
@@ -1183,16 +1183,26 @@ cmd_doctor() {
   # Every module hyprland.lua loads is tracked with it, found by reading its
   # require lines. A module that exists nowhere cannot be saved, and Hyprland
   # reports it as an error on every reload.
-  local hu n_hu n_hm
+  local hu n_hu n_hm=0 hentry hrel hunsaved=""
   hu=$(unresolved_hypr_modules 2>/dev/null || true)
   n_hu=$(printf '%s' "$hu" | grep -c . || true)
-  n_hm=$(printf '%s\n' ${AUTO_MANIFEST[@]+"${AUTO_MANIFEST[@]}"} | grep -c ':hypr/' || true)
+  for hentry in ${AUTO_MANIFEST[@]+"${AUTO_MANIFEST[@]}"}; do
+    hrel="${hentry##*:}"
+    [[ "$hrel" == hypr/* ]] || continue
+    n_hm=$((n_hm + 1))
+    # Tracked is not saved: the first version said "saved with it" about a
+    # module no save had copied yet. The repo is asked, not the list.
+    [[ -f "$(repo_copy_for_rel "$hrel")" ]] || hunsaved+="      $hrel"$'\n'
+  done
   if (( n_hu > 0 )); then
     chk_bad "your Hyprland config loads $(plural "$n_hu" module) that do not exist here:"
     printf '%s\n' "$hu" | sed 's/^/      /' >&2
     printf '      create the file, or remove its require line from ~/.config/hypr/\n' >&2
   fi
-  if (( n_hm > 0 )); then
+  if [[ -n "$hunsaved" ]]; then
+    chk_warn "$(plural "$(printf '%s' "$hunsaved" | grep -c .)" module) that hyprland.lua loads tracked, not saved yet — omarchy-replicant savegame:"
+    printf '%s' "$hunsaved" >&2
+  elif (( n_hm > 0 )); then
     chk_ok "$(plural "$n_hm" "extra module") that hyprland.lua loads saved with it"
   elif (( n_hu == 0 )); then
     chk_ok "every module hyprland.lua loads is tracked"

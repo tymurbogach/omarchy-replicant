@@ -289,6 +289,19 @@ check_contains "doctor names a pending theme and the command to install it" \
   "install-theme mine" "$(env REPLICANT_MACHINE=testhost "$CLI" doctor 2>&1)"
 rm -f "$STATEDIR/omarchy-themes.txt"
 
+section "doctor asks the repo whether a Hyprland module is saved"
+# The first version said "saved with it" about a module that no save had copied
+# yet, which is the tracked-is-not-saved bug in a new place.
+printf 'require("hypr.extra")\nrequire("hypr.gone")\n' > "$HOME/.config/hypr/hyprland.lua"
+printf -- '-- mine\n' > "$HOME/.config/hypr/extra.lua"
+out=$(run doctor)
+check_contains "a module that is tracked and not copied in says so" "tracked, not saved yet" "$out"
+check_contains "…and names it" "hypr/extra.lua" "$out"
+check_contains "a module that exists nowhere is an error" "hypr.gone" "$out"
+run backup >/dev/null 2>&1
+check_contains "once saved, it says saved" "saved with it" "$(run doctor)"
+rm -f "$HOME/.config/hypr/hyprland.lua" "$HOME/.config/hypr/extra.lua"
+
 section "install-theme / install-plugin are on-demand, not part of restore"
 mkdir -p "$TMP/fakebin"
 FAKE_LOG="$TMP/omarchy-calls.log"

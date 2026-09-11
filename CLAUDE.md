@@ -56,6 +56,7 @@ the truth:
 | What does the Hyprland config consist of? | the five `hypr/*.lua` names in `MANIFEST` | its own `require("hypr.…")` lines (`discover_hypr_modules`) |
 | Which plugins' settings belong in the repo? | the plugins installed on *this* machine | every machine's `omarchy-plugins.txt` (`discover_kept_plugin_configs`) |
 | Which Input value is Hyprland using? | the key in `input.lua` this plugin wrote | `hyprctl getoption` (`hypr_in_force`) — a module loaded later wins |
+| Is a plugin's work upstream? | `refs/remotes/origin/*` | those and `FETCH_HEAD` — `omarchy plugin update` never moves the remote refs |
 
 Every one of those shipped, and every one looked correct in review. Before writing a reader for
 anything, ask which side of the line it sits on: **a value read back from a file this plugin wrote

@@ -3587,14 +3587,15 @@ cloned_plugins() {
 # commit never pushed, does not come back. Omaplug sorts plugins the same way
 # before it offers an update ("local changes").
 #
-# Offline on purpose. "Not on any remote-tracking ref" is what the last fetch
-# knew, and doctor has no business touching the network for every plugin.
+# Offline on purpose: upstream is what the last fetch knew, the remote refs and
+# FETCH_HEAD both. Doctor has no business touching the network for every plugin.
 # `--no-optional-locks`: the shell watches every plugin directory for writes
 # and reloads the plugin on one, and a plain `git status` can rewrite the index.
 # A symlinked plugin is a development checkout, the project's business rather
 # than the backup's, and Omaplug treats it the same way.
 edited_plugins() {
   local pmf pdir pid dirty ahead
+  local -a upstream
   for pmf in "$HOME/.config/omarchy/plugins"/*/manifest.json; do
     [[ -f "$pmf" ]] || continue
     pdir="${pmf%/manifest.json}"
@@ -3603,7 +3604,12 @@ edited_plugins() {
     pid=$(jq -r '.id // empty' "$pmf" 2>/dev/null)
     [[ -n "$pid" ]] || continue
     dirty=$(git --no-optional-locks -C "$pdir" status --porcelain --untracked-files=normal 2>/dev/null | grep -c . || true)
-    ahead=$(git -C "$pdir" rev-list --count HEAD --not --remotes 2>/dev/null || echo 0)
+    # FETCH_HEAD counts as upstream. `omarchy plugin update` fetches `origin
+    # HEAD` into FETCH_HEAD and fast-forwards to it, and never moves
+    # refs/remotes: a plugin updated that way looked 36 commits ahead.
+    upstream=(--remotes)
+    git -C "$pdir" rev-parse -q --verify FETCH_HEAD >/dev/null 2>&1 && upstream+=(FETCH_HEAD)
+    ahead=$(git -C "$pdir" rev-list --count HEAD --not "${upstream[@]}" 2>/dev/null || echo 0)
     (( dirty > 0 || ahead > 0 )) && printf '%s\t%s\t%s\t%s\n' "$pid" "$pdir" "$dirty" "$ahead"
   done
   return 0

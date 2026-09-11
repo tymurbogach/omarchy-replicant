@@ -1258,6 +1258,16 @@ git clone -q --bare "$TMP/edited-src" "$TMP/edited-origin.git"
 P="$HOME/.config/omarchy/plugins/com.example.edited"
 git clone -q "$TMP/edited-origin.git" "$P"
 check "a clean checkout is not named" "0" "$(edited_plugins | grep -c com.example.edited || true)"
+# `omarchy plugin update` fetches `origin HEAD` into FETCH_HEAD and fast-forwards
+# to it. refs/remotes never moves, and on a real machine every plugin updated
+# that way was named as holding unpushed work.
+printf '{"id":"com.example.edited","name":"Edited","version":"2"}\n' > "$TMP/edited-src/manifest.json"
+git -C "$TMP/edited-src" -c user.email=t@example.com -c user.name=t commit -qam upstream
+git -C "$TMP/edited-src" push -q "$TMP/edited-origin.git" HEAD:main
+git -C "$P" fetch -q origin HEAD
+git -C "$P" merge -q --ff-only FETCH_HEAD
+check "a plugin updated the way Omarchy updates is not named" "0" \
+  "$(edited_plugins | grep -c com.example.edited || true)"
 printf '// a local tweak\n' > "$P/Widget.qml"
 check "an edit made in place is, as one uncommitted change" "1" \
   "$(edited_plugins | awk -F'\t' '$1 == "com.example.edited" {print $3}')"

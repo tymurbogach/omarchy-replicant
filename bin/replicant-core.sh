@@ -2012,7 +2012,9 @@ load_auto_manifest
 #   group    the section the panel files this control under
 #   file     the file holding the value ("-" for types that don't read a file)
 #   path     jq path (".idle.lock") for JSON | "section.key" for TOML |
-#            the bare key ("repeat_rate") for lua-* | "-" for theme
+#            the Hyprland option ("input:repeat_rate") for lua-*, whose last
+#            segment is the Lua key and whose whole name is what Hyprland is
+#            asked for the value in force | "-" for theme
 #   type     number | bool | enum            JSON, via jq
 #            toml-int | toml-float           "key = <n>" inside a [section]
 #            lua-int | lua-bool | lua-enum   a "key = value" line in a Hyprland
@@ -2065,13 +2067,13 @@ SETTINGS=(
   "bar.sizeVertical|Appearance|$HOME/.config/omarchy/shell.toml|bar.size-vertical|toml-int|Bar thickness (left/right)|px|16|120||Bar width on a vertical edge; setting it stops the font scaling it||28|1|"
   "bar.iconFont|Appearance|$HOME/.config/omarchy/shell.toml|bar.icon-font|toml-int|Bar icon size|px|8|28||How large the glyphs in the bar are drawn||13|1|"
   # ── Input — Hyprland reads Lua at startup, so these need an explicit reload
-  "input.repeatRate|Input|$HOME/.config/hypr/input.lua|repeat_rate|lua-int|Key repeat rate|/s|1|100||Characters a held key sends per second|hyprctl reload||1|"
-  "input.repeatDelay|Input|$HOME/.config/hypr/input.lua|repeat_delay|lua-int|Key repeat delay|ms|100|2000||How long a key is held before it starts repeating|hyprctl reload||1|"
-  "input.kbLayout|Input|$HOME/.config/hypr/input.lua|kb_layout|lua-enum|Keyboard layout||||es,us,gb,de,fr,it,pt,latam|X11 layout code for the keyboard|hyprctl reload||1|"
-  "input.numlock|Input|$HOME/.config/hypr/input.lua|numlock_by_default|lua-bool|Num lock at login|||||Turn the numeric keypad on when the session starts|hyprctl reload||1|"
-  "input.naturalScroll|Input|$HOME/.config/hypr/input.lua|natural_scroll|lua-bool|Natural scrolling|||||Touchpad: two fingers down moves the page up|hyprctl reload||1|"
-  "input.tapToClick|Input|$HOME/.config/hypr/input.lua|tap_to_click|lua-bool|Tap to click|||||Touchpad: a tap counts as a click|hyprctl reload||1|"
-  "input.disableWhileTyping|Input|$HOME/.config/hypr/input.lua|disable_while_typing|lua-bool|Ignore touchpad while typing|||||Stops the cursor jumping mid-sentence|hyprctl reload||1|"
+  "input.repeatRate|Input|$HOME/.config/hypr/input.lua|input:repeat_rate|lua-int|Key repeat rate|/s|1|100||Characters a held key sends per second|hyprctl reload||1|"
+  "input.repeatDelay|Input|$HOME/.config/hypr/input.lua|input:repeat_delay|lua-int|Key repeat delay|ms|100|2000||How long a key is held before it starts repeating|hyprctl reload||1|"
+  "input.kbLayout|Input|$HOME/.config/hypr/input.lua|input:kb_layout|lua-enum|Keyboard layout||||es,us,gb,de,fr,it,pt,latam|X11 layout code for the keyboard|hyprctl reload||1|"
+  "input.numlock|Input|$HOME/.config/hypr/input.lua|input:numlock_by_default|lua-bool|Num lock at login|||||Turn the numeric keypad on when the session starts|hyprctl reload||1|"
+  "input.naturalScroll|Input|$HOME/.config/hypr/input.lua|input:touchpad:natural_scroll|lua-bool|Natural scrolling|||||Touchpad: two fingers down moves the page up|hyprctl reload||1|"
+  "input.tapToClick|Input|$HOME/.config/hypr/input.lua|input:touchpad:tap_to_click|lua-bool|Tap to click|||||Touchpad: a tap counts as a click|hyprctl reload||1|"
+  "input.disableWhileTyping|Input|$HOME/.config/hypr/input.lua|input:touchpad:disable_while_typing|lua-bool|Ignore touchpad while typing|||||Stops the cursor jumping mid-sentence|hyprctl reload||1|"
   # ── Lid & sleep — /etc/systemd/logind.conf.d/, root-owned, laptop only.
   # These are the three questions a laptop actually asks. logind's own built-in
   # default for all three is 'suspend'; the fallback field records that so the
@@ -2261,6 +2263,36 @@ lua_set() {
   mv "$tmp" "$file"
 }
 
+# lua_key_of <option> — the Lua key of a registry path: "input:touchpad:
+# natural_scroll" is the line `natural_scroll = …` in the file.
+lua_key_of() { printf '%s\n' "${1##*:}"; }
+
+# hypr_in_force <option> — the value Hyprland is using now, as the file would
+# spell it ("40", "true", "es"). Fails when there is no Hyprland to ask.
+# `has()`, never `//`: jq's alternative operator treats false as missing, so a
+# switch that is off would read as unknown.
+hypr_in_force() {
+  command -v hyprctl >/dev/null 2>&1 || return 1
+  local out
+  out=$(timeout 2 hyprctl getoption "$1" -j 2>/dev/null) || return 1
+  jq -er 'if has("int") then .int elif has("float") then .float
+          elif has("bool") then .bool elif has("str") then .str else empty end
+          | tostring' <<<"$out" 2>/dev/null
+}
+
+# hypr_overrider <key> <own-file> — the tracked Hyprland file, other than the
+# setting's own, with an uncommented `<key> =` line. Found modules are asked
+# first: OmaSettings' omasettings.lua is loaded last, which is why it wins.
+hypr_overrider() {
+  local key="$1" own="$2" entry src
+  for entry in ${AUTO_MANIFEST[@]+"${AUTO_MANIFEST[@]}"} "${TRACKED[@]}"; do
+    src="${entry%%:*}"
+    [[ "$src" == "$HOME/.config/hypr/"*.lua && "$src" != "$own" && -f "$src" ]] || continue
+    [[ "$(lua_key_hits "$src" "$key")" -ge 1 ]] && { printf '%s\n' "${entry##*:}"; return 0; }
+  done
+  return 1
+}
+
 # backup_before_write <file> — the .bak.<epoch> every write owes the user,
 # minus the litter. Editing one setting is a small, repeated act (dragging the
 # density slider is a dozen writes), and one backup per write buried the real
@@ -2321,7 +2353,7 @@ get_setting_value() {
       printf '%s\n' "$raw"
       ;;
     lua-int|lua-bool|lua-enum)
-      map_lookup "$file" lua "$path"
+      map_lookup "$file" lua "$(lua_key_of "$path")"
       ;;
     *)
       [[ -f "$file" ]] || return 1
@@ -2399,12 +2431,12 @@ set_setting_value() {
     lua-int|lua-bool)
       [[ -f "$file" ]] || { echo "file not found: $file" >&2; return 1; }
       backup_before_write "$file"
-      lua_set "$file" "$path" "$value" || { echo "$1: '$path' is missing or ambiguous in $file — left untouched" >&2; return 1; }
+      lua_set "$file" "$(lua_key_of "$path")" "$value" || { echo "$1: '$path' is missing or ambiguous in $file — left untouched" >&2; return 1; }
       ;;
     lua-enum)
       [[ -f "$file" ]] || { echo "file not found: $file" >&2; return 1; }
       backup_before_write "$file"
-      lua_set "$file" "$path" "\"$value\"" || { echo "$1: '$path' is missing or ambiguous in $file — left untouched" >&2; return 1; }
+      lua_set "$file" "$(lua_key_of "$path")" "\"$value\"" || { echo "$1: '$path' is missing or ambiguous in $file — left untouched" >&2; return 1; }
       ;;
     number|bool)
       [[ -f "$file" ]] || { echo "file not found: $file" >&2; return 1; }
@@ -2646,7 +2678,7 @@ read_setting_from() {
       raw=$(map_lookup "$file" toml "$path") || return 1
       [[ -n "$raw" ]] && printf '%s\n' "$raw" || return 1 ;;
     lua-int|lua-bool|lua-enum)
-      map_lookup "$file" lua "$path" ;;
+      map_lookup "$file" lua "$(lua_key_of "$path")" ;;
     number|bool|enum)
       raw=$(map_lookup "$file" json "$path") || return 1
       [[ "$raw" == "null" ]] && return 1
@@ -2719,6 +2751,7 @@ build_settings_json() {
   # spawns per build were most of the time that took.
   local entry id group file path type label unit min max options hint value available fallback implicit
   local scale disp dvalue dmin dmax dstep vtext defval deftext repoval repotext canrd canrr numeric boolean
+  local lnotice inforce by
   {
   local laptop=1; is_laptop || laptop=0
   local -a F
@@ -2780,10 +2813,28 @@ build_settings_json() {
     [[ -n "$defval"  && "$deftext"  != "$vtext" && "$available" == true ]] && canrd=true
     [[ -n "$repoval" && "$repotext" != "$vtext" && "$available" == true ]] && canrr=true
 
-    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+    # Hyprland is asked, not the file. These controls write input.lua, and a
+    # module loaded after it that sets the same key wins: OmaSettings keeps
+    # its Keyboard and Mouse pages in hypr/omasettings.lua, loaded last. The
+    # row then showed what the file says while the session did something else.
+    # Said only when Hyprland answers, and only when the two differ.
+    lnotice=""
+    if [[ "$type" == lua-* && "$available" == true ]] && inforce=$(hypr_in_force "$path"); then
+      if [[ "$type" == lua-bool ]]; then
+        [[ "$inforce" == 1 ]] && inforce=true
+        [[ "$inforce" == 0 ]] && inforce=false
+      fi
+      if [[ "$inforce" != "$value" ]]; then
+        by=$(hypr_overrider "$(lua_key_of "$path")" "$file") || by="a file loaded later"
+        lnotice="In force: $(human_value "$type" "$unit" "$scale" "$disp" "$inforce") — set by $by."
+      fi
+    fi
+
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
       "$id" "$group" "$label" "$type" "$unit" "$min" "$max" "$options" "$hint" "$file" \
       "$available" "$implicit" "$value" "$scale" "$disp" "$dvalue" "$dmin" "$dmax" "$dstep" \
-      "$vtext" "$defval" "$deftext" "$repoval" "$repotext" "$canrd" "$canrr" "$numeric" "$boolean"
+      "$vtext" "$defval" "$deftext" "$repoval" "$repotext" "$canrd" "$canrr" "$numeric" "$boolean" \
+      "$lnotice"
   done
   } | jq -Rsc '
     def num: if . == "" then null else (tonumber? // null) end;
@@ -2803,7 +2854,8 @@ build_settings_json() {
       value_text: .[19],
       default_value: .[20], default_text: .[21],
       repo_value: .[22], repo_text: .[23],
-      can_revert_default: (.[24]|flag), can_revert_repo: (.[25]|flag)
+      can_revert_default: (.[24]|flag), can_revert_repo: (.[25]|flag),
+      lua_notice: (.[28] // "")
     })' | jq -c --arg lidblock "$(lid_blocked_by)" '
     # A second pass, because a notice is about how settings sit RELATIVE to each
     # other and the per-setting record cannot see its siblings.
@@ -2832,7 +2884,10 @@ build_settings_json() {
           # in 91 and lost "does nothing" to the ellipsis, which was the half
           # worth reading.
           then "Overridden by \($lidblock) — the lid does nothing."
-        else "" end) })'
+        # The same statement about Hyprland: what the session uses is not what
+        # the file says (see lnotice above).
+        elif .lua_notice != "" then .lua_notice
+        else "" end) } | del(.lua_notice))'
 }
 
 # lid_blocked_by — who, if anyone, is holding a `block` inhibitor on the lid

@@ -17,12 +17,14 @@ machine- or user-specific except through `MANIFEST`/`SECRETS_MANIFEST` in
 
 ## Language rule
 
-- **The entire project is in English**: code, comments, commit messages, CLI output, panel UI
-  text, docs. No Spanish anywhere in either repo (this one or the sibling data repo), including
-  new code, new commands, and new panel sections.
-- Exception: none. If a string is user-facing (CLI message, button label, badge text), it's
-  still English — this is a developer's personal tool, not a localized product, and mixing
-  languages makes future edits error-prone (partial greps, inconsistent tone).
+Same "everything in the repo is English" rule as the shared Omarchy agent rules, extended for
+two things those rules can't know about this project specifically:
+
+- It also covers the sibling **data** repo (the user's own private `<hostname>-replicant`), not
+  just this one.
+- It has **no exception** for a user-facing string (CLI message, button label, badge text) —
+  this is a developer's personal tool, not a localized product, and mixing languages makes
+  future edits error-prone (partial greps, inconsistent tone).
 
 ## Talking with Claude Code
 
@@ -31,9 +33,6 @@ still applies with no exception to anything that ends up in the repo (code, comm
 CLI output, docs).
 
 - End each turn with a final summary in simple, plain Spanish (castellano simple).
-- Whenever a task calls for it — editing Hyprland/Omarchy desktop config, terminal configs,
-  themes, idle/lock, keybindings, the bar — invoke the `omarchy` skill rather than improvising
-  from memory.
 
 ## The one bug this project keeps having
 
@@ -473,6 +472,11 @@ would change nothing is worse than no button.
 # The panel
 
 ## Quickshell caches compiled QML — clear it or you are testing old code
+
+The base fact (clear `~/.cache/quickshell/qmlcache` before `omarchy-restart-shell`) is now in
+the shared Omarchy agent rules, §3, since it applies to every Quickshell plugin, not just this
+one. What follows is specific to what actually went wrong here: the incidents, the debugging
+technique that found them, and the lock-screen danger the same restart command carries.
 
 **Never restart the shell while the session is locked.** The Omarchy shell *is* the
 lock screen, so `omarchy restart shell` tears the lock down and builds it again — and

@@ -681,6 +681,7 @@ That is why `category_field`/`setting_field` no longer call their split array `f
   | `tests/test-core.sh` | 33 s | MANIFEST, scopes, state, the JSON payloads |
   | `tests/test-cli.sh` | 23 s | subcommands, purge, backups, `--help` |
   | `tests/test-journey.sh` | 17 s | two machines and one repo, end to end |
+  | `tests/test-usability.sh` | 1 s | what the panel shows: its commands, keys, labels and words |
 
 - **Mutation testing is how you find out whether the suite is lying.** Copy the repo, break one
   line of production code, run the suites, revert. Anything nobody notices is a coverage hole with

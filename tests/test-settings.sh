@@ -260,9 +260,24 @@ check_false "an unknown setting is refused" core_revert not.a.setting default
 section "the lid, on a machine that has one"
 # The drop-in is root-owned in real life, so point the registry at a writable
 # fixture: what is under test is the reader, the writer and the gate, not sudo.
+# REPLICANT_NO_RELOAD: the "after" side of a lid write is a REAL
+# `systemctl reload systemd-logind` regardless of where $file points, and
+# polkit pops a graphical auth prompt for it even from an unprivileged test
+# fixture. Nothing here is testing that reload; it's testing the read, the
+# write and the ambiguity gate.
 export REPLICANT_LOGIND_DROPIN="$TMP/logind.d/99-lid.conf"
+export REPLICANT_NO_RELOAD=1
 mkdir -p "$TMP/logind.d"
 printf '[Login]\nHandleLidSwitch=ignore\n' > "$REPLICANT_LOGIND_DROPIN"
+# A fake systemctl on PATH, so this section fails loudly if REPLICANT_NO_RELOAD
+# is ever removed or bypassed — real proof, not just "no prompt appeared".
+mkdir -p "$TMP/fakebin"
+cat > "$TMP/fakebin/systemctl" <<EOF
+#!/bin/bash
+echo "\$*" >> "$TMP/systemctl-calls.log"
+EOF
+chmod +x "$TMP/fakebin/systemctl"
+export PATH="$TMP/fakebin:$PATH"
 # shellcheck source=/dev/null
 source "$CORE"
 is_laptop() { return 0; }
@@ -270,6 +285,8 @@ is_laptop() { return 0; }
 check "a drop-in value is read back"    "ignore" "$(get_setting_value lid.close)"
 set_setting_value lid.close suspend >/dev/null 2>&1
 check "…and written"                    "suspend" "$(get_setting_value lid.close)"
+check "…without ever reloading the real systemd-logind" "" \
+  "$(cat "$TMP/systemctl-calls.log" 2>/dev/null || true)"
 check "…in systemd's own spelling, not TOML's" "1" \
   "$(grep -cx 'HandleLidSwitch=suspend' "$REPLICANT_LOGIND_DROPIN" || true)"
 check "…keeping a backup like every other write" "1" \

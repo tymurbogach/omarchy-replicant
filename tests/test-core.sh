@@ -1078,8 +1078,9 @@ section "the panel's text has to fit the panel"
 # description that runs long does not wrap or warn — it just loses its last
 # words, and it did: three of the ten category rows ended in "…" for a whole
 # release. The budget is what actually fits at the panel's width, measured on
-# a real screenshot, with a few characters of slack.
-DESC_MAX=58
+# a real screenshot: 57 characters fit and 58 were cut (the Add more files
+# subtitle, 2026-09-11). It was 58 until then, which had no slack at all.
+DESC_MAX=57
 for entry in "${CATEGORIES[@]}"; do
   d=$(category_field "$entry" 4)
   check_true "category description fits: ${d:0:28}…" test "${#d}" -le "$DESC_MAX"

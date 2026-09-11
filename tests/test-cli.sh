@@ -27,6 +27,14 @@ cat > "$HOME/.config/omarchy/shell.json" <<'JSON'
 { "idle": { "screensaver": 300, "lock": 600 }, "bar": { "position": "top", "transparent": false } }
 JSON
 
+# Restoring anything under hypr/ runs `hyprctl reload`, and the real hyprctl
+# talks to the real compositor whatever $HOME says: `restore-file hypr/input.lua`
+# and `restore --apply --all` below reloaded the session of whoever ran this.
+mkdir -p "$TMP/stubbin"
+printf '#!/bin/bash\nexit 0\n' > "$TMP/stubbin/hyprctl"
+chmod +x "$TMP/stubbin/hyprctl"
+export PATH="$TMP/stubbin:$PATH"
+
 run() { "$CLI" "$@" 2>&1; }
 
 section "the command surface"

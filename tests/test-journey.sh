@@ -39,6 +39,19 @@ on() {
 }
 declare -A PROFILE_OF=([desktop]=desktop [laptop]=laptop)
 
+# A fake `omarchy` recording every call it gets, so this suite can prove
+# restore never fetches third-party code on its own — a real network call
+# from a test would be its own bug, and nothing here caught it before.
+mkdir -p "$TMP/fakebin"
+export OMARCHY_FAKE_LOG="$TMP/omarchy-calls.log"
+cat > "$TMP/fakebin/omarchy" <<'EOF'
+#!/bin/bash
+echo "$*" >> "$OMARCHY_FAKE_LOG"
+exit 0
+EOF
+chmod +x "$TMP/fakebin/omarchy"
+export PATH="$TMP/fakebin:$PATH"
+
 # ── the desktop, with a setup worth replicating ──────────────────────────────
 D="$TMP/desktop/home"
 mkdir -p "$D/.config/hypr" "$D/.config/nvim/lua" "$D/.local/bin" \
@@ -182,6 +195,17 @@ check_contains "…and says what it would do" "dry-run" "$out"
 
 section "the laptop restores"
 on laptop restore --apply --all --yes >/dev/null 2>&1
+
+check_false "the laptop did not auto-install the desktop's third-party theme" \
+  test -d "$L/.config/omarchy/themes/mine"
+check "…and restore never called omarchy theme install" "0" \
+  "$(grep -c 'theme install' "$OMARCHY_FAKE_LOG" || true)"
+
+section "installing a pending theme is a separate, explicit step"
+: > "$OMARCHY_FAKE_LOG"
+on laptop install-theme mine >/dev/null 2>&1
+check_contains "install-theme calls omarchy theme install with the recorded origin" \
+  "theme install https://example.com/omarchy-mine-theme" "$(cat "$OMARCHY_FAKE_LOG")"
 
 check_true "a shared file arrived"            test -f "$L/.config/hypr/input.lua"
 check "…with the desktop's content" "my own input" "$(cat "$L/.config/hypr/input.lua" 2>/dev/null)"

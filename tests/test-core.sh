@@ -798,6 +798,78 @@ check "…and not once it is installed" "" "$(missing_themes)"
 check "a theme with no origin is never proposed for install" "" \
   "$(printf 'other\t-\n' >> "$STATE_DIR/omarchy-themes.txt"; missing_themes)"
 
+section "installing one pending theme on demand"
+mkdir -p "$TMP/fakebin"
+FAKE_LOG="$TMP/omarchy-calls.log"
+cat > "$TMP/fakebin/omarchy" <<EOF
+#!/bin/bash
+echo "\$*" >> "$FAKE_LOG"
+exit 0
+EOF
+chmod +x "$TMP/fakebin/omarchy"
+rm -f "$STATE_DIR/omarchy-themes.txt"
+printf '# name\torigin\nfreshtheme\thttps://example.com/omarchy-freshtheme\n' > "$STATE_DIR/omarchy-themes.txt"
+: > "$FAKE_LOG"
+check_true "install-theme succeeds for a pending theme" \
+  env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_theme freshtheme"
+check_contains "…and calls omarchy theme install with the recorded origin" \
+  "theme install https://example.com/omarchy-freshtheme" "$(cat "$FAKE_LOG")"
+check_false "install-theme refuses an id that is not pending" \
+  env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_theme not-a-theme"
+
+# One name, two origins: two machines diverged, or the URL moved. The name on
+# its own no longer says what the user agreed to fetch, so nothing is fetched.
+printf '# name\torigin\ntwotone\thttps://example.com/omarchy-twotone\ntwotone\thttps://evil.example/omarchy-twotone\n' \
+  > "$STATE_DIR/omarchy-themes.txt"
+: > "$FAKE_LOG"
+check_false "install-theme refuses a name recorded with two origins" \
+  env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_theme twotone"
+check "…and installs neither of them" "" "$(cat "$FAKE_LOG")"
+check_contains "…and names both origins" "evil.example" \
+  "$(env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_theme twotone" 2>&1)"
+printf '# name\torigin\nfreshtheme\thttps://example.com/omarchy-freshtheme\n' > "$STATE_DIR/omarchy-themes.txt"
+
+section "installing one pending plugin on demand"
+mkdir -p "$STATE_DIR"
+printf '# id\tversion\torigin\tmethod\ndemo.widget\t1.0.0\thttps://example.com/demo-widget\tadd\n' \
+  > "$STATE_DIR/omarchy-plugins.txt"
+: > "$FAKE_LOG"
+check_true "install-plugin succeeds for a pending plugin" \
+  env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_plugin demo.widget"
+check_contains "…and calls omarchy plugin add with the recorded origin" \
+  "plugin add https://example.com/demo-widget --enable --yes" "$(cat "$FAKE_LOG")"
+check_false "install-plugin refuses an id that is not pending" \
+  env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_plugin not-a-plugin"
+
+# method 'clone' means an edited built-in, and it needs the other command:
+# `omarchy plugin add` on a built-in id is not the same action.
+printf '# id\tversion\torigin\tmethod\ndemo.clone\t1.0.0\thttps://example.com/demo-clone\tclone\n' \
+  > "$STATE_DIR/omarchy-plugins.txt"
+: > "$FAKE_LOG"
+check_true "install-plugin succeeds for a pending clone" \
+  env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_plugin demo.clone"
+check "…and calls omarchy plugin clone, not plugin add" "plugin clone https://example.com/demo-clone" \
+  "$(cat "$FAKE_LOG")"
+
+section "pending reinstalls, as JSON for the panel"
+# NOT "mine" — see Task 1's note: that name already has an installed
+# directory on disk from an earlier section in this same file, so
+# missing_themes() would filter it out as not pending.
+rm -f "$STATE_DIR/omarchy-themes.txt" "$STATE_DIR/omarchy-plugins.txt"
+printf '# name\torigin\nfreshtheme\thttps://example.com/omarchy-freshtheme\n' > "$STATE_DIR/omarchy-themes.txt"
+printf '# id\tversion\torigin\tmethod\ndemo.widget\t1.0.0\thttps://example.com/demo-widget\tadd\n' \
+  > "$STATE_DIR/omarchy-plugins.txt"
+pr_json=$(build_pending_reinstalls_json)
+check "valid JSON" "0" "$(jq empty <<<"$pr_json" >/dev/null 2>&1; echo $?)"
+check "two entries" "2" "$(jq 'length' <<<"$pr_json")"
+check "the theme entry" "theme" "$(jq -r '.[] | select(.id=="freshtheme") | .kind' <<<"$pr_json")"
+check "…with its origin" "https://example.com/omarchy-freshtheme" \
+  "$(jq -r '.[] | select(.id=="freshtheme") | .origin' <<<"$pr_json")"
+check "the plugin entry" "plugin" "$(jq -r '.[] | select(.id=="demo.widget") | .kind' <<<"$pr_json")"
+check "…with its method" "add" "$(jq -r '.[] | select(.id=="demo.widget") | .method' <<<"$pr_json")"
+rm -f "$STATE_DIR/omarchy-themes.txt" "$STATE_DIR/omarchy-plugins.txt"
+check "empty inventory yields an empty array" "0" "$(build_pending_reinstalls_json | jq 'length')"
+
 section "suggest proposes, and refuses to propose noise"
 mkdir -p "$HOME/.config/appstate" "$HOME/.local/bin"
 printf 'x\n' > "$HOME/.config/appstate/Local State"

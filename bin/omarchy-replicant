@@ -512,25 +512,19 @@ cmd_restore() {
   # hand-written list right here, which meant adding a file to the manifest
   # backed it up but never restored it — a bug you only find on the day you need
   # the backup.
-  # A theme that is not installed cannot be applied, and until now that was the
-  # whole story: theme.name was restored faithfully onto a machine that had
-  # never heard of "enter-the-matrix", omarchy-theme-set failed, and the single
-  # most visible thing about the setup came back as nothing. Themes are git
-  # clones, so they are reinstalled the way plugins are — by URL, from the
-  # inventory — and this has to happen BEFORE the name is applied.
+
+  # A third-party theme is never installed by `restore` itself — see the
+  # 2026-09 marketplace security review: `omarchy theme install` has no way
+  # to pin a commit, so an automatic reinstall here silently trusts whatever
+  # is at that origin TODAY, not what was there when the theme was first
+  # installed. `install-theme <name>` is the explicit, on-purpose version of
+  # this same action.
   restore_themes() {
-    local dry="$1" tname torigin n=0
-    while IFS=$'\t' read -r tname torigin; do
+    local tname _ n=0
+    while IFS=$'\t' read -r tname _; do
       [[ -n "$tname" ]] || continue
       n=$((n + 1))
-      if (( dry )); then
-        skip "dry-run: would run omarchy theme install $torigin  ($tname)" >&2
-      else
-        echo "  → omarchy theme install $torigin" >&2
-        omarchy theme install "$torigin" >/dev/null 2>&1 \
-          && ok "$tname installed" >&2 \
-          || warn "$tname — omarchy theme install failed ($torigin)" >&2
-      fi
+      skip "$tname — third-party theme, not auto-installed: omarchy-replicant install-theme $tname" >&2
     done < <(missing_themes)
     (( n == 0 )) && skip "every theme in the inventory is already installed" >&2
     return 0
@@ -555,37 +549,22 @@ cmd_restore() {
     if [[ -n "$wnorm" && "$wnorm" == "$cnorm" ]]; then ok "$want (already applied)" >&2; return 0; fi
     if (( dry )); then skip "dry-run: would apply theme '$want' (currently '${current:-unknown}')" >&2; return 0; fi
     if command -v omarchy-theme-set >/dev/null 2>&1; then
-      omarchy-theme-set "$want" >/dev/null 2>&1 && ok "theme -> $want" >&2 || warn "could not apply theme '$want' — is it installed?" >&2
+      omarchy-theme-set "$want" >/dev/null 2>&1 && ok "theme -> $want" >&2 || warn "could not apply theme '$want' — if it is not installed here: omarchy-replicant install-theme $want" >&2
     else
       warn "omarchy-theme-set not found" >&2
     fi
   }
 
-  # Plugins are reinstalled, not copied. `omarchy plugin add <origin>` is the
-  # only thing that leaves a plugin in a state Omarchy itself will maintain.
+  # Same reasoning as restore_themes: a third-party plugin is code Quickshell
+  # will run once enabled, so reinstalling it automatically on every restore
+  # means silently trusting whatever the origin holds today. install-plugin
+  # <id> is the explicit version.
   restore_plugins() {
-    local dry="$1" pid porigin pmethod verb n=0
-    while IFS=$'\t' read -r pid porigin pmethod; do
+    local pid _ n=0
+    while IFS=$'\t' read -r pid _; do
       [[ -n "$pid" ]] || continue
       n=$((n + 1))
-      # Two different Omarchy commands, because they rebuild two different
-      # things: a third-party plugin comes from its git remote, while an edited
-      # copy of a built-in is re-cloned from the built-in it came from. Using
-      # `add` on the second would fail — "omarchy.indicators" is not a URL.
-      [[ "$pmethod" == "clone" ]] && verb="clone" || verb="add"
-      if (( dry )); then
-        skip "dry-run: would run omarchy plugin $verb $porigin  ($pid)" >&2
-      else
-        echo "  → omarchy plugin $verb $porigin" >&2
-        if [[ "$verb" == "clone" ]]; then
-          omarchy plugin clone "$porigin" >/dev/null 2>&1 \
-            && ok "$pid re-cloned from $porigin (any edits you made are not in this)" >&2 \
-            || warn "$pid — omarchy plugin clone failed" >&2
-        else
-          omarchy plugin add "$porigin" --enable --yes >/dev/null 2>&1 \
-            && ok "$pid installed" >&2 || warn "$pid — omarchy plugin add failed" >&2
-        fi
-      fi
+      skip "$pid — third-party plugin, not auto-installed: omarchy-replicant install-plugin $pid" >&2
     done < <(missing_plugins)
     (( n == 0 )) && skip "every plugin in the inventory is already installed" >&2
     return 0
@@ -603,14 +582,14 @@ cmd_restore() {
 
     if [[ "$cat" == "appearance" ]]; then
       # The theme rides with appearance, because that is where a user looks for
-      # it — but it is installed and then applied, never copied (see
-      # restore_themes / restore_theme). Order matters: applying a theme that
-      # is not on the machine yet is the bug this pair exists to close.
-      restore_themes "$DRY"
+      # it — but it is applied, never copied (see restore_themes /
+      # restore_theme). restore_themes only names the themes this machine does
+      # not have; installing one is a separate, explicit command.
+      restore_themes
       restore_theme "$DRY"
     fi
     if [[ "$cat" == "plugins" ]]; then
-      restore_plugins "$DRY"
+      restore_plugins
     fi
 
     pending=()
@@ -1017,6 +996,32 @@ cmd_restore_file() {
   core_restore_file "$id" || exit 1
 }
 
+# cmd_install_theme <name> — install ONE third-party theme recorded in the
+# inventory, on request. `restore` reports these as pending and never installs
+# them itself (see restore_themes below) — this is the explicit action.
+cmd_install_theme() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || fail "usage: omarchy-replicant install-theme <name>"
+  ensure_core
+  # Sourced with an empty "$1" on purpose: the core file ends in its own
+  # dispatcher, and this function's own "$1" would otherwise run an unrelated
+  # core command as a side effect (install-theme backup ran core_backup).
+  # shellcheck disable=SC1090
+  source "$CORE" "" 2>/dev/null || true
+  core_install_theme "$name" || exit 1
+}
+
+# cmd_install_plugin <id> — the same action for a plugin.
+cmd_install_plugin() {
+  local id="${1:-}"
+  [[ -n "$id" ]] || fail "usage: omarchy-replicant install-plugin <id>"
+  ensure_core
+  # Empty "$1" for the core file's own dispatcher — see cmd_install_theme.
+  # shellcheck disable=SC1090
+  source "$CORE" "" 2>/dev/null || true
+  core_install_plugin "$id" || exit 1
+}
+
 # cmd_shortcuts — what you changed about the keyboard, and what is actually
 # bound right now. Omarchy's model is defaults + your overrides, so only the
 # overrides are backed up; a snapshot of all 227 active bindings would be stale
@@ -1071,6 +1076,14 @@ cmd_doctor() {
     chk_warn "$(plural "$n_lo" plugin) exist only on this machine and cannot be reinstalled:"
     printf '%s\n' "$lo" | sed 's/^/      /' >&2
     printf '      push them to a git remote, or they are lost with this machine\n' >&2
+  fi
+
+  local pp n_pp
+  pp=$(missing_plugins 2>/dev/null || true)
+  n_pp=$(printf '%s' "$pp" | grep -c . || true)
+  if (( n_pp > 0 )); then
+    chk_warn "$(plural "$n_pp" plugin) recorded but not installed here — restore does not fetch these on its own:"
+    printf '%s\n' "$pp" | awk -F'\t' '{print "      omarchy-replicant install-plugin " $1}' >&2
   fi
 
   # A clone HAS an origin, so the check above calls it fine — and it is, about
@@ -1134,7 +1147,14 @@ cmd_doctor() {
   lt=$(local_only_themes 2>/dev/null || true)
   n_lt=$(printf '%s' "$lt" | grep -c . || true)
   n_inv=$(awk -F'\t' '!/^#/ && NF>=2 && $2 != "-" {n++} END{print n+0}' "$STATE_DIR/omarchy-themes.txt" 2>/dev/null || echo 0)
-  chk_ok "$(plural "$n_inv" "user theme") recorded with an origin — reinstalled with 'omarchy theme install'"
+  chk_ok "$(plural "$n_inv" "user theme") recorded with an origin — install one with 'omarchy-replicant install-theme'"
+  local pt n_pt
+  pt=$(missing_themes 2>/dev/null || true)
+  n_pt=$(printf '%s' "$pt" | grep -c . || true)
+  if (( n_pt > 0 )); then
+    chk_warn "$(plural "$n_pt" theme) recorded but not installed here — restore does not fetch these on its own:"
+    printf '%s\n' "$pt" | awk -F'\t' '{print "      omarchy-replicant install-theme " $1}' >&2
+  fi
   if (( n_lt > 0 )); then
     chk_warn "$(plural "$n_lt" theme) have no origin and are not tracked either:"
     printf '%s\n' "$lt" | sed 's/^/      /' >&2
@@ -1435,6 +1455,10 @@ Putting things back            (dry run by default; .bak.<epoch> kept for everyt
   reset <id>                  One file back to Omarchy's default
   reset-all [--apply] [--yes] Everything with a known default back to factory
 
+Third-party code               (no dry run, no backup; fetches the moment you run it)
+  install-theme <name>        Install one theme from your inventory — never automatic
+  install-plugin <id>         Install one plugin from your inventory — never automatic
+
 Second machine
   clone <url>                 Point this machine at the repo you already have
 
@@ -1586,8 +1610,17 @@ Dry-run by default, like everything here that writes.
   Put back what is saved in your repo. A dry run by default, and every file it
   overwrites is kept as .bak.<epoch> first.
   Restoring is not copying: each area also runs what has to happen afterwards —
-  hyprctl reload, a terminal restart, omarchy-theme-set, plugin reinstalls.
-  This is not the same thing as 'reset-all', which goes to Omarchy's defaults."
+  hyprctl reload, a terminal restart, omarchy-theme-set. Third-party plugins
+  and themes are NOT reinstalled by this command — see 'install-theme' /
+  'install-plugin'. This is not the same thing as 'reset-all', which goes to
+  Omarchy's defaults."
+  [install-theme]="install-theme <name>
+  Install one third-party theme recorded in your inventory, fetching whatever
+  is at its origin right now. 'restore' only ever reports these as pending —
+  this is the action that actually fetches one, on purpose."
+  [install-plugin]="install-plugin <id>
+  The same thing for a plugin: 'restore' reports it as pending, this installs
+  it, fetching whatever is at its origin right now."
 )
 
 
@@ -1646,6 +1679,8 @@ main() {
     push) shift; cmd_push "$@";;
     pull) shift; cmd_pull "$@";;
     clone) shift; cmd_clone "$@";;
+    install-theme) shift; cmd_install_theme "$@";;
+    install-plugin) shift; cmd_install_plugin "$@";;
     restore) shift; cmd_restore "$@";;
     *) fail "unknown command $cmd — --help";;
   esac

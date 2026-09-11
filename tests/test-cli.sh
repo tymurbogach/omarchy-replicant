@@ -271,6 +271,54 @@ run doctor >/dev/null 2>&1
 check "doctor changes nothing in ~/.config" "$before_home" "$(hash_tree "$HOME/.config")"
 check "doctor changes nothing in the repo"  "$before_repo" "$(hash_tree "$REPO")"
 check_contains "doctor reports on the repo" "local repo" "$(run doctor)"
+# Same REPLICANT_MACHINE=testhost reasoning as Task 3/4: MACHINE in
+# replicant-core.sh comes from `hostnamectl --static` (or plain `hostname`),
+# never `hostname -s` — pin it instead of guessing.
+STATEDIR="$REPO/state/testhost"
+mkdir -p "$STATEDIR"
+printf '# name\torigin\nmine\thttps://example.com/omarchy-mine-theme\n' > "$STATEDIR/omarchy-themes.txt"
+check_contains "doctor names a pending theme and the command to install it" \
+  "install-theme mine" "$(env REPLICANT_MACHINE=testhost "$CLI" doctor 2>&1)"
+rm -f "$STATEDIR/omarchy-themes.txt"
+
+section "install-theme / install-plugin are on-demand, not part of restore"
+mkdir -p "$TMP/fakebin"
+FAKE_LOG="$TMP/omarchy-calls.log"
+cat > "$TMP/fakebin/omarchy" <<EOF
+#!/bin/bash
+echo "\$*" >> "$FAKE_LOG"
+exit 0
+EOF
+chmod +x "$TMP/fakebin/omarchy"
+# MACHINE in replicant-core.sh is `hostnamectl --static` first, plain
+# `hostname` as its fallback — never `hostname -s`. Guessing it from the test
+# host's real hostname would silently point at the wrong state directory, so
+# REPLICANT_MACHINE pins it to a fixed, test-only value instead.
+STATEDIR="$REPO/state/testhost"
+mkdir -p "$STATEDIR"
+printf '# name\torigin\nmine\thttps://example.com/omarchy-mine-theme\n' > "$STATEDIR/omarchy-themes.txt"
+printf '# id\tversion\torigin\tmethod\ndemo.widget\t1.0.0\thttps://example.com/demo-widget\tadd\n' > "$STATEDIR/omarchy-plugins.txt"
+: > "$FAKE_LOG"
+check_true "install-theme installs a pending theme" \
+  env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" install-theme mine
+check_contains "…by calling omarchy theme install" \
+  "theme install https://example.com/omarchy-mine-theme" "$(cat "$FAKE_LOG")"
+check_false "install-theme with no name fails" \
+  env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" install-theme
+check_false "install-plugin with no id fails" \
+  env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" install-plugin
+
+section "restore never installs third-party code on its own"
+: > "$FAKE_LOG"
+out=$(env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" restore --apply --all --yes 2>&1)
+check "restore --apply --all --yes does not call omarchy theme install" "0" \
+  "$(grep -c 'theme install' "$FAKE_LOG" || true)"
+check_contains "…and says how to install it instead" "install-theme mine" "$out"
+check "…nor omarchy plugin add" "0" \
+  "$(grep -c 'plugin add' "$FAKE_LOG" || true)"
+check "…nor omarchy plugin clone" "0" \
+  "$(grep -c 'plugin clone' "$FAKE_LOG" || true)"
+check_contains "…and says how to install the plugin instead" "install-plugin demo.widget" "$out"
 
 section "link / unlink is reversible and touches nothing else"
 export PATH_LINK="$HOME/.local/bin/omarchy-replicant"

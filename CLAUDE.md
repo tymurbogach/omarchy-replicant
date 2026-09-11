@@ -53,6 +53,10 @@ the truth:
 | Which theme is on? | the name saved in the repo | `omarchy-theme-current`, compared normalised |
 | Is the session locked? | `LockedHint` | the lock's own PAM session in the journal |
 | Where does this file's copy live? | a path built on the spot | `repo_copy_for_rel` → `is_secret_rel` + `repo_path_for` |
+| What does the Hyprland config consist of? | the five `hypr/*.lua` names in `MANIFEST` | its own `require("hypr.…")` lines (`discover_hypr_modules`) |
+| Which plugins' settings belong in the repo? | the plugins installed on *this* machine | every machine's `omarchy-plugins.txt` (`discover_kept_plugin_configs`) |
+| Which Input value is Hyprland using? | the key in `input.lua` this plugin wrote | `hyprctl getoption` (`hypr_in_force`) — a module loaded later wins |
+| Is a plugin's work upstream? | `refs/remotes/origin/*` | those and `FETCH_HEAD` — `omarchy plugin update` never moves the remote refs |
 
 Every one of those shipped, and every one looked correct in review. Before writing a reader for
 anything, ask which side of the line it sits on: **a value read back from a file this plugin wrote
@@ -443,6 +447,9 @@ would change nothing is worse than no button.
   convention = `~/.config/omarchy/<last-segment-of-id>.json` next to the plugin's
   `manifest.json`. If a new plugin doesn't follow that convention, it won't show up on its
   own — that's not a bug, it's the deliberate limit of a generic, registry-free detector.
+  **Found entries join `TRACKED`** as `AUTO_MANIFEST` (`load_auto_manifest`), with the modules
+  `hyprland.lua` requires. They used to have their own copy loop and their own row builder, and
+  the two passes that never got a copy were the restore plan and the bar's count.
 - **The repo mirrors the manifest, both ways.** `core_backup` copies tracked files in *and*
   prunes `config/` files that are no longer tracked, so dropping a MANIFEST line doesn't leave a
   copy behind forever. A tracked file whose source is missing on this machine keeps its last
@@ -674,6 +681,7 @@ That is why `category_field`/`setting_field` no longer call their split array `f
   | `tests/test-core.sh` | 33 s | MANIFEST, scopes, state, the JSON payloads |
   | `tests/test-cli.sh` | 23 s | subcommands, purge, backups, `--help` |
   | `tests/test-journey.sh` | 17 s | two machines and one repo, end to end |
+  | `tests/test-usability.sh` | 1 s | what the panel shows: its commands, keys, labels and words |
 
 - **Mutation testing is how you find out whether the suite is lying.** Copy the repo, break one
   line of production code, run the suites, revert. Anything nobody notices is a coverage hole with

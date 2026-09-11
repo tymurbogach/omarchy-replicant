@@ -99,7 +99,8 @@ you wrote yourself is traced back to your own checkout.
 
 ## What else it does
 
-- **44 paths out of the box** — 41 configs and 3 secrets — plus whatever you add, grouped into eleven areas. Nothing scrolls forever; you open the one you came for.
+- **47 paths out of the box** — 44 configs and 3 secrets — plus whatever you add, grouped into eleven areas. Nothing scrolls forever; you open the one you came for.
+- **What your setup loads comes with it.** Every module `hyprland.lua` requires is saved with it (OmaSettings keeps everything its window sets in `hypr/omasettings.lua`), and so is every plugin's settings file — including one for a plugin only your other machine has, which a save from this one used to delete.
 - **Directories, not just files.** `~/.config/nvim/` is one row with a file count; a change anywhere inside it says so, and `.git` inside a tracked tree is never copied.
 - **Change detection that tells the truth.** Every file is compared by content against the copy in your repo, so editing one says so immediately — and putting it back clears the warning by itself. Badges, in the panel's own words: **●** unsaved, **↓** to restore, **↑** to push, **◆** saved, **○** default, **⊘** off, **·** not here.
 - **It knows which way a change points.** Two machines on one repo means "this file and its copy differ" has two opposite answers, and only one of them is Save. After a `pull`, anything another machine changed is marked **↓ to restore** instead of ● unsaved — so the obvious button is never the one that commits over somebody else's work.

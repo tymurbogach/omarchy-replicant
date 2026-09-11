@@ -42,6 +42,24 @@ LUA
 
 printf 'code\n' > "$TMP/.local/state/omarchy/defaults/editor"
 
+# Every write to a Lua setting runs `hyprctl reload`, and the real hyprctl talks
+# to the real compositor whatever $HOME says: this suite used to reload the
+# session of whoever ran it. The stub answers `getoption` from a file a test
+# writes ("option<TAB>json" per line), and does nothing for anything else.
+mkdir -p "$TMP/fakebin"
+cat > "$TMP/fakebin/hyprctl" <<'EOF'
+#!/bin/bash
+if [[ "$1" == getoption ]]; then
+  [[ -f "${HYPRCTL_OPTIONS:-}" ]] || exit 1
+  awk -F'\t' -v o="$2" '$1 == o { print $2; found = 1 } END { exit !found }' "$HYPRCTL_OPTIONS"
+  exit
+fi
+exit 0
+EOF
+chmod +x "$TMP/fakebin/hyprctl"
+export PATH="$TMP/fakebin:$PATH"
+export HYPRCTL_OPTIONS="$TMP/hyprctl-options"
+
 # shellcheck source=/dev/null
 source "$CORE" 2>/dev/null
 # replicant-core.sh sets -euo pipefail; these tests deliberately call failing
@@ -331,6 +349,51 @@ jq '.idle.screensaver = 150' "$HOME/.config/omarchy/shell.json" > "$TMP/s.json" 
 check "…and it clears when the order is fixed" "" "$(notice_of idle.screensaver)"
 check "every setting carries the field"        "0" \
   "$(build_settings_json | jq '[.[] | select(has("notice") | not)] | length')"
+
+section "Hyprland is asked what is in force, not the file"
+# OmaSettings writes the same keys into hypr/omasettings.lua and loads it after
+# input.lua, so the file this panel edits can say one thing while the session
+# does another.
+cat > "$HOME/.config/hypr/input.lua" <<'LUA'
+hl.config({
+  input = {
+    kb_layout = "es",
+    repeat_rate = 40,
+    touchpad = {
+      natural_scroll = true,
+      tap_to_click = true,
+    },
+  },
+})
+LUA
+printf 'require("hypr.input")\nrequire("hypr.omasettings")\n' > "$HOME/.config/hypr/hyprland.lua"
+cat > "$HOME/.config/hypr/omasettings.lua" <<'LUA'
+hl.config({
+  input = {
+    touchpad = {
+      natural_scroll = false,
+    },
+  },
+})
+LUA
+load_auto_manifest
+printf '%s\t%s\n' \
+  input:touchpad:natural_scroll '{"option": "input:touchpad:natural_scroll", "bool": false, "set": true}' \
+  input:touchpad:tap_to_click   '{"option": "input:touchpad:tap_to_click", "int": 1, "set": true}' \
+  input:repeat_rate             '{"option": "input:repeat_rate", "int": 40, "set": true}' \
+  input:kb_layout               '{"option": "input:kb_layout", "str": "es", "set": true}' \
+  > "$HYPRCTL_OPTIONS"
+check "the Lua key is the option's last segment" "natural_scroll" "$(lua_key_of input:touchpad:natural_scroll)"
+check "the value still reads from the file" "true" "$(get_setting_value input.naturalScroll)"
+check_contains "a value another file overrides says what is in force" "In force: off" "$(notice_of input.naturalScroll)"
+check_contains "…and which file sets it" "hypr/omasettings.lua" "$(notice_of input.naturalScroll)"
+check "a value Hyprland agrees with says nothing" "" "$(notice_of input.repeatRate)"
+check "…a switch Hyprland reports as 1 agrees with true" "" "$(notice_of input.tapToClick)"
+check "…and so does a layout" "" "$(notice_of input.kbLayout)"
+rm -f "$HYPRCTL_OPTIONS"
+check "with no Hyprland to ask, nothing is claimed" "" "$(notice_of input.naturalScroll)"
+rm -f "$HOME/.config/hypr/omasettings.lua" "$HOME/.config/hypr/hyprland.lua"
+load_auto_manifest
 
 section "the registry itself is well-formed"
 bad_fields=0; dupe=0; seen=""

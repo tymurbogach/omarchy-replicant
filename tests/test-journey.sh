@@ -50,6 +50,10 @@ echo "$*" >> "$OMARCHY_FAKE_LOG"
 exit 0
 EOF
 chmod +x "$TMP/fakebin/omarchy"
+# A restore reloads Hyprland, and the real hyprctl talks to the real compositor
+# whatever $HOME says. A test must not reload the session of whoever runs it.
+printf '#!/bin/bash\nexit 0\n' > "$TMP/fakebin/hyprctl"
+chmod +x "$TMP/fakebin/hyprctl"
 export PATH="$TMP/fakebin:$PATH"
 
 # ── the desktop, with a setup worth replicating ──────────────────────────────
@@ -338,5 +342,32 @@ check_true "the desktop picked the edit up" \
 # remember to clear the mark, because the mark only ever shows while the files
 # actually differ.
 check "…and the row goes quiet once it has" "saved" "$(state_of desktop nvim/)"
+
+section "what one machine's setup loads, the other one gets"
+# The desktop runs OmaSettings: hyprland.lua requires hypr.omasettings, and a
+# plugin keeps its settings in ~/.config/omarchy. The laptop has neither the
+# module nor the plugin. Before 0.8 the repo got the require without the module,
+# and every save from the laptop deleted the plugin's settings.
+mkdir -p "$D/.config/omarchy/plugins/com.example.widget"
+printf '{"id":"com.example.widget","name":"Widget","version":"1.0"}\n' \
+  > "$D/.config/omarchy/plugins/com.example.widget/manifest.json"
+printf '{"size":3}\n' > "$D/.config/omarchy/widget.json"
+printf 'require("hypr.input")\nrequire("hypr.omasettings")\n' > "$D/.config/hypr/hyprland.lua"
+printf 'hl.config({ general = { gaps_in = 2 } })\n' > "$D/.config/hypr/omasettings.lua"
+on desktop savegame --auto --no-push >/dev/null 2>&1
+git -C "$DREPO" push -q origin HEAD:main >/dev/null 2>&1
+check_true "the desktop saves the module its hyprland.lua loads" test -f "$DREPO/config/hypr/omasettings.lua"
+check_true "…and the plugin's settings" test -f "$DREPO/config/plugins/widget.json"
+
+on laptop pull >/dev/null 2>&1
+on laptop savegame --no-push >/dev/null 2>&1
+check_true "a save from the laptop, which lacks the plugin, keeps its settings" \
+  test -f "$LREPO/config/plugins/widget.json"
+check_true "…and keeps the module" test -f "$LREPO/config/hypr/omasettings.lua"
+on laptop restore --apply --all --yes >/dev/null 2>&1
+check_true "restoring on the laptop brings the module hyprland.lua loads" \
+  test -f "$L/.config/hypr/omasettings.lua"
+check_true "…and the plugin's settings, ready for when it is installed" \
+  test -f "$L/.config/omarchy/widget.json"
 
 summary

@@ -1125,6 +1125,24 @@ cmd_doctor() {
     printf '%s' "$derived_clones" >&2
   fi
 
+  # An origin says where the plugin came from, not that the work in it is
+  # there. An edit made in place, or a commit never pushed, exists only in this
+  # checkout, and install-plugin on the other machine brings back the origin's
+  # code without it.
+  local ed e_id e_dir e_dirty e_ahead e_what edited_lines=""
+  ed=$(edited_plugins 2>/dev/null || true)
+  while IFS=$'\t' read -r e_id e_dir e_dirty e_ahead; do
+    [[ -n "$e_id" ]] || continue
+    e_what=""
+    (( e_dirty > 0 )) && e_what="$(plural "$e_dirty" "uncommitted change")"
+    (( e_ahead > 0 )) && e_what="${e_what:+$e_what, }$(plural "$e_ahead" "commit") not pushed"
+    edited_lines+="      $e_id  ·  $e_what  →  push it, or: omarchy-replicant track ${e_dir/#$HOME/\~}/"$'\n'
+  done <<< "$ed"
+  if [[ -n "$edited_lines" ]]; then
+    chk_warn "$(plural "$(printf '%s' "$edited_lines" | grep -c .)" plugin) with work that exists only in this checkout — reinstalling brings back the origin's code without it:"
+    printf '%s' "$edited_lines" >&2
+  fi
+
   # Two machines, one repo, upgraded on different days. Until every machine runs
   # 0.7.0 or newer, the older one still prunes what this one tracks — it has no
   # guard to check, because the guard did not exist when it shipped.
@@ -1159,6 +1177,35 @@ cmd_doctor() {
     chk_warn "$(plural "$n_lt" theme) have no origin and are not tracked either:"
     printf '%s\n' "$lt" | sed 's/^/      /' >&2
     printf '      track the directory to back one up: omarchy-replicant track ~/.config/omarchy/themes/<name>\n' >&2
+  fi
+
+  echo "Hyprland"
+  # Every module hyprland.lua loads is tracked with it, found by reading its
+  # require lines. A module that exists nowhere cannot be saved, and Hyprland
+  # reports it as an error on every reload.
+  local hu n_hu n_hm=0 hentry hrel hunsaved=""
+  hu=$(unresolved_hypr_modules 2>/dev/null || true)
+  n_hu=$(printf '%s' "$hu" | grep -c . || true)
+  for hentry in ${AUTO_MANIFEST[@]+"${AUTO_MANIFEST[@]}"}; do
+    hrel="${hentry##*:}"
+    [[ "$hrel" == hypr/* ]] || continue
+    n_hm=$((n_hm + 1))
+    # Tracked is not saved: the first version said "saved with it" about a
+    # module no save had copied yet. The repo is asked, not the list.
+    [[ -f "$(repo_copy_for_rel "$hrel")" ]] || hunsaved+="      $hrel"$'\n'
+  done
+  if (( n_hu > 0 )); then
+    chk_bad "your Hyprland config loads $(plural "$n_hu" module) that do not exist here:"
+    printf '%s\n' "$hu" | sed 's/^/      /' >&2
+    printf '      create the file, or remove its require line from ~/.config/hypr/\n' >&2
+  fi
+  if [[ -n "$hunsaved" ]]; then
+    chk_warn "$(plural "$(printf '%s' "$hunsaved" | grep -c .)" module) that hyprland.lua loads tracked, not saved yet — omarchy-replicant savegame:"
+    printf '%s' "$hunsaved" >&2
+  elif (( n_hm > 0 )); then
+    chk_ok "$(plural "$n_hm" "extra module") that hyprland.lua loads saved with it"
+  elif (( n_hu == 0 )); then
+    chk_ok "every module hyprland.lua loads is tracked"
   fi
 
   echo "GitHub"

@@ -111,6 +111,12 @@ MANIFEST=(
   "$HOME/.config/starship.toml:starship.toml"
   "$HOME/.config/btop/btop.conf:btop/btop.conf"
   "$HOME/.config/lazygit/config.yml:lazygit/config.yml"
+  # Written by Omarchy's own commands and by the settings plugins, not only by
+  # hand: `omarchy font set` makes fonts.conf the source of truth for the font,
+  # and OmaSettings edits tmux and Herdr in place. Omarchy ships the last two.
+  "$HOME/.config/fontconfig/fonts.conf:fontconfig/fonts.conf"
+  "$HOME/.config/tmux/tmux.conf:tmux/tmux.conf"
+  "$HOME/.config/herdr/config.toml:herdr/config.toml"
   "/etc/systemd/logind.conf.d/99-lid.conf:etc/99-lid.conf"
   "/etc/systemd/sleep.conf.d/99-hibernate-delay.conf:etc/99-hibernate-delay.conf"
 )
@@ -206,6 +212,12 @@ may_prune() {
 }
 USER_MANIFEST=()
 USER_SECRETS=()
+# Entries found rather than listed: other plugins' configs and the Hyprland
+# modules hyprland.lua loads. They join TRACKED like every other entry, so the
+# copy, prune, restore and badge passes cannot treat them differently. See
+# load_auto_manifest.
+AUTO_MANIFEST=()
+declare -A AUTO_LABEL=()
 
 # A trailing slash is the whole of the directory/file distinction, on the repo
 # side of the entry. It survives every place a rel is passed around as a string.
@@ -259,7 +271,7 @@ parse_track_line() {
 }
 
 rebuild_tracked() {
-  TRACKED=("${MANIFEST[@]}" ${USER_MANIFEST[@]+"${USER_MANIFEST[@]}"})
+  TRACKED=("${MANIFEST[@]}" ${USER_MANIFEST[@]+"${USER_MANIFEST[@]}"} ${AUTO_MANIFEST[@]+"${AUTO_MANIFEST[@]}"})
   TRACKED_SECRETS=("${SECRETS_MANIFEST[@]}" ${USER_SECRETS[@]+"${USER_SECRETS[@]}"})
 }
 
@@ -318,7 +330,7 @@ CATEGORIES=(
   "appearance|󰏘|Appearance|Theme, look & feel, fonts, interface density and branding|Theme re-applied with omarchy theme set"
   "desktop|󰍹|Desktop & bar|The Omarchy shell: bar layout, widgets, menu and idle|Written to shell.json / shell.toml, which the shell watches live"
   "hyprland|󰖯|Hyprland|Input, monitors, autostart, lock screen and night light|Copied back, then hyprctl reload and a config-error check"
-  "terminal|󰆍|Terminal & shell|Alacritty, foot, bashrc and which terminal opens|Copied back, then omarchy restart terminal"
+  "terminal|󰆍|Terminal & shell|Alacritty, foot, tmux, bashrc and which terminal opens|Copied back, then omarchy restart terminal"
   "development|󰅴|Development|git, editors, Claude and opencode, mise, VS Code|Copied back; nothing needs restarting"
   "secrets|󰌆|Secrets & keys|SSH keys, tokens and .env files — private, mode 600|Copied back as mode 600; contents are never printed"
   "plugins|󰐱|Plugins|Plugin settings, plus every plugin's id and git origin|Plugin settings copied back; third-party plugins are installed only on request"
@@ -347,7 +359,7 @@ find_category() {
 category_for_rel() {
   case "$1" in
     hypr/bindings.lua)                                 echo shortcuts ;;
-    hypr/looknfeel.lua|omarchy/theme.name|omarchy/shell.toml|branding/*) echo appearance ;;
+    hypr/looknfeel.lua|omarchy/theme.name|omarchy/shell.toml|branding/*|fontconfig/*|omarchy/themed/*) echo appearance ;;
     omarchy/shell.json|omarchy/extensions/*)           echo desktop ;;
     hypr/*)                                            echo hyprland ;;
     alacritty/*|foot/*|kitty/*|ghostty/*|xdg-terminals.list|home/*) echo terminal ;;
@@ -359,7 +371,7 @@ category_for_rel() {
     bin/*|omarchy/hooks/*|omarchy-audit-ignore)        echo scripts ;;
     etc/*|uwsm/*|systemd/*)                            echo system ;;
     mimeapps.list)                                     echo desktop ;;
-    starship.toml|btop/*|lazygit/*)                    echo terminal ;;
+    starship.toml|btop/*|lazygit/*|tmux/*|herdr/*)     echo terminal ;;
     *)                                                 echo other ;;
   esac
 }
@@ -856,7 +868,7 @@ SUGGEST_MAX_BYTES=262144   # a config file people wrote by hand; not a database
 # What a config file looks like. A positive list rather than a blocklist,
 # because the things under ~/.config that are NOT config outnumber the things
 # that are, and they are invented faster than anyone can exclude them.
-SUGGEST_EXTENSIONS="conf toml ini yml yaml lua json jsonc rc list css scss sh bash fish zsh service timer socket desktop kdl nix editorconfig theme vim"
+SUGGEST_EXTENSIONS="conf toml ini yml yaml lua json jsonc rc list css scss sh bash fish zsh service timer socket desktop kdl nix editorconfig theme vim tpl"
 
 # An Electron or Chromium application keeps its entire state in ~/.config/<app>,
 # and every file in there is machine-generated: "Local State", "Preferences",
@@ -895,18 +907,16 @@ suggest_skip_reason() {
   [[ $(stat -c%s "$f" 2>/dev/null || echo 0) -gt $SUGGEST_MAX_BYTES ]] && { echo "too big to be hand-written"; return 0; }
   grep -Iq . "$f" 2>/dev/null || { echo "not a text file"; return 0; }
   is_app_state_dir "$(dirname "$f")" && { echo "an application's own state"; return 0; }
-  # Already picked up on its own: a plugin config next to its manifest is found
-  # by discover_plugin_entries and saved without anybody listing it.
-  is_discovered_plugin_config "$f" && { echo "already saved as a plugin config"; return 0; }
   case "$base" in
     package.json|package-lock.json|yarn.lock|pnpm-lock.yaml|composer.lock)
       { echo "a package manager's file"; return 0; } ;;
     *session*|*state*|*.log|*.pid|*.sock*|*.db|*.lock)
       { echo "runtime state, not config"; return 0; } ;;
   esac
-  # A script has no extension to go by, so it is judged by being executable and
-  # living where you put scripts. Everything else must look like config.
-  if [[ "$f" != "$HOME/.local/bin/"* ]]; then
+  # A script has no extension to go by, so it is judged by living where you put
+  # scripts: ~/.local/bin, or an Omarchy hook directory. Everything else must
+  # look like config.
+  if [[ "$f" != "$HOME/.local/bin/"* && "$f" != "$HOME/.config/omarchy/hooks/"* ]]; then
     [[ "$ext" != "$base" ]] || { echo "no extension — not obviously config"; return 0; }
     [[ " $SUGGEST_EXTENSIONS " == *" ${ext,,} "* ]] || { echo ".$ext is not a config format"; return 0; }
   fi
@@ -1107,14 +1117,6 @@ build_backups_json() {
     })'
 }
 
-is_discovered_plugin_config() {
-  local p="$1" psrc _prel _pname
-  while IFS=$'\t' read -r psrc _prel _pname; do
-    [[ "$psrc" == "$p" ]] && return 0
-  done < <(discover_plugin_entries)
-  return 1
-}
-
 # Some config files hold a credential. gh/hosts.yml carries an OAuth token, a
 # .netrc carries a password. They are perfectly reasonable things to back up
 # into a private repo — but as secrets, at mode 600, with their contents never
@@ -1158,6 +1160,8 @@ core_suggest() {
       case "$f" in
         */systemd/user/*) reason="a user service you added" ;;
         "$HOME/.local/bin/"*) reason="a script you wrote" ;;
+        */omarchy/hooks/*) reason="an Omarchy hook you added" ;;
+        */omarchy/themed/*) reason="a theme template you changed" ;;
       esac
       kind=$(suggest_kind "$f")
       [[ "$kind" == secret ]] && reason="holds a credential — track it as a secret"
@@ -1166,6 +1170,10 @@ core_suggest() {
       find "$HOME/.config" -maxdepth 2 -type f 2>/dev/null
       find "$HOME/.config/systemd/user" -maxdepth 1 -type f 2>/dev/null
       find "$HOME/.local/bin" -maxdepth 1 -type f -executable 2>/dev/null
+      # Omarchy's two extension points, both deeper than the scan above. It
+      # ships a .sample in each, which is Omarchy's file and not the user's.
+      find "$HOME/.config/omarchy/hooks" -mindepth 2 -maxdepth 2 -type f ! -name '*.sample' 2>/dev/null
+      find "$HOME/.config/omarchy/themed" -maxdepth 1 -type f ! -name '*.sample' 2>/dev/null
     } | sort -u)
   # Credentials first — "secret" sorts after "config", hence -r — and stably,
   # so everything else keeps path order. The list is long and, in the panel,
@@ -1193,16 +1201,25 @@ install_file() {
     skip "$short_path — source missing in the repo ($src)"
     return
   fi
-  if [[ -f $dst ]] && cmp -s "$src" "$dst"; then
-    run chmod "$mode" "$dst"
+  # A config symlinked into a dotfiles repo is still that config, so the write
+  # goes through the link. `install` onto the name itself replaces the link with
+  # a plain file, and the dotfiles repo silently stops seeing the change. The
+  # backup is a copy of what the link points at, kept next to the tracked name,
+  # where list_backups and undo look.
+  local target=$dst
+  if [[ -L $dst ]]; then
+    target=$(readlink -f -- "$dst" 2>/dev/null) && [[ -f $target ]] || target=$dst
+  fi
+  if [[ -f $target ]] && cmp -s "$src" "$target"; then
+    run chmod "$mode" "$target"
     ok "$short_path (already matches, mode $mode)"
     return
   fi
   if [[ -e $dst ]]; then
-    run cp -a "$dst" "$dst.bak.$(date +%s)"
+    run cp -a -- "$target" "$dst.bak.$(date +%s)"
     skip "$short_path — previous version saved as .bak.<epoch>"
   fi
-  run install -D -m "$mode" "$src" "$dst"
+  run install -D -m "$mode" "$src" "$target"
   ok "$short_path ($mode)"
 }
 
@@ -1216,13 +1233,21 @@ install_file() {
 #
 # .git is skipped inside a tracked tree for the same reason, one size down: a
 # repo nested in a repo is not backed up by copying its objects around.
-TREE_EXCLUDES=(".git" "node_modules" "__pycache__" ".cache")
+#
+# Other tools' safety copies are skipped too. OmaSettings leaves
+# `<file>.omasettings.bak` beside a file it edits for the first time (Neovim's
+# options.lua, inside the tracked nvim/ tree), and `omarchy refresh config`
+# leaves `<file>.bak.<epoch>`. Neither is configuration.
+TREE_EXCLUDES=(".git" "node_modules" "__pycache__" ".cache" "*.omasettings.bak" "*.bak.[0-9]*")
 
+# -H: a tracked directory that is itself a symlink into a dotfiles repo is still
+# that directory. Without it find lists nothing under the link, and the
+# two-way mirror then empties the repo's copy on the next save.
 tree_find() {
   local root="${1%/}" e
   local -a prune=()
   for e in "${TREE_EXCLUDES[@]}"; do prune+=(-name "$e" -o); done
-  find "$root" \( "${prune[@]}" -false \) -prune -o -type f -print 2>/dev/null
+  find -H "$root" \( "${prune[@]}" -false \) -prune -o -type f -print 2>/dev/null
 }
 
 # tree_files <root> — paths inside the tree, relative to it, sorted.
@@ -1306,8 +1331,10 @@ install_tree() {
     ok "$short_path/ (already matches, $(tree_count "$src") files)"
     return
   fi
+  # Resolved first: `cp -a` of a symlinked directory copies the link, and a
+  # backup that points at the tree about to be overwritten keeps nothing.
   if [[ -e $dst ]]; then
-    run cp -a "$dst" "$dst.bak.$(date +%s)"
+    run cp -a -- "$(readlink -f -- "$dst")" "$dst.bak.$(date +%s)"
     skip "$short_path/ — previous version saved as .bak.<epoch>"
   fi
   while IFS= read -r f; do
@@ -1474,7 +1501,7 @@ core_backup() {
     fi
   done
   if (( skipped > 0 )); then
-    echo "  $copied copied, $missing missing, $skipped not synced (switched off)" >&2
+    echo "  $copied copied, $missing missing, $skipped switched off" >&2
   else
     echo "  $copied copied, $missing missing" >&2
   fi
@@ -1483,17 +1510,6 @@ core_backup() {
     printf '      %s\n' "${held_rels[@]}" >&2
     echo "    (to save this machine's version instead: 'save-file <id>')" >&2
   fi
-
-  echo "→ Copying auto-detected plugin configs" >&2
-  local pcopied=0 psrc prel _pname
-  while IFS=$'\t' read -r psrc prel _pname; do
-    [[ -n "$psrc" ]] || continue
-    dst="$CONFIG_DIR/$prel"
-    mkdir -p "$(dirname "$dst")"
-    cp -f "$psrc" "$dst"
-    pcopied=$((pcopied+1))
-  done < <(discover_plugin_entries)
-  echo "  $(plural "$pcopied" "plugin config") detected" >&2
 
   # Prune what is no longer tracked. Without this, dropping a line from MANIFEST
   # (or uninstalling a plugin) leaves its last copy in config/ forever — the
@@ -1518,9 +1534,6 @@ core_backup() {
     is_excluded "$_e" && continue
     expected+=("$(repo_path_for "$_e")")
   done
-  while IFS=$'\t' read -r _psrc prel _pname; do
-    [[ -n "$prel" ]] && expected+=("$CONFIG_DIR/$prel")
-  done < <(discover_plugin_entries)
   local pruned=0 found e
   # Only this profile's tree is swept. Another machine's profile directory is
   # not ours to tidy: from here every file in it looks untracked, and pruning
@@ -1848,19 +1861,145 @@ path_unpushed() {
 discover_plugin_entries() {
   local plugins_dir="$HOME/.config/omarchy/plugins"
   [[ -d "$plugins_dir" ]] || return 0
+  local -a mfs=()
   local mf pid pname short src
-  for mf in "$plugins_dir"/*/manifest.json; do
-    [[ -f "$mf" ]] || continue
-    pid=$(jq -r '.id // empty' "$mf" 2>/dev/null) || continue
+  for mf in "$plugins_dir"/*/manifest.json; do [[ -f "$mf" ]] && mfs+=("$mf"); done
+  (( ${#mfs[@]} )) || return 0
+  # One jq for every manifest. This runs each time the core is loaded, which
+  # includes the bar's once-a-minute poll, and a process per plugin added up.
+  while IFS=$'\t' read -r pid pname; do
     [[ -n "$pid" ]] || continue
     [[ "$pid" == "io.github.tymurbogach.omarchy-replicant" ]] && continue
-    pname=$(jq -r '.name // .id' "$mf" 2>/dev/null)
     short="${pid##*.}"
     src="$HOME/.config/omarchy/$short.json"
     [[ -f "$src" ]] || continue
     printf '%s\t%s\t%s\n' "$src" "plugins/$short.json" "$pname"
+  done < <(jq -r '[.id // "", .name // .id // ""] | @tsv' "${mfs[@]}" 2>/dev/null)
+}
+
+# discover_kept_plugin_configs — plugin configs the repo holds for a plugin this
+# machine does not have, but some machine that writes this repo does.
+#
+# Discovery used to be only what is installed HERE. The prune pass removes
+# whatever is not tracked, so a laptop without a plugin deleted the desktop's
+# settings for it on every save, and the desktop put them back on its next one.
+# That is the "older machine deletes what a newer one tracks" bug, one level
+# down. Which plugins exist on the other machine is a question for its
+# inventory, state/<machine>/omarchy-plugins.txt, not for this machine's
+# plugins directory.
+#
+# When no inventory records the plugin any more, the config is not kept and
+# the next save prunes it. git still has it.
+discover_kept_plugin_configs() {
+  local -A recorded=()
+  local short id f root
+  while IFS=$'\t' read -r short id; do
+    [[ -n "$short" ]] && recorded["$short"]="$id"
+  done < <(awk -F'\t' '!/^#/ && $1 != "" { n = split($1, a, "."); print a[n] "\t" $1 }' \
+             "$STATE_ROOT"/*/omarchy-plugins.txt 2>/dev/null)
+  (( ${#recorded[@]} )) || return 0
+  local -a roots=("$CONFIG_DIR/plugins")
+  [[ -d "$REPO_DIR/profiles" ]] && roots+=("$REPO_DIR/profiles/$(current_profile)/config/plugins")
+  for root in "${roots[@]}"; do
+    for f in "$root"/*.json; do
+      [[ -f "$f" ]] || continue
+      short="${f##*/}"; short="${short%.json}"
+      id="${recorded[$short]:-}"
+      [[ -n "$id" && "$id" != "io.github.tymurbogach.omarchy-replicant" ]] || continue
+      printf '%s\t%s\t%s\n' "$HOME/.config/omarchy/$short.json" "plugins/$short.json" "$id"
+    done
   done
 }
+
+# ─── The Hyprland modules hyprland.lua loads ────────────────────────────────
+# MANIFEST names the five modules Omarchy's own hyprland.lua loads. It cannot
+# name the others: OmaSettings appends `require("hypr.omasettings")` and writes
+# everything its window sets into ~/.config/hypr/omasettings.lua, and people
+# split their own config into modules the same way. The repo then held a
+# hyprland.lua loading a file the repo did not have. Restored on another
+# machine, that is a Hyprland config error, and every setting in the module is
+# gone.
+#
+# "What does my Hyprland config consist of" is answered by the config: every
+# require of a `hypr.` module, followed through the modules it loads, in both
+# the live file and the repo's copy. The repo's copy counts because a machine
+# restoring for the first time has Omarchy's stock hyprland.lua, which loads
+# nothing of the user's.
+
+# lua_hypr_requires <file> — one `hypr.` module name per line. Comments are
+# stripped first: a require that is commented out is not a load.
+lua_hypr_requires() {
+  sed -e 's/--.*$//' -- "$1" 2>/dev/null |
+    grep -oE "require[[:space:]]*\(?[[:space:]]*[\"']hypr\.[A-Za-z0-9_.-]+[\"']" |
+    sed -E "s/.*[\"']hypr\.([A-Za-z0-9_.-]+)[\"'].*/\1/" |
+    grep -vE '(^\.|\.$|\.\.)' || true
+}
+
+# hypr_module_rel <module> — its tracked id, as Lua's path would find it on this
+# machine or in the repo: hypr/<a/b>.lua, else hypr/<a/b>/init.lua.
+hypr_module_rel() {
+  local base="hypr/${1//.//}" cand
+  for cand in "$base.lua" "$base/init.lua"; do
+    [[ -f "$HOME/.config/$cand" || -f "$(repo_path_for "$cand")" ]] && { printf '%s\n' "$cand"; return 0; }
+  done
+  return 1
+}
+
+discover_hypr_modules() {
+  local -a queue=("hypr/hyprland.lua")
+  local -A seen=(["hypr/hyprland.lua"]=1)
+  local rel f mod mrel
+  while (( ${#queue[@]} )); do
+    rel="${queue[0]}"; queue=("${queue[@]:1}")
+    for f in "$HOME/.config/$rel" "$(repo_path_for "$rel")"; do
+      [[ -f "$f" ]] || continue
+      while IFS= read -r mod; do
+        [[ -n "$mod" ]] || continue
+        mrel=$(hypr_module_rel "$mod") || continue
+        [[ -n "${seen[$mrel]:-}" ]] && continue
+        seen["$mrel"]=1; queue+=("$mrel")
+        printf '%s\t%s\t%s\n' "$HOME/.config/$mrel" "$mrel" "$mrel"
+      done < <(lua_hypr_requires "$f")
+    done
+  done
+}
+
+# unresolved_hypr_modules — `hypr.` modules the LIVE config loads that exist
+# nowhere on this machine. Hyprland reports each one as an error on every
+# reload, and a module nobody has cannot be backed up.
+unresolved_hypr_modules() {
+  local f mod
+  for f in "$HOME/.config/hypr/hyprland.lua" "$HOME"/.config/hypr/*.lua; do
+    [[ -f "$f" ]] || continue
+    while IFS= read -r mod; do
+      [[ -f "$HOME/.config/hypr/${mod//.//}.lua" || -f "$HOME/.config/hypr/${mod//.//}/init.lua" ]] && continue
+      printf 'hypr.%s\n' "$mod"
+    done < <(lua_hypr_requires "$f")
+  done | sort -u
+}
+
+is_auto_entry() { [[ -n "${AUTO_LABEL[$1]+x}" ]]; }
+
+# load_auto_manifest — fill AUTO_MANIFEST and fold it into TRACKED. An entry a
+# person already listed wins: a path they track by hand, or one inside a
+# directory they track, is theirs and is not found a second time.
+load_auto_manifest() {
+  local src rel label entry taken
+  AUTO_MANIFEST=(); AUTO_LABEL=()
+  rebuild_tracked
+  read_scopes >/dev/null
+  while IFS=$'\t' read -r src rel label; do
+    [[ -n "$rel" ]] || continue
+    is_auto_entry "$rel" && continue
+    is_tracked_path "$src" && continue
+    taken=0
+    for entry in "${TRACKED[@]}"; do [[ "${entry##*:}" == "$rel" ]] && { taken=1; break; }; done
+    (( taken )) && continue
+    AUTO_MANIFEST+=("$src:$rel"); AUTO_LABEL["$rel"]="$label"
+  done < <(discover_plugin_entries; discover_kept_plugin_configs; discover_hypr_modules)
+  rebuild_tracked
+}
+load_auto_manifest
 
 # ─── SETTINGS — curated, individually-editable fields (not whole files) ─────
 # Unlike MANIFEST (whole files, tracked for backup/sync), each entry here is one
@@ -1873,7 +2012,9 @@ discover_plugin_entries() {
 #   group    the section the panel files this control under
 #   file     the file holding the value ("-" for types that don't read a file)
 #   path     jq path (".idle.lock") for JSON | "section.key" for TOML |
-#            the bare key ("repeat_rate") for lua-* | "-" for theme
+#            the Hyprland option ("input:repeat_rate") for lua-*, whose last
+#            segment is the Lua key and whose whole name is what Hyprland is
+#            asked for the value in force | "-" for theme
 #   type     number | bool | enum            JSON, via jq
 #            toml-int | toml-float           "key = <n>" inside a [section]
 #            lua-int | lua-bool | lua-enum   a "key = value" line in a Hyprland
@@ -1926,13 +2067,13 @@ SETTINGS=(
   "bar.sizeVertical|Appearance|$HOME/.config/omarchy/shell.toml|bar.size-vertical|toml-int|Bar thickness (left/right)|px|16|120||Bar width on a vertical edge; setting it stops the font scaling it||28|1|"
   "bar.iconFont|Appearance|$HOME/.config/omarchy/shell.toml|bar.icon-font|toml-int|Bar icon size|px|8|28||How large the glyphs in the bar are drawn||13|1|"
   # ── Input — Hyprland reads Lua at startup, so these need an explicit reload
-  "input.repeatRate|Input|$HOME/.config/hypr/input.lua|repeat_rate|lua-int|Key repeat rate|/s|1|100||Characters a held key sends per second|hyprctl reload||1|"
-  "input.repeatDelay|Input|$HOME/.config/hypr/input.lua|repeat_delay|lua-int|Key repeat delay|ms|100|2000||How long a key is held before it starts repeating|hyprctl reload||1|"
-  "input.kbLayout|Input|$HOME/.config/hypr/input.lua|kb_layout|lua-enum|Keyboard layout||||es,us,gb,de,fr,it,pt,latam|X11 layout code for the keyboard|hyprctl reload||1|"
-  "input.numlock|Input|$HOME/.config/hypr/input.lua|numlock_by_default|lua-bool|Num lock at login|||||Turn the numeric keypad on when the session starts|hyprctl reload||1|"
-  "input.naturalScroll|Input|$HOME/.config/hypr/input.lua|natural_scroll|lua-bool|Natural scrolling|||||Touchpad: two fingers down moves the page up|hyprctl reload||1|"
-  "input.tapToClick|Input|$HOME/.config/hypr/input.lua|tap_to_click|lua-bool|Tap to click|||||Touchpad: a tap counts as a click|hyprctl reload||1|"
-  "input.disableWhileTyping|Input|$HOME/.config/hypr/input.lua|disable_while_typing|lua-bool|Ignore touchpad while typing|||||Stops the cursor jumping mid-sentence|hyprctl reload||1|"
+  "input.repeatRate|Input|$HOME/.config/hypr/input.lua|input:repeat_rate|lua-int|Key repeat rate|/s|1|100||Characters a held key sends per second|hyprctl reload||1|"
+  "input.repeatDelay|Input|$HOME/.config/hypr/input.lua|input:repeat_delay|lua-int|Key repeat delay|ms|100|2000||How long a key is held before it starts repeating|hyprctl reload||1|"
+  "input.kbLayout|Input|$HOME/.config/hypr/input.lua|input:kb_layout|lua-enum|Keyboard layout||||es,us,gb,de,fr,it,pt,latam|X11 layout code for the keyboard|hyprctl reload||1|"
+  "input.numlock|Input|$HOME/.config/hypr/input.lua|input:numlock_by_default|lua-bool|Num lock at login|||||Turn the numeric keypad on when the session starts|hyprctl reload||1|"
+  "input.naturalScroll|Input|$HOME/.config/hypr/input.lua|input:touchpad:natural_scroll|lua-bool|Natural scrolling|||||Touchpad: two fingers down moves the page up|hyprctl reload||1|"
+  "input.tapToClick|Input|$HOME/.config/hypr/input.lua|input:touchpad:tap_to_click|lua-bool|Tap to click|||||Touchpad: a tap counts as a click|hyprctl reload||1|"
+  "input.disableWhileTyping|Input|$HOME/.config/hypr/input.lua|input:touchpad:disable_while_typing|lua-bool|Ignore touchpad while typing|||||Stops the cursor jumping mid-sentence|hyprctl reload||1|"
   # ── Lid & sleep — /etc/systemd/logind.conf.d/, root-owned, laptop only.
   # These are the three questions a laptop actually asks. logind's own built-in
   # default for all three is 'suspend'; the fallback field records that so the
@@ -2122,6 +2263,36 @@ lua_set() {
   mv "$tmp" "$file"
 }
 
+# lua_key_of <option> — the Lua key of a registry path: "input:touchpad:
+# natural_scroll" is the line `natural_scroll = …` in the file.
+lua_key_of() { printf '%s\n' "${1##*:}"; }
+
+# hypr_in_force <option> — the value Hyprland is using now, as the file would
+# spell it ("40", "true", "es"). Fails when there is no Hyprland to ask.
+# `has()`, never `//`: jq's alternative operator treats false as missing, so a
+# switch that is off would read as unknown.
+hypr_in_force() {
+  command -v hyprctl >/dev/null 2>&1 || return 1
+  local out
+  out=$(timeout 2 hyprctl getoption "$1" -j 2>/dev/null) || return 1
+  jq -er 'if has("int") then .int elif has("float") then .float
+          elif has("bool") then .bool elif has("str") then .str else empty end
+          | tostring' <<<"$out" 2>/dev/null
+}
+
+# hypr_overrider <key> <own-file> — the tracked Hyprland file, other than the
+# setting's own, with an uncommented `<key> =` line. Found modules are asked
+# first: OmaSettings' omasettings.lua is loaded last, which is why it wins.
+hypr_overrider() {
+  local key="$1" own="$2" entry src
+  for entry in ${AUTO_MANIFEST[@]+"${AUTO_MANIFEST[@]}"} "${TRACKED[@]}"; do
+    src="${entry%%:*}"
+    [[ "$src" == "$HOME/.config/hypr/"*.lua && "$src" != "$own" && -f "$src" ]] || continue
+    [[ "$(lua_key_hits "$src" "$key")" -ge 1 ]] && { printf '%s\n' "${entry##*:}"; return 0; }
+  done
+  return 1
+}
+
 # backup_before_write <file> — the .bak.<epoch> every write owes the user,
 # minus the litter. Editing one setting is a small, repeated act (dragging the
 # density slider is a dozen writes), and one backup per write buried the real
@@ -2182,7 +2353,7 @@ get_setting_value() {
       printf '%s\n' "$raw"
       ;;
     lua-int|lua-bool|lua-enum)
-      map_lookup "$file" lua "$path"
+      map_lookup "$file" lua "$(lua_key_of "$path")"
       ;;
     *)
       [[ -f "$file" ]] || return 1
@@ -2260,12 +2431,12 @@ set_setting_value() {
     lua-int|lua-bool)
       [[ -f "$file" ]] || { echo "file not found: $file" >&2; return 1; }
       backup_before_write "$file"
-      lua_set "$file" "$path" "$value" || { echo "$1: '$path' is missing or ambiguous in $file — left untouched" >&2; return 1; }
+      lua_set "$file" "$(lua_key_of "$path")" "$value" || { echo "$1: '$path' is missing or ambiguous in $file — left untouched" >&2; return 1; }
       ;;
     lua-enum)
       [[ -f "$file" ]] || { echo "file not found: $file" >&2; return 1; }
       backup_before_write "$file"
-      lua_set "$file" "$path" "\"$value\"" || { echo "$1: '$path' is missing or ambiguous in $file — left untouched" >&2; return 1; }
+      lua_set "$file" "$(lua_key_of "$path")" "\"$value\"" || { echo "$1: '$path' is missing or ambiguous in $file — left untouched" >&2; return 1; }
       ;;
     number|bool)
       [[ -f "$file" ]] || { echo "file not found: $file" >&2; return 1; }
@@ -2507,7 +2678,7 @@ read_setting_from() {
       raw=$(map_lookup "$file" toml "$path") || return 1
       [[ -n "$raw" ]] && printf '%s\n' "$raw" || return 1 ;;
     lua-int|lua-bool|lua-enum)
-      map_lookup "$file" lua "$path" ;;
+      map_lookup "$file" lua "$(lua_key_of "$path")" ;;
     number|bool|enum)
       raw=$(map_lookup "$file" json "$path") || return 1
       [[ "$raw" == "null" ]] && return 1
@@ -2580,6 +2751,7 @@ build_settings_json() {
   # spawns per build were most of the time that took.
   local entry id group file path type label unit min max options hint value available fallback implicit
   local scale disp dvalue dmin dmax dstep vtext defval deftext repoval repotext canrd canrr numeric boolean
+  local lnotice inforce by
   {
   local laptop=1; is_laptop || laptop=0
   local -a F
@@ -2641,10 +2813,28 @@ build_settings_json() {
     [[ -n "$defval"  && "$deftext"  != "$vtext" && "$available" == true ]] && canrd=true
     [[ -n "$repoval" && "$repotext" != "$vtext" && "$available" == true ]] && canrr=true
 
-    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+    # Hyprland is asked, not the file. These controls write input.lua, and a
+    # module loaded after it that sets the same key wins: OmaSettings keeps
+    # its Keyboard and Mouse pages in hypr/omasettings.lua, loaded last. The
+    # row then showed what the file says while the session did something else.
+    # Said only when Hyprland answers, and only when the two differ.
+    lnotice=""
+    if [[ "$type" == lua-* && "$available" == true ]] && inforce=$(hypr_in_force "$path"); then
+      if [[ "$type" == lua-bool ]]; then
+        [[ "$inforce" == 1 ]] && inforce=true
+        [[ "$inforce" == 0 ]] && inforce=false
+      fi
+      if [[ "$inforce" != "$value" ]]; then
+        by=$(hypr_overrider "$(lua_key_of "$path")" "$file") || by="a file loaded later"
+        lnotice="In force: $(human_value "$type" "$unit" "$scale" "$disp" "$inforce") — set by $by."
+      fi
+    fi
+
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
       "$id" "$group" "$label" "$type" "$unit" "$min" "$max" "$options" "$hint" "$file" \
       "$available" "$implicit" "$value" "$scale" "$disp" "$dvalue" "$dmin" "$dmax" "$dstep" \
-      "$vtext" "$defval" "$deftext" "$repoval" "$repotext" "$canrd" "$canrr" "$numeric" "$boolean"
+      "$vtext" "$defval" "$deftext" "$repoval" "$repotext" "$canrd" "$canrr" "$numeric" "$boolean" \
+      "$lnotice"
   done
   } | jq -Rsc '
     def num: if . == "" then null else (tonumber? // null) end;
@@ -2664,7 +2854,8 @@ build_settings_json() {
       value_text: .[19],
       default_value: .[20], default_text: .[21],
       repo_value: .[22], repo_text: .[23],
-      can_revert_default: (.[24]|flag), can_revert_repo: (.[25]|flag)
+      can_revert_default: (.[24]|flag), can_revert_repo: (.[25]|flag),
+      lua_notice: (.[28] // "")
     })' | jq -c --arg lidblock "$(lid_blocked_by)" '
     # A second pass, because a notice is about how settings sit RELATIVE to each
     # other and the per-setting record cannot see its siblings.
@@ -2693,7 +2884,10 @@ build_settings_json() {
           # in 91 and lost "does nothing" to the ellipsis, which was the half
           # worth reading.
           then "Overridden by \($lidblock) — the lid does nothing."
-        else "" end) })'
+        # The same statement about Hyprland: what the session uses is not what
+        # the file says (see lnotice above).
+        elif .lua_notice != "" then .lua_notice
+        else "" end) } | del(.lua_notice))'
 }
 
 # lid_blocked_by — who, if anyone, is holding a `block` inhibitor on the lid
@@ -2843,43 +3037,17 @@ build_configs_json() {
     # in the list, so the day you create the file it appears; and one the repo
     # HAS a copy of always shows, because "it was here and now it isn't" is
     # exactly the kind of thing a backup tool must not hide.
+    # Found automatically (another plugin's config, a module hyprland.lua
+    # loads) is neither shipped nor the user's: no Untrack, and no ghost row.
     source=manifest
-    is_user_entry "$rel" && source=user
-    if [[ "$source" == manifest && "$exists" == false && "$saved" == false ]]; then continue; fi
+    if is_user_entry "$rel"; then source=user
+    elif is_auto_entry "$rel"; then source=auto; label="${AUTO_LABEL[$rel]}"; fi
+    if [[ "$source" != user && "$exists" == false && "$saved" == false ]]; then continue; fi
     printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
       "$rel" "$label" "$src" "$category" "$exists" "$is_default" "$has_default" \
       "$config_rel" "$dirty" "$unpushed" "$sync_state" "$saved" "$synced" "$source" "$scope" "$unsaved" \
       "$is_dir" "$nfiles" "$incoming"
   done
-  # Auto-detected entries from other plugins. No Omarchy default ships for
-  # these, so they can never read as "default".
-  local psrc prel pname
-  while IFS=$'\t' read -r psrc prel pname; do
-    [[ -n "$psrc" ]] || continue
-    saved=false
-    [[ -f "$CONFIG_DIR/$prel" ]] && saved=true
-    unsaved=false
-    if [[ "$saved" == false ]] || ! cmp -s "$psrc" "$CONFIG_DIR/$prel" 2>/dev/null; then unsaved=true; fi
-    dirty=false
-    path_dirty "config/$prel" && dirty=true
-    [[ "$dirty" == true ]] && unsaved=true
-    unpushed=false
-    path_unpushed "config/$prel" && unpushed=true
-    incoming=false
-    [[ "$unsaved" == true ]] && is_incoming_rel "$prel" && incoming=true
-    synced=true
-    is_excluded "$prel" && synced=false
-    if [[ "$synced" == false ]]; then sync_state="off"
-    elif [[ "$incoming" == true ]]; then sync_state="incoming"
-    elif [[ "$unsaved" == true ]]; then sync_state="unsaved"
-    elif [[ "$unpushed" == true ]]; then sync_state="unpushed"
-    else sync_state="saved"
-    fi
-    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
-      "$prel" "$pname" "$psrc" "plugins" "true" "false" "false" \
-      "omarchy/${psrc##*/}" "$dirty" "$unpushed" "$sync_state" "$saved" "$synced" "auto" "$(scope_for "$prel")" "$unsaved" \
-      "false" "0" "$incoming"
-  done < <(discover_plugin_entries)
   } | jq -Rsc '
     def flag: . == "true";
     split("\n") | map(select(length > 0) | split("\u001f") | {
@@ -3151,16 +3319,13 @@ core_status() {
 # resolve_manifest_src <repo-relative-id> — the real file on this machine that
 # a tracked id refers to ("hypr/input.lua" -> ~/.config/hypr/input.lua). Lives
 # here rather than in the CLI so the CLI, the diff view and the panel all agree
-# on one answer; auto-detected plugin configs resolve too.
+# on one answer. Auto-detected entries are in TRACKED like any other.
 resolve_manifest_src() {
-  local id="$1" entry rel psrc prel _pname
+  local id="$1" entry rel
   for entry in "${TRACKED[@]}" "${TRACKED_SECRETS[@]}"; do
     rel="${entry##*:}"
     [[ "$rel" == "$id" ]] && { printf '%s\n' "${entry%%:*}"; return 0; }
   done
-  while IFS=$'\t' read -r psrc prel _pname; do
-    [[ "$prel" == "$id" ]] && { printf '%s\n' "$psrc"; return 0; }
-  done < <(discover_plugin_entries)
   return 1
 }
 
@@ -3411,6 +3576,42 @@ cloned_plugins() {
   # not a clone "failed" — and under the CLI's `set -e` that killed doctor in
   # the middle, silently, still exiting 0 through a pipe. Same shape as the
   # `grep -q` under pipefail trap: an incidental status read as an error.
+  return 0
+}
+
+# edited_plugins — "id<TAB>dir<TAB>uncommitted<TAB>local-commits" for every
+# installed plugin whose checkout holds work its origin does not have.
+#
+# The same hole as a clone, behind an origin that looks fine: install-plugin on
+# the other machine fetches the ORIGIN's code, so an edit made in place, or a
+# commit never pushed, does not come back. Omaplug sorts plugins the same way
+# before it offers an update ("local changes").
+#
+# Offline on purpose: upstream is what the last fetch knew, the remote refs and
+# FETCH_HEAD both. Doctor has no business touching the network for every plugin.
+# `--no-optional-locks`: the shell watches every plugin directory for writes
+# and reloads the plugin on one, and a plain `git status` can rewrite the index.
+# A symlinked plugin is a development checkout, the project's business rather
+# than the backup's, and Omaplug treats it the same way.
+edited_plugins() {
+  local pmf pdir pid dirty ahead
+  local -a upstream
+  for pmf in "$HOME/.config/omarchy/plugins"/*/manifest.json; do
+    [[ -f "$pmf" ]] || continue
+    pdir="${pmf%/manifest.json}"
+    [[ -L "$pdir" || ! -d "$pdir/.git" ]] && continue
+    git -C "$pdir" remote get-url origin >/dev/null 2>&1 || continue
+    pid=$(jq -r '.id // empty' "$pmf" 2>/dev/null)
+    [[ -n "$pid" ]] || continue
+    dirty=$(git --no-optional-locks -C "$pdir" status --porcelain --untracked-files=normal 2>/dev/null | grep -c . || true)
+    # FETCH_HEAD counts as upstream. `omarchy plugin update` fetches `origin
+    # HEAD` into FETCH_HEAD and fast-forwards to it, and never moves
+    # refs/remotes: a plugin updated that way looked 36 commits ahead.
+    upstream=(--remotes)
+    git -C "$pdir" rev-parse -q --verify FETCH_HEAD >/dev/null 2>&1 && upstream+=(FETCH_HEAD)
+    ahead=$(git -C "$pdir" rev-list --count HEAD --not "${upstream[@]}" 2>/dev/null || echo 0)
+    (( dirty > 0 || ahead > 0 )) && printf '%s\t%s\t%s\t%s\n' "$pid" "$pdir" "$dirty" "$ahead"
+  done
   return 0
 }
 
@@ -3665,6 +3866,8 @@ elif [[ "${1:-}" == "profile-get" ]]; then current_profile
 elif [[ "${1:-}" == "profile-list" ]]; then list_profiles
 elif [[ "${1:-}" == "local-only-plugins" ]]; then local_only_plugins
 elif [[ "${1:-}" == "cloned-plugins" ]]; then cloned_plugins
+elif [[ "${1:-}" == "edited-plugins" ]]; then edited_plugins
+elif [[ "${1:-}" == "hypr-unresolved" ]]; then unresolved_hypr_modules
 elif [[ "${1:-}" == "repo-path" ]]; then repo_copy_for_rel "${2:-}"
 elif [[ "${1:-}" == "local-only-themes" ]]; then local_only_themes
 elif [[ "${1:-}" == "track" ]]; then shift; core_track "$@"

@@ -1839,8 +1839,10 @@ Panel {
         icon: root.icPlus
         title: "Add more files"
         // "(a)" is the key that jumps here, and this is the one place a person
-        // reading the list would look for it.
-        subtitle: "Config on this machine that nothing is backing up yet  (a)"
+        // reading the list would look for it. It goes last, so it is the first
+        // thing an elided subtitle loses: 58 characters were cut on a capture,
+        // and test-usability.sh holds every literal subtitle to 57.
+        subtitle: "Config on this machine not backed up yet  (a)"
         countText: String(sc.items.length)
         statusText: "not tracked"
         statusHighlight: false

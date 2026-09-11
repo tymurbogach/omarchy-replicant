@@ -69,4 +69,14 @@ off_card=$(grep -oE 'label: "[^"]+"; value: String\(root\.countOff\)' "$PANEL" |
 check_contains "the row calls it off"        "off" "$off_row"
 check_contains "…and so does the stat card"  "off" "$off_card"
 
+section "a card's subtitle fits its card"
+# A card header elides its subtitle, and the end goes first. The key check above
+# passed while the panel showed "…backing up yet  (…": the "(a)" was in the
+# file and not on the screen. Measured on a capture: 57 characters fit, 58 did
+# not. Bound subtitles are the categories', which test-core.sh measures.
+while IFS= read -r sub; do
+  [[ -n "$sub" ]] || continue
+  check_true "fits in 57: ${sub:0:30}…" test "${#sub}" -le 57
+done < <(grep -oE 'subtitle: "[^"]*"' "$PANEL" | sed -E 's/subtitle: "(.*)"/\1/')
+
 summary

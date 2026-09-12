@@ -170,6 +170,20 @@ if (( n >= 1 && n <= 3 )); then t_ok "backups are capped per file (kept $n)"; el
 check "…and the newest survives"    "140" "$(get_setting_value idle.lock)"
 check "…without touching other files' backups" "1" \
   "$(find "$TMP/.local" -name 'editor.bak.*' | wc -l)"
+# A restore leaves its own <file>.bak.<epoch>, and that backup is the undo for
+# the restore. The cap counted it with the setting's own backups, so a few
+# edits to the setting after a restore deleted it. A cap of 1 makes the old
+# behaviour fail every time instead of only sometimes.
+restore_bak="$TMP/.config/omarchy/shell.json.bak.1000000000"
+cp "$TMP/.config/omarchy/shell.json" "$restore_bak"
+touch -d '2020-01-01' "$restore_bak"
+BACKUPS_KEPT=1
+for v in 150 160; do set_setting_value idle.lock "$v" >/dev/null 2>&1; done
+BACKUPS_KEPT=3
+check_true "a restore's backup survives later setting edits" test -f "$restore_bak"
+n=$(find "$TMP/.config/omarchy" -name 'shell.json.bak.*' ! -name '*.1000000000' | wc -l)
+check "…while the setting's own backups stay capped" "1" "$n"
+rm -f "$restore_bak"
 check "JSON is still parseable"       "0" "$(jq empty "$TMP/.config/omarchy/shell.json" >/dev/null 2>&1; echo $?)"
 check "TOML has no duplicate sections" "1" "$(grep -c '^\[bar\]' "$TMP/.config/omarchy/shell.toml")"
 

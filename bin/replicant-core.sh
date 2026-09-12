@@ -2307,14 +2307,28 @@ hypr_overrider() {
 # three most recent per file: enough to walk back a bad afternoon, few enough
 # that `ls ~/.config/omarchy` still reads.
 BACKUPS_KEPT=${REPLICANT_BACKUPS_KEPT:-3}
+# The backups that this function made, one path per line. Pruning uses this
+# list and never the glob alone: `<file>.bak.*` also matches the backup that a
+# restore made (install_file) and the ones that `omarchy refresh config` makes.
+# The glob made three edits to a setting after a restore delete the undo for
+# that restore.
+SETTING_BACKUPS_FILE="$REPLICANT_HOME/setting-backups"
 backup_before_write() {
-  local file="$1" old
+  local file="$1" b old kept
   [[ -f "$file" ]] || return 0
-  cp -a "$file" "$file.bak.$(date +%s)" || return 1
+  b="$file.bak.$(date +%s)"
+  cp -a "$file" "$b" || return 1
+  mkdir -p "$REPLICANT_HOME" 2>/dev/null || return 0
+  printf '%s\n' "$b" >> "$SETTING_BACKUPS_FILE"
   # shellcheck disable=SC2012  # names are ours: <file>.bak.<epoch>, no spaces
   while read -r old; do
     [[ -n "$old" ]] && rm -f -- "$old"
-  done < <(ls -1t -- "$file".bak.* 2>/dev/null | tail -n +$((BACKUPS_KEPT + 1)))
+  done < <(ls -1t -- "$file".bak.* 2>/dev/null | grep -Fxf "$SETTING_BACKUPS_FILE" | tail -n +$((BACKUPS_KEPT + 1)))
+  # Forget what no longer exists, so that the list cannot grow without end.
+  kept=$(sort -u "$SETTING_BACKUPS_FILE" | while read -r old; do
+           if [[ -e "$old" ]]; then printf '%s\n' "$old"; fi
+         done)
+  printf '%s\n' "$kept" | sed '/^$/d' > "$SETTING_BACKUPS_FILE"
 }
 
 # ── read / write one setting ────────────────────────────────────────────────

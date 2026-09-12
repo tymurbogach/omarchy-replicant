@@ -7,7 +7,7 @@
 #   ... | bin/scan-secrets.sh --stdin PATH  scans stdin, labeled as PATH
 #
 # Exits 1 if it finds anything. secrets/ is never scanned: real credentials go
-# there by explicit design (CLAUDE.md § Rule 0).
+# there by design.
 
 set -uo pipefail
 

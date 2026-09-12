@@ -1,5 +1,5 @@
-# Packages that show up in the drift but are NOT a decision you made, so
-# bin/install-paquetes.sh shouldn't try to install them. One name per line.
+# Packages that show up in the drift but are NOT a decision you made, so a
+# reinstall from pacman-delta.txt should skip them. One name per line.
 #
 # Deliberately conservative criterion: only ignore what can be justified.
 # A false positive in the delta is cheap (a redundant `--needed` that does

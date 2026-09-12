@@ -1,8 +1,7 @@
 #!/bin/bash
-# replicant-core.sh — core logic for the omarchy-replicant plugin (savegame pattern
-# ported from ~/omarchy_thinkpad). Doesn't reinvent: MANIFEST/SECRETS_MANIFEST +
-# install-with-backup + scan-secrets + backup/savegame/restore.
-# Located at: ~/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/bin/
+# replicant-core.sh: the logic of the omarchy-replicant plugin. It holds the
+# tracked lists (MANIFEST, SECRETS_MANIFEST), install with backup, the secret
+# scan, and backup, savegame and restore. The CLI and the panel call it.
 set -euo pipefail
 
 REAL_CORE="$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
@@ -76,7 +75,6 @@ MANIFEST=(
   "$HOME/.config/git/config:git/config"
   "$HOME/.claude/settings.json:claude/settings.json"
   "$HOME/.claude/settings.local.json:claude/settings.local.json"
-  "$HOME/.claude/.mcp.json:claude/mcp.json"
   "$HOME/.config/Code/User/settings.json:vscode/settings.json"
   "$HOME/.config/mise/config.toml:mise/config.toml"
   "$HOME/.config/nvim/:nvim/"
@@ -149,6 +147,30 @@ LEGACY_PERSONAL_SECRETS=(
   "$HOME/Projects/portfolio/.env:env/portfolio.env"
   "$HOME/Projects/lazytripz/backend/.env:env/lazytrip-backend.env"
 )
+
+# Entries that an earlier release shipped and this one does not, because they
+# are not what every Omarchy machine has. If the repo holds a copy, the entry
+# moves into the user's own list once. Without that step, the prune pass would
+# delete the copy on the next save. A machine that only has the file does not
+# start to track it.
+RETIRED_SHIPPED=(
+  "$HOME/.claude/.mcp.json:claude/mcp.json"
+)
+
+migrate_retired_shipped() {
+  [[ -f "$USER_TRACK_FILE" ]] || return 0
+  local entry src rel moved=0
+  for entry in "${RETIRED_SHIPPED[@]}"; do
+    src="${entry%%:*}"; rel="${entry##*:}"
+    is_user_entry "$rel" && continue
+    [[ -e "$(repo_path_for "$rel")" ]] || continue
+    track_line_for "$src" "$rel" config >> "$USER_TRACK_FILE"
+    moved=$((moved + 1))
+  done
+  (( moved )) || return 0
+  load_user_manifest
+  echo "  · $(plural "$moved" entry entries) that the plugin no longer ships moved into your .replicant-track" >&2
+}
 
 # ─── THE USER'S OWN LIST ────────────────────────────────────────────────────
 # Everything above ships with the plugin. Everything a particular person wants
@@ -1395,13 +1417,10 @@ ensure_repo_layout() {
   done
   ensure_scope_file
   ensure_track_file
+  migrate_retired_shipped
   record_repo_version
   mkdir -p "$REPO_DIR/profiles/$(current_profile)/config" 2>/dev/null || true
   install -d -m 700 "$SECRETS_DIR" 2>/dev/null || mkdir -p "$SECRETS_DIR"
-  # templates placeholder
-  if [[ ! -f "$TEMPLATES_DIR/60-secrets.conf.example" && -f "$HOME/omarchy_thinkpad/templates/60-secrets.conf.example" ]]; then
-    cp -a "$HOME/omarchy_thinkpad/templates/"*.example "$TEMPLATES_DIR/" 2>/dev/null || true
-  fi
   # The hook is kept in step with the plugin, like the scanner below. It was
   # written once, so a repo made by an old release kept that hook forever.
   mkdir -p "$GITHOOKS_DIR"
@@ -1424,16 +1443,8 @@ ensure_repo_layout() {
         echo "  · updating the repo's secret scanner to this version's" >&2
       cp -a "$PLUGIN_DIR/bin/scan-secrets.sh" "$REPO_DIR/bin/scan-secrets.sh"
     fi
-  elif [[ ! -f "$REPO_DIR/bin/scan-secrets.sh" && -f "$HOME/omarchy_thinkpad/bin/scan-secrets.sh" ]]; then
-    mkdir -p "$REPO_DIR/bin"
-    cp -a "$HOME/omarchy_thinkpad/bin/scan-secrets.sh" "$REPO_DIR/bin/scan-secrets.sh"
   fi
   chmod +x "$REPO_DIR/bin/scan-secrets.sh" 2>/dev/null || true
-  # pacman-delta-ignore
-  if [[ ! -f "$REPO_DIR/bin/pacman-delta-ignore" && -f "$HOME/omarchy_thinkpad/bin/pacman-delta-ignore" ]]; then
-    mkdir -p "$REPO_DIR/bin"
-    cp -a "$HOME/omarchy_thinkpad/bin/pacman-delta-ignore" "$REPO_DIR/bin/pacman-delta-ignore"
-  fi
   # .gitignore — savegame style (state/ is generated, .bak.* ignored, secrets/ tracked)
   if [[ ! -f "$REPO_DIR/.gitignore" ]]; then
     cat >"$REPO_DIR/.gitignore" <<'GI'
@@ -1584,21 +1595,16 @@ core_backup() {
     rel="${entry##*:}"
     dst="$SECRETS_DIR/$rel"
     is_excluded "$rel" && continue
-    if [[ -f $src ]]; then
+    if [[ -f $src && ! -r $src ]]; then
+      # Readable by root only, which is common under /etc. The copy failed
+      # under set -e and ended the whole backup. Name it and go on.
+      echo "  · ${src/#$HOME/\~} is readable by root only. To save it: sudo install -D -m600 -o $USER -g $USER $src $dst" >&2
+    elif [[ -f $src ]]; then
       install -d -m 700 "$(dirname "$dst")" 2>/dev/null || mkdir -p "$(dirname "$dst")"
       install -m 600 "$src" "$dst"
       ((scopied++)) || true
     else
       echo "  · missing: ${src/#$HOME/\~}" >&2
-    fi
-  done
-  # CIFS credentials (root:600, best-effort)
-  install -d -m 700 "$SECRETS_DIR/samba" 2>/dev/null || true
-  for src in /etc/samba/credentials-pi /etc/samba/credentials-nas; do
-    dst="$SECRETS_DIR/samba/$(basename "$src")"
-    if [[ -r $src ]]; then install -m 600 "$src" "$dst" 2>/dev/null || true
-    elif [[ -e $src && ! -f $dst ]]; then
-      echo "  · $src needs sudo: sudo install -m600 -o $USER -g $USER $src $dst" >&2
     fi
   done
   echo "  $(plural "$scopied" secret) copied" >&2

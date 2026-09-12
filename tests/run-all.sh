@@ -113,6 +113,18 @@ done
 
 if (( qml_problem == 0 )); then printf '  \033[32m✓\033[0m none present\n'; else failed=$((failed+1)); fi
 
+# Shipped code names only what any Omarchy machine plausibly has. One machine's
+# NAS credentials, a private repo on the author's disk and a script name in
+# Spanish reached the plugin once, and nothing noticed.
+banner "no personal data in shipped code"
+# A /home that follows a letter is a repo path such as config/home/bashrc.
+if grep -nE 'omarchy_thinkpad|credentials-(pi|nas)|install-paquetes|(^|[^A-Za-z0-9_.])/home/[a-z]' \
+     "$ROOT"/bin/* "$ROOT"/*.qml "$ROOT/manifest.json"; then
+  printf '  \033[31m✗\033[0m a personal path or name is in shipped code\n'; failed=$((failed+1))
+else
+  printf '  \033[32m✓\033[0m none present\n'
+fi
+
 # The repo must be clean by its own scanner. A test fixture written out whole is
 # a real credential as far as every scanner in the chain is concerned: GitHub's
 # push protection rejected the commit that first added these, correctly.

@@ -1,7 +1,7 @@
 #!/bin/bash
-# omarchy-replicant — savegame for Omarchy 4 (ported from omarchy_thinkpad)
-# Always private, everything (config+secrets+state), fixed MANIFEST
-# The panel anchored under the bar icon drives this CLI via status --json
+# omarchy-replicant: back up, restore and replicate an Omarchy 4 setup through
+# a private GitHub repo that holds config, secrets and state. The panel under
+# the bar icon drives this CLI and reads its state from `status --json`.
 set -euo pipefail
 
 REAL_BIN="$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
@@ -231,7 +231,7 @@ cmd_savegame() {
 
   if [[ -n $pending ]]; then
     echo "── Uncommitted changes ──" >&2
-    echo "One commit per change, explaining WHY (omarchy_thinkpad Rules 2 and 3)." >&2; echo >&2
+    echo "Write one commit per change, and say WHY in it." >&2; echo >&2
     while read -r state path; do printf '  %s  %s\n' "$state" "$path" >&2; done <<<"$pending"; echo >&2
     for path in $(git_repo diff --name-only -- . ':(exclude)state/' ':(exclude)secrets/' 2>/dev/null); do
       echo "── $path ──" >&2; git_repo diff --unified=1 -- "$path" 2>/dev/null | sed -n '5,120p' | sed 's/^/    /' >&2; echo >&2

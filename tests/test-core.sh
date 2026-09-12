@@ -1293,6 +1293,37 @@ check "a hook restores runnable" "755" "$(restore_mode_for omarchy/hooks/theme-s
 check "a template is filed under Appearance" "appearance" "$(category_for_rel omarchy/themed/alacritty.toml.tpl)"
 rm -rf "$HOME/.config/omarchy/hooks" "$HOME/.config/omarchy/themed"
 
+section "an entry the plugin stops shipping stays tracked where it was saved"
+# The shipped list names only what every Omarchy machine has, and
+# ~/.claude/.mcp.json is not that. A repo that saved it keeps it: it moves into
+# the user's own list instead of being pruned on the next save.
+mkdir -p "$HOME/.claude"; printf '{}\n' > "$HOME/.claude/.mcp.json"
+check "it is no longer in the shipped list" "0" \
+  "$(printf '%s\n' "${MANIFEST[@]}" | grep -c ':claude/mcp.json$' || true)"
+ensure_repo_layout >/dev/null 2>&1
+check "a machine that only has the file does not start tracking it" "0" \
+  "$(grep -c 'claude/.mcp.json' "$USER_TRACK_FILE" || true)"
+mcp_copy=$(repo_path_for claude/mcp.json); mkdir -p "$(dirname "$mcp_copy")"
+cp "$HOME/.claude/.mcp.json" "$mcp_copy"
+core_backup >/dev/null 2>&1
+check_true "a repo that saved it keeps its copy" test -f "$mcp_copy"
+check_contains "…because it moved into the user's list" ".claude/.mcp.json" "$(cat "$USER_TRACK_FILE")"
+core_untrack claude/mcp.json >/dev/null 2>&1; rm -f "$HOME/.claude/.mcp.json"
+
+section "a secret this user cannot read is named, not a failed backup"
+# A secret tracked under /etc is often readable by root only. Its copy failed
+# under set -e and ended the whole backup. It runs in a subshell with set -e,
+# as the CLI does. Root can read anything, so there is nothing to test as root.
+if [[ $(id -u) != 0 ]]; then
+  printf 'user=me\n' > "$TMP/unreadable.cred"; chmod 000 "$TMP/unreadable.cred"
+  core_track "$TMP/unreadable.cred" misc/unreadable.cred --secret >/dev/null 2>&1
+  rc=0; out=$(bash -c 'source "$1" 2>/dev/null; core_backup' _ "$CORE" 2>&1) || rc=$?
+  check "the backup still finishes" "0" "$rc"
+  check_contains "…and names the command that copies it" "sudo install" "$out"
+  core_untrack misc/unreadable.cred >/dev/null 2>&1
+  chmod 600 "$TMP/unreadable.cred"; rm -f "$TMP/unreadable.cred"
+fi
+
 section "a plugin with work its origin does not have"
 # Omaplug sorts plugins by this before it offers an update. For a backup it is
 # the same hole as a clone: install-plugin elsewhere fetches the origin's code.

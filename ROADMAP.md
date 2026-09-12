@@ -68,7 +68,7 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
 
 ## P1: gaps confirmed by reading
 
-- [ ] **C1. `revert` does not commit a profile-scoped setting.**
+- [x] **C1. `revert` does not commit a profile-scoped setting.**
   `revert` stages only `config/` (`bin/omarchy-replicant:980`). If the file of the setting is
   profile-scoped, the revert is never committed. The README example
   `scope hypr/input.lua profile` causes this. `set` commits every pending file together with the
@@ -76,7 +76,7 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
   - Fix: make `revert` commit through `savegame -m`, as `set` does. Then both commands follow one rule.
   - Test: the revert of a profile-scoped `input.lua` lands in a commit.
 
-- [ ] **C2. Setting edits delete restore backups.**
+- [x] **C2. Setting edits delete restore backups.**
   `backup_before_write` keeps three `<file>.bak.*` files and deletes the others
   (`bin/replicant-core.sh:2303-2311`). The glob also matches the backup that `install_file` makes
   during a restore, and the backups that `omarchy refresh config` makes. After a restore, three edits
@@ -85,38 +85,38 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
     `$REPLICANT_HOME` and prune from that list.
   - Test: restore a file and change its setting four times. `undo` still finds the restore backup.
 
-- [ ] **C3. The secret scan at backup time skips profile-scoped files.**
+- [x] **C3. The secret scan at backup time skips profile-scoped files.**
   `core_backup` scans only `config/` and `state/<machine>/` (`bin/replicant-core.sh:1734`).
   The pre-commit hook catches the file later, but only if the hook runs (see C4).
   - Fix: also scan `profiles/<profile>/config/`.
   - Test: put a token in a profile-scoped file. `backup` fails.
 
-- [ ] **C4. The pre-commit hook fails open and is never updated.**
+- [x] **C4. The pre-commit hook fails open and is never updated.**
   The hook exits 0 when it cannot find the scanner. `ensure_repo_layout` writes the hook once
   (`bin/replicant-core.sh:1378`) and never again. The scanner beside it is kept up to date.
   - Fix: refresh the hook the same way as `scan-secrets.sh`. If the scanner is missing, block the commit.
   - Test: the next `backup` replaces an old hook. A missing scanner blocks a commit.
 
-- [ ] **C5. `clone` ignores its own URL check.**
+- [x] **C5. `clone` ignores its own URL check.**
   `command -v omarchy-git-url-check && omarchy-git-url-check "$url" || true`
   (`bin/omarchy-replicant:466`) continues when the check refuses the URL.
   - Fix: stop when the check fails.
   - Test: `clone 'ext::sh -c true'` exits non-zero and creates no directory.
 
-- [ ] **C6. The System area describes an action that does not occur.**
+- [x] **C6. The System area describes an action that does not occur.**
   Its method text is "Copied back with sudo, then systemctl daemon-reload"
   (`bin/replicant-core.sh:338`). `restore` never writes outside `$HOME`. It prints a `sudo`
   command (`bin/omarchy-replicant:610-618`), so `daemon-reload` never runs.
   - Fix now: make the text say what occurs. After B1 and B2: write through `root_apply`.
   - Test: the method text of each category matches what `cmd_restore` does for it.
 
-- [ ] **C7. Some commands that write do not take the repo lock.**
+- [x] **C7. Some commands that write do not take the repo lock.**
   The lock list (`bin/omarchy-replicant:1686`) does not include `purge` (with `--repo` it deletes
   the repo), `undo`, `backups --prune`, `install-theme` or `install-plugin`.
   - Fix: add them.
   - Test: while the lock is held, each command waits or fails with the lock message.
 
-- [ ] **C8. Personal data in shipped code.**
+- [x] **C8. Personal data in shipped code.**
   The project rule is that shipped code names only what any Omarchy machine plausibly has.
   - `/etc/samba/credentials-pi` and `/etc/samba/credentials-nas` (`bin/replicant-core.sh:1588`).
   - Copies from `~/omarchy_thinkpad` (`bin/replicant-core.sh:1373-1427`).
@@ -131,13 +131,13 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
     `run-all.sh`. It fails on `omarchy_thinkpad`, `credentials-pi` and `/home/`.
   - Test: plant each name once and confirm that the guard fires.
 
-- [ ] **C9. The list of keyboard layouts is fixed.**
+- [x] **C9. The list of keyboard layouts is fixed.**
   `input.kbLayout` offers `es,us,gb,de,fr,it,pt,latam` (`bin/replicant-core.sh:2072`). If a user
   has another layout, or two layouts (`us,ru`), the control cannot show or keep the value.
   - Fix: get the options from `localectl list-x11-keymap-layouts`, and always include the current value.
   - Test: a current value that is not in the list is available and survives a write and a read.
 
-- [ ] **C10. Follow-ups from 0.8.0.**
+- [x] **C10. Follow-ups from 0.8.0.**
   - `doctor` reports an installed plugin as edited when its files match a pushed commit but its
     HEAD is behind (`edited_plugins` works offline). Compare the working tree with the upstream
     tree first.
@@ -221,6 +221,11 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
 - [ ] **S8. Let a broken core fail loudly.**
   Each `source "$CORE" 2>/dev/null || true` hides a syntax error or a missing file. The next line
   then fails with a message that points to the wrong place.
+
+- [ ] **S9. Show the marketplace facts in the panel before an install.**
+  `install-plugin <id> --check` prints them (C10), but the Install button in the panel still asks
+  for consent without them. Run `--check` when the button is pressed, and put its output in the
+  confirmation. Take a screenshot after the change (hard rule 4).
 
 ## P3: docs and process
 

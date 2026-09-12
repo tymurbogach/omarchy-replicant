@@ -1000,7 +1000,7 @@ check "the settings count matches the registry" "1" \
 # final `return` and renders as "saved on GitHub" — the calmest badge there is,
 # on the row that needed attention.
 panel="$HERE/../Panel.qml"
-core_states=$(grep -oE 'sync_state="[a-z]+"' "$HERE/../bin/replicant-core.sh" |
+core_states=$(grep -ohE 'sync_state="[a-z]+"' "$HERE/../bin/replicant-core.sh" "$HERE"/../bin/lib/*.sh |
               sed -e 's/sync_state="//' -e 's/"//' | sort -u)
 unrendered=0
 for st in $core_states; do

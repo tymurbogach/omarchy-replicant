@@ -115,7 +115,7 @@ fi
 #    matched nothing — so every category card reported "in sync" while its own
 #    rows showed unsaved changes. The comparison is a string on both sides and
 #    nothing but this check makes them agree.
-known_states=$(grep -oE 'sync_state="[a-z]+"' "$ROOT/bin/replicant-core.sh" | sed 's/.*="//; s/"//' | sort -u)
+known_states=$(grep -ohE 'sync_state="[a-z]+"' "$ROOT/bin/replicant-core.sh" "$ROOT"/bin/lib/*.sh | sed 's/.*="//; s/"//' | sort -u)
 for st in $(grep -oE 'sync_state === "[a-z]+"' "$ROOT"/*.qml | sed 's/.*=== "//; s/"//' | sort -u); do
   if ! printf '%s\n' "$known_states" | grep -qx "$st"; then
     printf '  \033[31m✗\033[0m Panel.qml tests for sync_state "%s", which replicant-core.sh never emits\n' "$st"

@@ -3423,6 +3423,23 @@ plan_for_category() {
     [[ -f "$repo_path" ]] || continue
     printf '%s|%s|%s\n' "$repo_path" "$src" "$(restore_mode_for "$rel")"
   done
+  # A settings plugin that writes a Hyprland module keeps its own store: the
+  # OmaSettings window writes hypr/omasettings.lua from plugins/omasettings.json.
+  # Restoring Hyprland alone brought the module back without the store, so the
+  # plugin's window showed the old values, and its next write put them back.
+  if [[ "$want" == "hyprland" ]]; then
+    local mrel prel psrc
+    for entry in "${TRACKED[@]}"; do
+      mrel="${entry##*:}"
+      [[ "$mrel" == hypr/*.lua ]] || continue
+      prel="plugins/${mrel##*/}"; prel="${prel%.lua}.json"
+      psrc=$(resolve_manifest_src "$prel") || continue
+      is_excluded "$prel" && continue
+      repo_path=$(repo_path_for "$prel")
+      [[ -f "$repo_path" ]] || continue
+      printf '%s|%s|%s\n' "$repo_path" "$psrc" "$(restore_mode_for "$prel")"
+    done
+  fi
   [[ "$want" == "secrets" ]] || return 0
   for entry in "${TRACKED_SECRETS[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"

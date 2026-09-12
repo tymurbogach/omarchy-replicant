@@ -1194,6 +1194,17 @@ core_backup >/dev/null 2>&1
 check_true "a save copies it into the repo" test -f "$CONFIG_DIR/hypr/omasettings.lua"
 check_contains "…and restoring Hyprland puts it back" "|$HOME/.config/hypr/omasettings.lua|" \
   "$(plan_for_category hyprland)"
+# OmaSettings writes that module from its own store, plugins/omasettings.json.
+# Restoring Hyprland alone brought the module back without the store.
+mkdir -p "$HOME/.config/omarchy/plugins/com.example.omasettings"
+printf '{"id":"com.example.omasettings","name":"OmaSettings"}\n' \
+  > "$HOME/.config/omarchy/plugins/com.example.omasettings/manifest.json"
+printf '{"gaps":2}\n' > "$HOME/.config/omarchy/omasettings.json"
+load_auto_manifest; core_backup >/dev/null 2>&1
+check_contains "…together with the store that the plugin writes it from" \
+  "|$HOME/.config/omarchy/omasettings.json|" "$(plan_for_category hyprland)"
+rm -rf "$HOME/.config/omarchy/plugins/com.example.omasettings" "$HOME/.config/omarchy/omasettings.json"
+load_auto_manifest
 # A machine restoring for the first time has Omarchy's stock hyprland.lua, which
 # loads nothing of the user's. What the repo's copy loads has to count too.
 cp "$HOME/.config/hypr/hyprland.lua" "$TMP/hyprland.keep"

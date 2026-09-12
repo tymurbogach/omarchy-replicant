@@ -8,10 +8,22 @@ failed=0
 
 banner() { printf '\n\033[1m══ %s\033[0m\n' "$1"; }
 
-for suite in test-core.sh test-settings.sh test-cli.sh test-journey.sh test-usability.sh; do
-  banner "$suite"
-  "$HERE/$suite" || failed=$((failed+1))
+# The suites run together. Each one has its own temporary $HOME, so they share
+# nothing, and the run takes as long as the slowest suite, not the sum of all
+# of them. Their output is printed in the usual order after they finish.
+suites=(test-core.sh test-settings.sh test-cli.sh test-journey.sh test-usability.sh)
+logs=$(mktemp -d)
+declare -A pid=()
+for suite in "${suites[@]}"; do
+  "$HERE/$suite" > "$logs/$suite.log" 2>&1 &
+  pid[$suite]=$!
 done
+for suite in "${suites[@]}"; do
+  banner "$suite"
+  wait "${pid[$suite]}" || failed=$((failed+1))
+  cat "$logs/$suite.log"
+done
+rm -rf "$logs"
 
 banner "shell syntax"
 for f in "$ROOT"/bin/omarchy-replicant "$ROOT"/bin/*.sh "$HERE"/*.sh; do
@@ -148,5 +160,5 @@ else
 fi
 
 echo
-if (( failed == 0 )); then printf '\033[32mEverything passed.\033[0m\n'; exit 0
-else printf '\033[31m%d section(s) failed.\033[0m\n' "$failed"; exit 1; fi
+if (( failed == 0 )); then printf '\033[32mEverything passed in %d s.\033[0m\n' "$SECONDS"; exit 0
+else printf '\033[31m%d section(s) failed, in %d s.\033[0m\n' "$failed" "$SECONDS"; exit 1; fi

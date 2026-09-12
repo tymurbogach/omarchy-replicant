@@ -496,17 +496,23 @@ cmd_restore() {
     --all) ALL_GROUPS=1; shift;;
     --dry-run) DRY=1; shift;;
     --yes|-y) YES=1; shift;;
-    --only) ONLY="${2:-}"; shift 2;;
-    *) shift;;
+    --only) ONLY="${2:-}"; [[ -n "$ONLY" ]] || fail "--only needs an area"; shift 2;;
+    *) fail "unknown option: $1";;
   esac; done
   [[ -d "$REPO_DIR/.git" ]] || fail "no repo"
+  # shellcheck source=/dev/null
+  source "$PLUGIN_DIR/bin/replicant-core.sh" 2>/dev/null || true
+  # An area this plugin does not have restored nothing and then printed
+  # "restore complete". A typo in the word that picks what to restore is an
+  # error, and so is an option this command does not know.
+  if [[ -n "$ONLY" ]] && ! find_category "$ONLY" >/dev/null; then
+    fail "unknown area: $ONLY (areas: ${CATEGORY_ORDER[*]})"
+  fi
   if (( ALL_GROUPS && !DRY && !YES )); then
     warn "restore --apply --all: this will apply every category with pending changes without asking one by one."
     read -rp "Continue and restore EVERYTHING from the repo/GitHub onto this system? .bak.<epoch> backups will be made [y/N] " resp </dev/tty 2>&1 || resp=""
     [[ $resp == [yY] ]] || fail "restore --apply --all cancelled"
   fi
-  # shellcheck source=/dev/null
-  source "$PLUGIN_DIR/bin/replicant-core.sh" 2>/dev/null || true
 
   # The plan comes from MANIFEST via plan_for_category(). It used to be a second
   # hand-written list right here, which meant adding a file to the manifest

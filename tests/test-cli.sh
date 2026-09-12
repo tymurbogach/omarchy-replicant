@@ -136,6 +136,16 @@ check "restore with no flags is a dry run"  "$before_home" "$(hash_tree "$HOME/.
 out=$(run reset-all)
 check "reset-all with no flags is a dry run" "$before_home" "$(hash_tree "$HOME/.config")"
 
+section "restore refuses what it does not understand"
+# `restore --apply --yes --only hyperland` restored nothing and printed
+# "restore complete". Unknown options were skipped in the same silent way.
+out=$(run restore --only hyperland)
+check_false "an unknown area is refused" "$CLI" restore --only hyperland
+check_contains "…and the real areas are named" "hyprland" "$out"
+check_false "an unknown option is refused" "$CLI" restore --aply
+check_false "--only needs an area"        "$CLI" restore --only
+check "…and none of it wrote anything" "$before_home" "$(hash_tree "$HOME/.config")"
+
 section "reset refuses what it cannot restore"
 # `omarchy refresh config` restores one FILE. A tracked directory has no single
 # default to go back to, and cmp on a directory would decide whether it is

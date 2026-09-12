@@ -181,13 +181,13 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
 
 ## P2: structure
 
-- [ ] **S1. Split `bin/replicant-core.sh`** (3,881 lines, 143 functions) into modules under
+- [x] **S1. Split `bin/replicant-core.sh`** (3,881 lines, 143 functions) into modules under
   `bin/lib/`: the tracked list and the user list, scopes and profiles, trees, install and backups,
   the settings registry and its writers, the status JSON, the restore plan, the plugin and theme
   inventory, and diff and log. The core keeps the dispatcher and sources the modules. Move code
   only. Use one module per commit, and keep the full suite green after each commit.
-- [ ] **S2. Make the dispatcher a `case` statement** behind the source guard from B4.
-- [ ] **S3. Move business logic from the CLI to the core.**
+- [x] **S2. Make the dispatcher a `case` statement** behind the source guard from B4.
+- [x] **S3. Move business logic from the CLI to the core.**
   The project convention says that the CLI parses arguments and prints output. Today the CLI holds
   the full restore loop (`cmd_restore`, 190 lines, with `restore_themes`, `restore_theme` and
   `restore_plugins`). It also holds the candidate selection of `reset-all`, the copy in `save-file`,
@@ -196,6 +196,9 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
   component (`FileRow`, `SettingRow`, `CategoryCard`, `SuggestCard`, `RestoreCard` and the others).
   Clear the QML cache and take a screenshot after each move.
 - [ ] **S5. Keep one definition of each shared fact.**
+  The shell part is done: `bin/lib/common.sh` holds `plural` and the machine name for the CLI and
+  the core. The QML part is left: `plural` and `mdi` in the two QML files, the CLI path, and the
+  panel IPC. It needs a screenshot (hard rule 4).
   - `plural`: `bin/omarchy-replicant:39`, `bin/replicant-core.sh:44`, `BarWidget.qml:62` and
     `Panel.qml:193`. `bin/omarchy-replicant:459` builds the plural by hand again.
   - `mdi`, and the CLI path with the same seven-line comment, in three QML files. A shared `.js`
@@ -204,7 +207,7 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
     `hostnamectl --static` in the core (`bin/replicant-core.sh:20`). The two can differ.
   - The panel IPC: `Panel.qml:30` (`replicant`) and `BarWidget.qml:229`
     (`omarchy-replicant-panel`) both open the panel. Keep one and document it.
-- [ ] **S6. Remove dead or misleading code.**
+- [x] **S6. Remove dead or misleading code.**
   - The CLI fallback to `/usr/share/omarchy/bin/replicant-core.sh` (`bin/omarchy-replicant:12`).
     Nothing installs the core there.
   - `diff --terminal` (`bin/omarchy-replicant:344`). It uses the floating terminal and needs the CLI
@@ -214,11 +217,11 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
     nothing.
   - `.ssh/id_*` and `.ssh/*.pem` in the `.gitignore` of the data repo. Secrets never go to `.ssh/`
     in that repo.
-- [ ] **S7. Declare the locals in `core_backup`.**
+- [x] **S7. Declare the locals in `core_backup`.**
   `copied`, `missing`, `scopied`, `entry`, `src`, `rel`, `dst`, `known`, `name`, `d` and `SCAN`
   leak into the scope of the caller. Bash scopes dynamically, and `CLAUDE.md` documents a bug of
   this class.
-- [ ] **S8. Let a broken core fail loudly.**
+- [x] **S8. Let a broken core fail loudly.**
   Each `source "$CORE" 2>/dev/null || true` hides a syntax error or a missing file. The next line
   then fails with a message that points to the wrong place.
 
@@ -263,7 +266,7 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
   variable (`printf -v`) and use them in those two loops. Do it after S1, so that it changes one
   module and not the whole core.
 
-- [ ] **F2. Remove small forks from the status path.**
+- [x] **F2. Remove small forks from the status path.**
   `core_status` runs `git status --porcelain` twice (`bin/replicant-core.sh:3219-3220`).
   `build_setting_groups_json` runs `cut` for each field and `jq` for each group, unlike the other
   builders.

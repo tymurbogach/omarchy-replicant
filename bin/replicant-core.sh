@@ -2083,7 +2083,7 @@ SETTINGS=(
   # ── Input — Hyprland reads Lua at startup, so these need an explicit reload
   "input.repeatRate|Input|$HOME/.config/hypr/input.lua|input:repeat_rate|lua-int|Key repeat rate|/s|1|100||Characters a held key sends per second|hyprctl reload||1|"
   "input.repeatDelay|Input|$HOME/.config/hypr/input.lua|input:repeat_delay|lua-int|Key repeat delay|ms|100|2000||How long a key is held before it starts repeating|hyprctl reload||1|"
-  "input.kbLayout|Input|$HOME/.config/hypr/input.lua|input:kb_layout|lua-enum|Keyboard layout||||es,us,gb,de,fr,it,pt,latam|X11 layout code for the keyboard|hyprctl reload||1|"
+  "input.kbLayout|Input|$HOME/.config/hypr/input.lua|input:kb_layout|lua-enum|Keyboard layout||||@x11-layouts|X11 layout code for the keyboard|hyprctl reload||1|"
   "input.numlock|Input|$HOME/.config/hypr/input.lua|input:numlock_by_default|lua-bool|Num lock at login|||||Turn the numeric keypad on when the session starts|hyprctl reload||1|"
   "input.naturalScroll|Input|$HOME/.config/hypr/input.lua|input:touchpad:natural_scroll|lua-bool|Natural scrolling|||||Touchpad: two fingers down moves the page up|hyprctl reload||1|"
   "input.tapToClick|Input|$HOME/.config/hypr/input.lua|input:touchpad:tap_to_click|lua-bool|Tap to click|||||Touchpad: a tap counts as a click|hyprctl reload||1|"
@@ -2347,13 +2347,21 @@ backup_before_write() {
 
 # ── read / write one setting ────────────────────────────────────────────────
 setting_options() {
-  # The only dynamic option list: whatever themes are installed right now.
-  local entry="$1"
+  # Two option lists are not fixed: the themes installed now, and the keyboard
+  # layouts this machine knows (`@x11-layouts` in the registry). A fixed list
+  # of eight layouts left anyone outside it with a control that could not show
+  # or keep the value.
+  local entry="$1" opts
   if [[ "$(setting_field "$entry" 5)" == "theme" ]]; then
     omarchy-theme-list 2>/dev/null | paste -sd, - || true
-  else
-    setting_field "$entry" 10
+    return 0
   fi
+  opts=$(setting_field "$entry" 10)
+  if [[ "$opts" == "@x11-layouts" ]]; then
+    opts=$(localectl list-x11-keymap-layouts 2>/dev/null | paste -sd, - || true)
+    [[ -n "$opts" ]] || opts="us,es,gb,de,fr,it,pt,latam"
+  fi
+  printf '%s\n' "$opts"
 }
 
 get_setting_value() {

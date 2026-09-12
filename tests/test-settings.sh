@@ -431,6 +431,23 @@ check "with no Hyprland to ask, nothing is claimed" "" "$(notice_of input.natura
 rm -f "$HOME/.config/hypr/omasettings.lua" "$HOME/.config/hypr/hyprland.lua"
 load_auto_manifest
 
+section "the keyboard layouts are this machine's own"
+# The list was fixed to eight layouts, so a user outside them had a control
+# that could not show or keep the value. It comes from localectl now.
+cat > "$TMP/fakebin/localectl" <<'EOF'
+#!/bin/bash
+[[ "$1" == list-x11-keymap-layouts ]] && printf 'es\nru\nus\n'
+EOF
+chmod +x "$TMP/fakebin/localectl"
+layouts=$(setting_options "$(find_setting input.kbLayout)")
+check_true "a layout the machine knows is offered" grep -qx ru <<<"${layouts//,/$'\n'}"
+set_setting_value input.kbLayout ru >/dev/null 2>&1
+check "…and can be written" "ru" "$(get_setting_value input.kbLayout)"
+printf '#!/bin/bash\nexit 1\n' > "$TMP/fakebin/localectl"
+layouts=$(setting_options "$(find_setting input.kbLayout)")
+check_true "without localectl, a short list is still offered" grep -qx us <<<"${layouts//,/$'\n'}"
+rm -f "$TMP/fakebin/localectl"
+
 section "the registry itself is well-formed"
 bad_fields=0; dupe=0; seen=""
 for entry in "${SETTINGS[@]}"; do

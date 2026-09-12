@@ -1730,8 +1730,13 @@ core_backup() {
   echo "→ Scanning what was copied (excludes secrets/)" >&2
   SCAN="$REPO_DIR/bin/scan-secrets.sh"
   [[ -x "$SCAN" ]] || SCAN="$PLUGIN_DIR/bin/scan-secrets.sh"
+  # This profile's tree too. A file kept per profile is copied there, and a
+  # token in it went unscanned until the pre-commit hook, if the hook ran.
+  local -a scan_dirs=("$CONFIG_DIR" "$STATE_DIR")
+  [[ -d "$REPO_DIR/profiles/$(current_profile)/config" ]] &&
+    scan_dirs+=("$REPO_DIR/profiles/$(current_profile)/config")
   if [[ -x "$SCAN" ]]; then
-    if ! "$SCAN" "$CONFIG_DIR" "$STATE_DIR" 2>&1; then
+    if ! "$SCAN" "${scan_dirs[@]}" 2>&1; then
       echo "  ✗ POSSIBLE SECRET — DO NOT commit" >&2
       return 1
     fi

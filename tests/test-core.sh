@@ -1073,6 +1073,20 @@ ensure_repo_layout >/dev/null 2>&1
 check "…and an up-to-date one is left alone" "$before" \
   "$(sha256sum "$REPO_DIR/bin/scan-secrets.sh" | cut -d' ' -f1)"
 
+section "a token in a file kept per profile is caught at backup time"
+# The backup scan covered config/ and state/ only. A file kept per profile is
+# copied under profiles/, so a token in it went unscanned until the pre-commit
+# hook, and only if the hook ran. Assembled from pieces, like test-cli.sh.
+core_scope hypr/monitors.lua profile >/dev/null 2>&1
+mon="$HOME/.config/hypr/monitors.lua"; had_mon=0
+[[ -f "$mon" ]] && { had_mon=1; cp "$mon" "$TMP/monitors.keep"; }
+P_GH="gh""p_"
+printf 'token = %sabcdefghijklmnopqrstuvwxyz0123456789\n' "$P_GH" > "$mon"
+check_false "backup fails on a token in a profile-scoped file" core_backup
+if (( had_mon )); then cp "$TMP/monitors.keep" "$mon"; else rm -f "$mon"; fi
+rm -f "$(repo_path_for hypr/monitors.lua)"
+core_backup >/dev/null 2>&1
+
 section "the panel's text has to fit the panel"
 # Every one of these strings is drawn into a fixed-width row that elides. A
 # description that runs long does not wrap or warn — it just loses its last

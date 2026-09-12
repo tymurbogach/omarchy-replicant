@@ -256,6 +256,13 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
 - [ ] **F1. Run one full `status` when the shell starts, not two.**
   `Service.qml` and `BarWidget.qml` both run a full `status --json` at start, and each run costs
   about 1.4 s of CPU. Make the service ask for `--brief`, or use the answer of the bar.
+- [ ] **F3. Look up scopes without a fork in the loops over every row.**
+  Measured on 2026-09-13 with 60 rows: `status --json --brief`, which the bar runs every minute,
+  takes about 0.9 s, and more than a third of it is `$(scope_for ...)` and `$(repo_path_for ...)`,
+  one fork per call, in `count_changes` and `build_configs_json`. Add forms that write into a
+  variable (`printf -v`) and use them in those two loops. Do it after S1, so that it changes one
+  module and not the whole core.
+
 - [ ] **F2. Remove small forks from the status path.**
   `core_status` runs `git status --porcelain` twice (`bin/replicant-core.sh:3219-3220`).
   `build_setting_groups_json` runs `cut` for each field and `jq` for each group, unlike the other

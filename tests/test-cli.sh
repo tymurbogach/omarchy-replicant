@@ -562,6 +562,24 @@ wait
 check "no leftover git index lock" "0" "$(ls "$REPO/.git/index.lock" 2>/dev/null | wc -l)"
 check_true "the repo is still usable afterwards" git -C "$REPO" status --porcelain
 
+section "every command that writes waits for the others"
+# purge, undo, backups --prune and the two installs wrote without the lock, so
+# `purge --apply --repo` could delete the repo under a running save. The fake
+# omarchy goes first on PATH: without the lock, the installs would reach it.
+lock="$OMARCHY_REPLICANT_HOME/.replicant.lock"
+mkdir -p "$OMARCHY_REPLICANT_HOME"
+flock -o "$lock" sleep 30 & holder=$!
+until ! flock -n "$lock" true 2>/dev/null; do sleep 0.1; done
+for c in "undo hypr/input.lua --apply" "backups --prune --apply" "install-theme mine" \
+         "install-plugin demo.widget" "purge --apply --yes"; do
+  # shellcheck disable=SC2086
+  out=$(PATH="$TMP/fakebin:$PATH" REPLICANT_LOCK_WAIT=1 run $c)
+  check_contains "'$c' waits for the lock" "another omarchy-replicant operation" "$out"
+done
+# While the lock is still held: a dry run must not wait for it.
+check_contains "a dry run takes no lock" "would remove" "$(REPLICANT_LOCK_WAIT=1 run purge)"
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+
 section "track / untrack commit only their own paths"
 printf 'mine\n' > "$HOME/.config/mine.conf"
 # Something unrelated left pending, exactly as a user would have it.

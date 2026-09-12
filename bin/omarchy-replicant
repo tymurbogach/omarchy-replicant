@@ -48,7 +48,8 @@ git_repo() { git -C "$REPO_DIR" "$@"; }
 acquire_repo_lock() {
   mkdir -p "$REPLICANT_HOME"
   exec 9>"$REPLICANT_HOME/.replicant.lock" || return 0
-  if ! flock -w 90 9; then
+  # REPLICANT_LOCK_WAIT exists for the tests, which cannot wait 90 s per check.
+  if ! flock -w "${REPLICANT_LOCK_WAIT:-90}" 9; then
     fail "another omarchy-replicant operation is still running — try again in a moment"
   fi
 }
@@ -1733,7 +1734,14 @@ main() {
   # Anything that writes to the repo takes the lock first; read-only commands
   # (status/get/diff/edit) stay lock-free so the panel's polling never blocks.
   case "$cmd" in
-    init|create|backup|savegame|set|save-file|reset|reset-all|push|pull|clone|restore|sync|scope|track|untrack|profile|revert|restore-file) acquire_repo_lock ;;
+    init|create|backup|savegame|set|save-file|reset|reset-all|push|pull|clone|restore|sync|scope|track|untrack|profile|revert|restore-file|install-theme|install-plugin) acquire_repo_lock ;;
+    # These write only when they apply. A dry run takes no lock: taking it
+    # creates the lock file, and purge would then list its own lock.
+    undo|backups|purge)
+      if [[ -d "$REPLICANT_HOME" ]] && [[ " $* " == *" --apply "* ||
+            ( "$cmd" == undo && ( " $* " == *" --yes "* || " $* " == *" -y "* ) ) ]]; then
+        acquire_repo_lock
+      fi ;;
   esac
   case "$cmd" in
     -h|--help|help) usage; exit 0;;

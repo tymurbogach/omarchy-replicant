@@ -106,6 +106,18 @@ suite: test-settings.sh
 from: in_sect && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
 to: $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
 why: toml_set writes the key only inside its own section
+---
+file: bin/replicant-core.sh
+suite: test-core.sh
+from: [[ "${rel%%/*}" == "$(current_profile)" ]] || continue
+to: :
+why: a pull marks only this profile's files as incoming
+---
+file: bin/replicant-core.sh
+suite: test-core.sh
+from: (( age >= FETCH_MAX_AGE ))
+to: true
+why: status fetches at most once per FETCH_MAX_AGE
 DATA
 )
 

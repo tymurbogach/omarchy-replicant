@@ -1378,6 +1378,37 @@ if [[ $(id -u) != 0 ]]; then
   chmod 600 "$TMP/unreadable.cred"; rm -f "$TMP/unreadable.cred"
 fi
 
+section "status fetches at most once per FETCH_MAX_AGE"
+# The bar polls every minute. A fetch on every poll was a git fetch a minute,
+# forever, on a laptop. Only an explicit refresh passes --fetch.
+rm -f "$REPLICANT_HOME/.last-fetch"
+check_true  "with no stamp, a fetch is due" should_fetch
+date +%s > "$REPLICANT_HOME/.last-fetch"
+check_false "right after a fetch, it is not" should_fetch
+echo $(( $(date +%s) - FETCH_MAX_AGE - 1 )) > "$REPLICANT_HOME/.last-fetch"
+check_true  "…and it is due again once the age has passed" should_fetch
+rm -f "$REPLICANT_HOME/.last-fetch"
+
+section "a pull marks only this profile's files as incoming"
+# profiles/<other>/ is the other machine's own copy of a file kept per profile.
+# Marking it incoming would tell this machine to restore the other machine's
+# monitor layout onto itself. Probe names that no entry tracks keep this out of
+# the badges that later sections read.
+before=$(git -C "$REPO_DIR" rev-parse HEAD)
+mine=$(current_profile)
+mkdir -p "$REPO_DIR/profiles/$mine/config" "$REPO_DIR/profiles/zz-other/config"
+printf 'a\n' > "$REPO_DIR/profiles/$mine/config/zz-mine.conf"
+printf 'b\n' > "$REPO_DIR/profiles/zz-other/config/zz-other.conf"
+git -C "$REPO_DIR" add -A profiles
+git -C "$REPO_DIR" -c user.email=t@example.com -c user.name=t commit -qm "probe"
+after=$(git -C "$REPO_DIR" rev-parse HEAD)
+got=$(core_incoming "$before" "$after")
+check "this profile's changed file is incoming" "1" "$(grep -cx 'zz-mine.conf' <<<"$got" || true)"
+check "…and another profile's is not"           "0" "$(grep -c 'zz-other' <<<"$got" || true)"
+record_incoming
+git -C "$REPO_DIR" rm -rq "profiles/$mine/config/zz-mine.conf" profiles/zz-other
+git -C "$REPO_DIR" -c user.email=t@example.com -c user.name=t commit -qm "probe removed"
+
 section "a plugin with work its origin does not have"
 # Omaplug sorts plugins by this before it offers an update. For a backup it is
 # the same hole as a clone: install-plugin elsewhere fetches the origin's code.

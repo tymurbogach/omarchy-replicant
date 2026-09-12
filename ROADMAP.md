@@ -232,14 +232,14 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
 
 ## P3: docs and process
 
-- [ ] **D2. Remove `docs/superpowers/plans/`.** The two files are finished internal work plans,
+- [x] **D2. Remove `docs/superpowers/plans/`.** The two files are finished internal work plans,
   not user docs. Their result is in the commits.
-- [ ] **D3. Split `CLAUDE.md` (731 lines).**
+- [x] **D3. Split `CLAUDE.md` (731 lines).**
   Its own section "Maintaining this file" says that 600 lines was already too long. Move "How the
   data works" to `docs/SPEC.md`, because the Omarchy rules ask for a SPEC when the logic is
   non-trivial. Move the traps to `CONTRIBUTING.md`. Keep `CLAUDE.md` short, with pointers. Point
   "Notes for contributors" in the README to `CONTRIBUTING.md`.
-- [ ] **D4. Write docs and comments in Simplified Technical English.**
+- [x] **D4. Write docs and comments in Simplified Technical English.**
   More than 700 lines in tracked files contain an em dash. Many comments tell history ("It used
   to...", "This cost hours..."). Keep the rule and the reason in the comment, and move the story to
   the commit message.
@@ -247,10 +247,10 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
   - Rewrite code comments only in files that a change already touches. One rewrite of about 5,600
     lines of commented code has high risk and low value.
   - Add a guard that fails on a new em dash in `README.md`, in `docs/` and in commit subjects.
-- [ ] **D5. Correct `docs/getting-started.md`.**
+- [x] **D5. Correct `docs/getting-started.md`.**
   Line 57 says that the bar shows the GitHub mark when everything is saved. The bar shows
   `hexagon-multiple` (`BarWidget.qml:32-35`). Line 65 names only one of the two IPC targets (see S5).
-- [ ] **D6. Add the marketplace headings to the README.**
+- [x] **D6. Add the marketplace headings to the README.**
   The Omarchy rules ask for Install, Usage, Configure, Remove, Requirements and License. The README
   has Requirements and "Removing it". Install is a code block with no heading, and License is one line.
 

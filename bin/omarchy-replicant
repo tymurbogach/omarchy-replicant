@@ -1025,15 +1025,9 @@ cmd_revert() {
   # shellcheck disable=SC1090
   source "$CORE" 2>/dev/null || true
   core_revert "$id" "$to" || exit 1
-  # Same as `set`: a value that changed on this machine is worth a commit.
-  if [[ -d "$REPO_DIR/.git" ]]; then
-    bash "$CORE" backup >/dev/null 2>&1 || true
-    git_repo add -A config/ >/dev/null 2>&1 || true
-    if ! git_repo diff --cached --quiet 2>/dev/null; then
-      git_repo commit -q -m "revert: $id -> $to" >/dev/null 2>&1 || true
-      git_repo push -q 2>/dev/null || warn "committed locally; push failed (offline?)"
-    fi
-  fi
+  # Committed the same way as `set`. This used to stage only config/, so the
+  # revert of a setting whose file is kept per profile was never committed.
+  if [[ -d "$REPO_DIR/.git" ]]; then cmd_savegame -m "revert: $id -> $to"; fi
 }
 
 # cmd_restore_file <id> — bring one tracked file back from the repo, backed up

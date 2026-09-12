@@ -280,6 +280,15 @@ run revert idle.lock --to default >/dev/null 2>&1
 check "reverting to Omarchy's default puts it back" "300" "$(run get idle.lock)"
 check "…in the stored unit, not the panel's"        "300" \
   "$(jq -r '.idle.lock' "$HOME/.config/omarchy/shell.json")"
+# A setting whose file is kept per profile lives under profiles/. revert staged
+# only config/, so that revert was never committed.
+run scope omarchy/shell.json profile >/dev/null 2>&1
+run set idle.lock 900 >/dev/null 2>&1
+run revert idle.lock --to default >/dev/null 2>&1
+check "the revert of a profile-scoped setting is committed" "0" \
+  "$(git -C "$REPO" status --porcelain -- profiles/ | grep -c . || true)"
+check_contains "…under a revert subject" "revert: idle.lock" "$(git -C "$REPO" log -1 --format=%s)"
+run scope omarchy/shell.json shared >/dev/null 2>&1
 
 section "restoring one file from the repo"
 check_false "restore-file needs an id" "$CLI" restore-file

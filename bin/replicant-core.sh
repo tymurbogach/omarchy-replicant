@@ -2121,25 +2121,26 @@ find_setting() {
 # panel and (2)/(1) the common one from a terminal. Saying so is the point:
 # a settings control that quietly does nothing is worse than one that explains.
 root_apply() {
-  local dst="$1" staged="$2" after="${3:-}" script rc=0
+  local dst="$1" staged="$2" after="${3:-}" script
   script='dst="$1"; staged="$2"; after="$3";
     if [ -f "$dst" ]; then cp -a "$dst" "$dst.bak.$(date +%s)" || exit 1; fi
     install -D -m 644 -o root -g root "$staged" "$dst" || exit 1
     [ -n "$after" ] && { sh -c "$after" || exit 2; }
     exit 0'
   if command -v pkexec >/dev/null 2>&1 && [[ -n "${XDG_SESSION_ID:-}${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
-    if pkexec /bin/sh -c "$script" _ "$dst" "$staged" "$after" 2>/dev/null; then return 0; fi
-    rc=1
+    pkexec /bin/sh -c "$script" _ "$dst" "$staged" "$after" 2>/dev/null && return 0
   fi
   if sudo -n true 2>/dev/null; then
-    if sudo -n /bin/sh -c "$script" _ "$dst" "$staged" "$after" 2>/dev/null; then return 0; fi
-    rc=1
+    sudo -n /bin/sh -c "$script" _ "$dst" "$staged" "$after" 2>/dev/null && return 0
   fi
   echo "This one needs root, and nothing on this session could ask for it." >&2
   echo "Nothing was changed. To apply it yourself:" >&2
   echo "  sudo install -D -m 644 $staged $dst" >&2
   [[ -n "$after" ]] && echo "  sudo $after" >&2
-  return "${rc:-1}"
+  # Always a failure. This read `return "${rc:-1}"` with rc starting at 0, so
+  # the path above returned success: `set` printed the new value, exited 0,
+  # and the panel reported a write that never happened.
+  return 1
 }
 
 # ini_set <file> <Section.Key> <value> [reload command]
@@ -2148,7 +2149,12 @@ root_apply() {
 ini_set() {
   invalidate_file_maps
   local file="$1" path="$2" value="$3" after="${4:-}" staged
-  staged=$(mktemp "${TMPDIR:-/tmp}/replicant-lid.XXXXXX") || return 1
+  # Staged in the plugin's own directory, not in /tmp. When nothing can ask for
+  # root, root_apply prints a `sudo install` of this file for the user to run,
+  # so the file has to outlive this call. It used to be deleted on the way
+  # out, and the printed command named a file that did not exist.
+  mkdir -p "$REPLICANT_HOME/staged" || return 1
+  staged="$REPLICANT_HOME/staged/$(basename -- "$file")"
   if [[ -f "$file" ]]; then cp -- "$file" "$staged"; else printf '[%s]\n' "${path%%.*}" > "$staged"; fi
   toml_set "$staged" "$path" "$value" || { rm -f "$staged"; return 1; }
   # toml_set keeps whatever spacing surrounded the '='; TOML writes `key = v`
@@ -2167,7 +2173,8 @@ ini_set() {
     [[ -n "$after" && -z "${REPLICANT_NO_RELOAD:-}" ]] && bash -c "$after" >/dev/null 2>&1
     rm -f "$staged"; return 0
   fi
-  root_apply "$file" "$staged" "$after" || { rm -f "$staged"; return 1; }
+  # On failure the staged file stays: the message names it.
+  root_apply "$file" "$staged" "$after" || return 1
   rm -f "$staged"
 }
 

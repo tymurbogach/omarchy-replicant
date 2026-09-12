@@ -484,8 +484,13 @@ run link >/dev/null 2>&1
 # removal used rm -f, which silently does nothing to a directory.
 mkdir -p "$HOME/.config/nvim.bak.1700000000"
 printf 'old\n' > "$HOME/.config/nvim.bak.1700000000/init.lua"
+# A root-owned write that could not happen leaves its staged file for the
+# printed `sudo install` command. That is a trace of this plugin, too.
+mkdir -p "$OMARCHY_REPLICANT_HOME/staged"
+printf '[Login]\n' > "$OMARCHY_REPLICANT_HOME/staged/99-lid.conf"
 out=$(run purge)
 check_contains "a directory backup is listed too" ".bak.<epoch> backup" "$out"
+check_contains "…and so is a staged root-owned write" "staged" "$out"
 check "…and the dry run leaves it alone" "1" "$(ls -d "$HOME/.config/nvim.bak.1700000000" 2>/dev/null | wc -l)"
 out=$(run purge)
 check_contains "lists what it would remove" "would remove" "$out"
@@ -496,6 +501,7 @@ run purge --apply --yes >/dev/null 2>&1
 check "purge --apply removes the symlink" "0" "$(ls "$PATH_LINK" 2>/dev/null | wc -l)"
 check "…and still keeps the repo"         "1" "$(ls -d "$REPO" 2>/dev/null | wc -l)"
 check "…and the lock file is gone"        "0" "$(ls "$OMARCHY_REPLICANT_HOME/.replicant.lock" 2>/dev/null | wc -l)"
+check "…and the staged write is gone"     "0" "$(ls -d "$OMARCHY_REPLICANT_HOME/staged" 2>/dev/null | wc -l)"
 run purge --apply --yes --repo >/dev/null 2>&1
 check "…and the directory backup is really gone, not just listed" "0" \
   "$(ls -d "$HOME/.config/nvim.bak.1700000000" 2>/dev/null | wc -l)"

@@ -327,6 +327,28 @@ check "…along with its settings"         "0" \
   "$(build_settings_json | jq -r '[.[] | select(.group=="Lid & sleep")] | length')"
 is_laptop() { return 0; }
 
+section "a root-owned write that cannot happen says so"
+# Omarchy ships no polkit agent, so "nothing can ask for root" is the common
+# outcome in the panel. It returned 0: `set` printed the new value and exited
+# 0, and the panel reported a write that never happened. Both ways to root are
+# stubbed as functions, so this can never raise a real prompt.
+pkexec() { return 1; }
+sudo() { return 1; }
+nowhere="$TMP/not-a-dir/99-lid.conf"
+# The lid section above sourced the core again, which turned `set -e` back on,
+# so the exit code is captured in a form that a failure cannot abort.
+rc=0; out=$(ini_set "$nowhere" Login.HandleLidSwitch ignore "" 2>&1) || rc=$?
+check "the write reports failure" "1" "$rc"
+check_false "…and so does root_apply on its own" root_apply "$nowhere" "$TMP/none" ""
+check_false "…and nothing was written in its place" test -e "$nowhere"
+# The message gives a `sudo install` command. The file it names used to be
+# deleted before anybody could read the message.
+staged=$(grep -oE '[^ ]*/staged/[^ ]+' <<<"$out" | head -n1)
+check_true "the file the printed command names exists" test -f "$staged"
+check "…and holds the new value" "1" "$(grep -cx 'HandleLidSwitch=ignore' "$staged" 2>/dev/null || true)"
+check_true "…inside the plugin's own directory" test "${staged#"$OMARCHY_REPLICANT_HOME"/}" != "$staged"
+unset -f pkexec sudo
+
 section "a notice only when a setting genuinely cannot work"
 # One rule, deliberately. A screensaver at or after the lock timer never appears,
 # so the control silently does nothing — worth saying. Orderings people merely

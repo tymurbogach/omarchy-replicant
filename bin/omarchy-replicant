@@ -1408,6 +1408,9 @@ cmd_purge() {
   # runs in the CLI's own shell and an unbound variable here kills the one
   # command whose job is to leave nothing behind.
   [[ -f "$REPLICANT_HOME/incoming" ]] && targets+=("$REPLICANT_HOME/incoming")
+  # Left by a root-owned write that nothing could ask for root for. It is the
+  # file that the printed `sudo install` command names.
+  [[ -d "$REPLICANT_HOME/staged" ]] && targets+=("$REPLICANT_HOME/staged")
   if (( ! KEEP_REPO )); then
     [[ -d "$REPLICANT_HOME" ]] && targets+=("$REPLICANT_HOME")
   fi

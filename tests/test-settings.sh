@@ -406,6 +406,16 @@ for entry in "${SETTINGS[@]}"; do
 done
 check "every line has 15 fields" "0" "$bad_fields"
 check "no duplicate setting ids" "0" "$dupe"
+# A dropdown that lists one option twice looks broken, and lid.closeDocked
+# offered `ignore` twice.
+dupe_opts=""
+for entry in "${SETTINGS[@]}"; do
+  opts=$(setting_field "$entry" 10)
+  [[ -n "$opts" ]] || continue
+  d=$(tr ',' '\n' <<<"$opts" | sort | uniq -d | paste -sd, -)
+  [[ -n "$d" ]] && dupe_opts+=" $(setting_field "$entry" 1):$d"
+done
+check "no setting offers the same option twice" "" "$dupe_opts"
 
 section "a hint has to fit the row that draws it"
 # The panel gives a setting's subtitle two lines and elides after them. There

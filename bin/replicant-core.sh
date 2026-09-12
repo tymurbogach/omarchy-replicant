@@ -372,8 +372,9 @@ CATEGORY_ORDER=(shortcuts appearance desktop hyprland terminal development secre
 category_field() { local -a fields; IFS='|' read -ra fields <<<"$1"; printf '%s' "${fields[$(($2 - 1))]:-}"; }
 find_category() {
   local id="$1" entry
+  # A prefix match, as in find_setting: no fork per line.
   for entry in "${CATEGORIES[@]}"; do
-    [[ "$(category_field "$entry" 1)" == "$id" ]] && { printf '%s\n' "$entry"; return 0; }
+    [[ "${entry%%|*}" == "$id" ]] && { printf '%s\n' "$entry"; return 0; }
   done
   return 1
 }
@@ -2136,8 +2137,12 @@ setting_field() { local -a fields; IFS='|' read -ra fields <<<"$1"; printf '%s' 
 
 find_setting() {
   local id="$1" entry
+  # The id is the first field, so a prefix match finds it without a fork.
+  # `$(setting_field ...)` here was one fork per registry line, and the panel
+  # payload looks up every setting three times: hundreds of forks, and about
+  # half of the time that `status --json` took.
   for entry in "${SETTINGS[@]}"; do
-    [[ "$(setting_field "$entry" 1)" == "$id" ]] && { printf '%s\n' "$entry"; return 0; }
+    [[ "${entry%%|*}" == "$id" ]] && { printf '%s\n' "$entry"; return 0; }
   done
   return 1
 }
@@ -3281,8 +3286,11 @@ core_status() {
   local branch remote dirty untracked ahead behind
   branch=$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
   remote=$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null || echo "")
-  dirty=$(git -C "$REPO_DIR" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
-  untracked=$(git -C "$REPO_DIR" status --porcelain 2>/dev/null | grep -c '^??' || true)
+  # One git status for both counts, not one each.
+  local porcelain
+  porcelain=$(git -C "$REPO_DIR" status --porcelain 2>/dev/null || true)
+  dirty=$(grep -c . <<<"$porcelain" || true)
+  untracked=$(grep -c '^??' <<<"$porcelain" || true)
   ahead=0; behind=0
   if git -C "$REPO_DIR" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
     ahead=$(git -C "$REPO_DIR" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)

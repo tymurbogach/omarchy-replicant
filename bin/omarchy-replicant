@@ -1060,11 +1060,21 @@ cmd_install_theme() {
 
 # cmd_install_plugin <id> — the same action for a plugin.
 cmd_install_plugin() {
-  local id="${1:-}"
-  [[ -n "$id" ]] || fail "usage: omarchy-replicant install-plugin <id>"
+  local id="" check_only=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --check) check_only=1 ;;
+      -*) fail "unknown option: $arg" ;;
+      *) if [[ -z "$id" ]]; then id="$arg"; fi ;;
+    esac
+  done
+  [[ -n "$id" ]] || fail "usage: omarchy-replicant install-plugin <id> [--check]"
   ensure_core
   # shellcheck disable=SC1090
   source "$CORE" 2>/dev/null || true
+  # --check prints what the marketplace checked and where the origin is now,
+  # and installs nothing. The panel asks this before it asks for consent.
+  if (( check_only )); then core_plugin_verification "$id"; return 0; fi
   core_install_plugin "$id" || exit 1
 }
 
@@ -1463,6 +1473,8 @@ cmd_purge() {
   [[ -d "$REPLICANT_HOME/staged" ]] && targets+=("$REPLICANT_HOME/staged")
   # The list of backups that setting edits made, which is what they prune.
   [[ -f "$REPLICANT_HOME/setting-backups" ]] && targets+=("$REPLICANT_HOME/setting-backups")
+  # The marketplace catalog, which install-plugin caches for an hour.
+  [[ -f "$REPLICANT_HOME/catalog.json" ]] && targets+=("$REPLICANT_HOME/catalog.json")
   if (( ! KEEP_REPO )); then
     [[ -d "$REPLICANT_HOME" ]] && targets+=("$REPLICANT_HOME")
   fi
@@ -1555,7 +1567,8 @@ Putting things back            (dry run by default; .bak.<epoch> kept for everyt
 
 Third-party code               (no dry run, no backup; fetches the moment you run it)
   install-theme <name>        Install one theme from your inventory — never automatic
-  install-plugin <id>         Install one plugin from your inventory — never automatic
+  install-plugin <id> [--check]
+                              Install one plugin from your inventory — never automatic
 
 Second machine
   clone <url>                 Point this machine at the repo you already have
@@ -1716,9 +1729,11 @@ Dry-run by default, like everything here that writes.
   Install one third-party theme recorded in your inventory, fetching whatever
   is at its origin right now. 'restore' only ever reports these as pending —
   this is the action that actually fetches one, on purpose."
-  [install-plugin]="install-plugin <id>
+  [install-plugin]="install-plugin <id> [--check]
   The same thing for a plugin: 'restore' reports it as pending, this installs
-  it, fetching whatever is at its origin right now."
+  it, fetching whatever is at its origin right now. It first says what the
+  Omarchy marketplace checked, and whether the origin has moved since.
+  --check  say that, and install nothing"
 )
 
 

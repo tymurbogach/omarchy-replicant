@@ -10,6 +10,10 @@
 # ok() / skip() / run(), and sourcing it silently replaced the test reporters
 # once — the suite then reported "0 checks" while appearing to pass.
 
+# No suite may download the marketplace catalog, which is 7.6 MB from the
+# network. A test that needs a catalog points this at a fixture of its own.
+export REPLICANT_CATALOG_URL="file:///nonexistent/replicant-test-catalog.json"
+
 pass=0; fail=0
 t_ok()  { printf '  \033[32m✓\033[0m %s\n' "$1"; pass=$((pass+1)); }
 t_bad() { printf '  \033[31m✗\033[0m %s\n' "$1"; fail=$((fail+1)); }

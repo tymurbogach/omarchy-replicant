@@ -3792,6 +3792,67 @@ core_install_theme() {
   echo "$want installed from ${unique_origins[0]} — this also makes it the active theme" >&2
 }
 
+# ─── What the marketplace checked, asked only when a person installs ───────
+# Omaplug reads the same catalog fields. The catalog is 7.6 MB, so it is
+# fetched at most once an hour, and never by the status poll: only when a
+# person asks to install a plugin. It informs and never refuses, because
+# `omarchy plugin add` takes no commit to pin to.
+MARKETPLACE_CATALOG_URL="${REPLICANT_CATALOG_URL:-https://plugins.omarchy.org/catalog.json}"
+CATALOG_CACHE="$REPLICANT_HOME/catalog.json"
+CATALOG_MAX_AGE=3600
+
+# marketplace_catalog: print the path of a catalog no older than an hour.
+marketplace_catalog() {
+  local tmp age
+  if [[ -f "$CATALOG_CACHE" ]]; then
+    age=$(( $(date +%s) - $(stat -c %Y "$CATALOG_CACHE" 2>/dev/null || echo 0) ))
+    if (( age < CATALOG_MAX_AGE )); then printf '%s\n' "$CATALOG_CACHE"; return 0; fi
+  fi
+  mkdir -p "$REPLICANT_HOME" 2>/dev/null || return 1
+  tmp=$(mktemp "$REPLICANT_HOME/catalog.XXXXXX") || return 1
+  if curl -fsSL --max-time 20 -o "$tmp" "$MARKETPLACE_CATALOG_URL" 2>/dev/null \
+     && jq -e '.plugins | type == "array"' "$tmp" >/dev/null 2>&1; then
+    mv -f "$tmp" "$CATALOG_CACHE"
+  else
+    rm -f "$tmp"
+  fi
+  [[ -f "$CATALOG_CACHE" ]] || return 1
+  printf '%s\n' "$CATALOG_CACHE"
+}
+
+normalize_repo_url() { printf '%s\n' "$1" | sed -E 's#\.git$##; s#/$##' | tr '[:upper:]' '[:lower:]'; }
+
+# core_plugin_verification <id> [origin]: the marketplace status of a plugin,
+# and where its origin is now, as plain facts on stdout. The origin is asked
+# only when the catalog names a commit to compare it with.
+core_plugin_verification() {
+  local id="$1" origin="${2:-}" catalog entry vstatus vcommit now
+  [[ -n "$origin" ]] || origin=$(missing_plugins | awk -F'\t' -v i="$id" '$1 == i { print $2; exit }')
+  if ! catalog=$(marketplace_catalog); then
+    echo "Marketplace: the catalog could not be read (offline?)."
+    return 0
+  fi
+  entry=$(jq -c --arg id "$id" --arg repo "$(normalize_repo_url "${origin:-none}")" '
+    [.plugins[] | select(.id == $id or ((.repo // "") | ascii_downcase
+      | sub("\\.git$"; "") | sub("/$"; "")) == $repo)][0] // empty' "$catalog" 2>/dev/null)
+  if [[ -z "$entry" ]]; then
+    echo "Marketplace: $id is not listed."
+    return 0
+  fi
+  vstatus=$(jq -r '.verificationStatus // "unknown"' <<<"$entry")
+  vcommit=$(jq -r '.verificationCommit // .listingValidatedCommit // ""' <<<"$entry")
+  echo "Marketplace: $id is listed as $vstatus${vcommit:+, checked at ${vcommit:0:12}}."
+  [[ -n "$vcommit" && -n "$origin" && "$origin" != "-" ]] || return 0
+  now=$(timeout 15 git ls-remote "$origin" HEAD 2>/dev/null | awk 'NR == 1 { print $1 }')
+  if [[ -z "$now" ]]; then
+    echo "Origin: $origin could not be reached."
+  elif [[ "$now" == "$vcommit" ]]; then
+    echo "Origin: $origin is still at the commit that the marketplace checked."
+  else
+    echo "Origin: $origin is at ${now:0:12} now. It has moved since the marketplace checked it."
+  fi
+}
+
 # core_install_plugin <id> — the same action for a plugin. `missing_plugins`
 # already carries the method column that tells clone (an edited built-in)
 # from add (a real third-party plugin) — same two commands restore_plugins
@@ -3820,6 +3881,8 @@ core_install_plugin() {
   fi
   local origin="${unique_pairs[0]%%$'\t'*}" method="${unique_pairs[0]#*$'\t'}"
   command -v omarchy >/dev/null 2>&1 || { echo "omarchy not found on PATH" >&2; return 1; }
+  # A clone copies Omarchy's own built-in, which has no marketplace entry.
+  [[ "$method" == "clone" ]] || core_plugin_verification "$want" "$origin" >&2
   if [[ "$method" == "clone" ]]; then
     omarchy plugin clone "$origin" || { echo "$want — omarchy plugin clone failed" >&2; return 1; }
     echo "$want re-cloned from $origin (any edits you made are not in this)" >&2

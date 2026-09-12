@@ -851,6 +851,33 @@ check_true "install-plugin succeeds for a pending clone" \
 check "…and calls omarchy plugin clone, not plugin add" "plugin clone https://example.com/demo-clone" \
   "$(cat "$FAKE_LOG")"
 
+section "installing a plugin says what the marketplace checked"
+# Omaplug shows the same fields. The check informs and never refuses, because
+# `omarchy plugin add` takes no commit to pin to. A local origin and a catalog
+# fixture keep this off the network.
+vsrc="$TMP/verified-src"; git init -q -b main "$vsrc"; printf 'x\n' > "$vsrc/f"
+git -C "$vsrc" add -A; git -C "$vsrc" -c user.email=t@example.com -c user.name=t commit -qm one
+first=$(git -C "$vsrc" rev-parse HEAD)
+printf '{"plugins":[{"id":"com.example.verified","repo":"%s","verificationStatus":"verified","verificationCommit":"%s"}]}\n' \
+  "$vsrc" "$first" > "$TMP/catalog-fixture.json"
+verify() {
+  REPLICANT_CATALOG_URL="file://$TMP/catalog-fixture.json" \
+    bash -c 'source "$1" 2>/dev/null; CATALOG_CACHE="$2"; core_plugin_verification "$3" "$4"' \
+    _ "$CORE" "$TMP/catalog-cache.json" "$@"
+}
+out=$(verify com.example.verified "$vsrc")
+check_contains "the marketplace status is named" "listed as verified" "$out"
+check_contains "…and an origin still at that commit says so" "still at the commit" "$out"
+git -C "$vsrc" -c user.email=t@example.com -c user.name=t commit -qm two --allow-empty
+check_contains "an origin that moved since the check says so" "has moved" \
+  "$(verify com.example.verified "$vsrc")"
+check_contains "a plugin the marketplace does not list says so" "is not listed" \
+  "$(verify com.example.unlisted "")"
+rm -f "$TMP/catalog-cache.json"
+check_contains "no catalog is said plainly, and blocks nothing" "could not be read" \
+  "$(bash -c 'source "$1" 2>/dev/null; CATALOG_CACHE="$2"; core_plugin_verification com.example.verified' \
+     _ "$CORE" "$TMP/no-cache.json")"
+
 section "pending reinstalls, as JSON for the panel"
 # NOT "mine" — see Task 1's note: that name already has an installed
 # directory on disk from an earlier section in this same file, so

@@ -376,6 +376,12 @@ check_false "install-theme with no name fails" \
   env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" install-theme
 check_false "install-plugin with no id fails" \
   env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" install-plugin
+# --check is what the panel asks before it asks for consent. It must install
+# nothing. The catalog URL from lib.sh points at no file, so this stays offline.
+: > "$FAKE_LOG"
+out=$(env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" install-plugin demo.widget --check 2>&1)
+check_contains "install-plugin --check says what the marketplace knows" "Marketplace:" "$out"
+check "…and never calls omarchy" "" "$(cat "$FAKE_LOG")"
 
 section "restore never installs third-party code on its own"
 : > "$FAKE_LOG"

@@ -26,7 +26,7 @@ done
 rm -rf "$logs"
 
 banner "shell syntax"
-for f in "$ROOT"/bin/omarchy-replicant "$ROOT"/bin/*.sh "$HERE"/*.sh; do
+for f in "$ROOT"/bin/omarchy-replicant "$ROOT"/bin/*.sh "$ROOT"/bin/lib/*.sh "$HERE"/*.sh; do
   if bash -n "$f" 2>/dev/null; then printf '  \033[32m✓\033[0m %s\n' "${f#"$ROOT"/}"
   else printf '  \033[31m✗\033[0m %s\n' "${f#"$ROOT"/}"; bash -n "$f"; failed=$((failed+1)); fi
 done
@@ -44,7 +44,7 @@ if [[ -x "$SHELLCHECK" ]]; then
   # the sourced core. SC2088: tildes inside strings printed to a person, where
   # not expanding is the whole point. All three are noise here, not findings.
   if "$SHELLCHECK" -e SC1091,SC2154,SC2088 -S warning \
-       "$ROOT"/bin/omarchy-replicant "$ROOT"/bin/*.sh "$HERE"/*.sh; then
+       "$ROOT"/bin/omarchy-replicant "$ROOT"/bin/*.sh "$ROOT"/bin/lib/*.sh "$HERE"/*.sh; then
     printf '  \033[32m✓\033[0m clean at warning level\n'
   else failed=$((failed+1)); fi
 else
@@ -130,8 +130,9 @@ if (( qml_problem == 0 )); then printf '  \033[32m✓\033[0m none present\n'; el
 # Spanish reached the plugin once, and nothing noticed.
 banner "no personal data in shipped code"
 # A /home that follows a letter is a repo path such as config/home/bashrc.
-if grep -nE 'omarchy_thinkpad|credentials-(pi|nas)|install-paquetes|(^|[^A-Za-z0-9_.])/home/[a-z]' \
-     "$ROOT"/bin/* "$ROOT"/*.qml "$ROOT/manifest.json"; then
+# -r on bin/: `bin/*` hands grep the directory bin/lib, which it skips.
+if grep -rnE 'omarchy_thinkpad|credentials-(pi|nas)|install-paquetes|(^|[^A-Za-z0-9_.])/home/[a-z]' \
+     "$ROOT/bin" "$ROOT"/*.qml "$ROOT/manifest.json"; then
   printf '  \033[31m✗\033[0m a personal path or name is in shipped code\n'; failed=$((failed+1))
 else
   printf '  \033[32m✓\033[0m none present\n'

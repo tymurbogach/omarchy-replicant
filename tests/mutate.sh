@@ -35,7 +35,7 @@ from: $NF == "block" {
 to: $NF == "never" {
 why: a block inhibitor on the lid switch is named
 ---
-file: bin/replicant-core.sh
+file: bin/lib/common.sh
 suite: test-core.sh
 from: if [[ "$n" == 1 ]]; then printf '%s %s\n' "$n" "$one"; else printf '%s %s\n' "$n" "$many"; fi
 to: printf '%s %s\n' "$n" "$many"

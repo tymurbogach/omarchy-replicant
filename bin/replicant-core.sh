@@ -16,7 +16,10 @@ SECRETS_DIR="$REPO_DIR/secrets"
 # the laptop overwrote each other's inventory on every save, and every pull
 # looked like a change. Scoping it by hostname makes two machines additive
 # instead of competing.
-MACHINE="${REPLICANT_MACHINE:-$(hostnamectl --static 2>/dev/null || hostname 2>/dev/null || echo unknown)}"
+# plural and replicant_machine live in bin/lib/common.sh, shared with the CLI.
+# shellcheck source=bin/lib/common.sh
+source "$PLUGIN_DIR/bin/lib/common.sh" || { echo "replicant-core.sh: bin/lib/common.sh is missing" >&2; exit 1; }
+MACHINE="$(replicant_machine)"
 STATE_ROOT="$REPO_DIR/state"
 STATE_DIR="$STATE_ROOT/$MACHINE"
 
@@ -36,14 +39,6 @@ INCOMING_FILE="$REPLICANT_HOME/incoming"
 # root-owned file; in normal use it is exactly where logind looks.
 LOGIND_DROPIN="${REPLICANT_LOGIND_DROPIN:-/etc/systemd/logind.conf.d/99-lid.conf}"
 
-# plural <n> <singular> [plural] — "1 file", "4 files". Every count this tool
-# prints used to read "4 file(s)", including in the panel, where it appeared
-# eleven times on one screen. Nothing about the parenthesis was ever needed:
-# the number is right there.
-plural() {
-  local n="$1" one="$2" many="${3:-$2s}"
-  if [[ "$n" == 1 ]]; then printf '%s %s\n' "$n" "$one"; else printf '%s %s\n' "$n" "$many"; fi
-}
 
 TEMPLATES_DIR="$REPO_DIR/templates"
 GITHOOKS_DIR="$REPO_DIR/.githooks"

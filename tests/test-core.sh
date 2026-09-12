@@ -641,7 +641,8 @@ section "shortcuts still answers when Omarchy or the bindings file cannot"
 # set -e, as the CLI does.
 had_b=1; mv "$HOME/.config/hypr/bindings.lua" "$TMP/bindings.keep" 2>/dev/null && had_b=0
 out=$(bash -c 'source "$1" 2>/dev/null; core_shortcuts' _ "$CORE")
-check "it is still valid JSON" "0" "$(jq empty <<<"$out" >/dev/null 2>&1; echo $?)"
+# `jq -e`, not `jq empty`: empty output is valid JSON too, and it is the bug.
+check "it still answers with a JSON object" "0" "$(jq -e 'type == "object"' <<<"$out" >/dev/null 2>&1; echo $?)"
 check "…with nothing of your own" "0" "$(jq -r '.own_count' <<<"$out" 2>/dev/null)"
 if (( had_b == 0 )); then mv "$TMP/bindings.keep" "$HOME/.config/hypr/bindings.lua"; fi
 

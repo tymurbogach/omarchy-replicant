@@ -1003,11 +1003,8 @@ cmd_install_theme() {
   local name="${1:-}"
   [[ -n "$name" ]] || fail "usage: omarchy-replicant install-theme <name>"
   ensure_core
-  # Sourced with an empty "$1" on purpose: the core file ends in its own
-  # dispatcher, and this function's own "$1" would otherwise run an unrelated
-  # core command as a side effect (install-theme backup ran core_backup).
   # shellcheck disable=SC1090
-  source "$CORE" "" 2>/dev/null || true
+  source "$CORE" 2>/dev/null || true
   core_install_theme "$name" || exit 1
 }
 
@@ -1016,9 +1013,8 @@ cmd_install_plugin() {
   local id="${1:-}"
   [[ -n "$id" ]] || fail "usage: omarchy-replicant install-plugin <id>"
   ensure_core
-  # Empty "$1" for the core file's own dispatcher — see cmd_install_theme.
   # shellcheck disable=SC1090
-  source "$CORE" "" 2>/dev/null || true
+  source "$CORE" 2>/dev/null || true
   core_install_plugin "$id" || exit 1
 }
 

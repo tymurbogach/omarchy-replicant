@@ -3852,6 +3852,11 @@ core_incoming() {
   printf '%s\n' "${uniq[@]}"
 }
 
+# The commands below run only when this file is executed. A caller that sources
+# it for its functions passes its own positional parameters through, so without
+# this line `omarchy-replicant path machine` ran the `machine` command first.
+[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
+
 if [[ "${1:-}" == "backup" ]]; then core_backup "${2:-}"
 elif [[ "${1:-}" == "status" ]]; then shift; core_status "$@"
 elif [[ "${1:-}" == "diff" ]]; then core_diff "${2:-}" "${3:-auto}"

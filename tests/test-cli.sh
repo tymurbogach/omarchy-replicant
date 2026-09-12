@@ -96,6 +96,12 @@ section "id -> path resolution"
 check "resolves a tracked id"  "$HOME/.config/hypr/input.lua" "$(run path hypr/input.lua)"
 check_false "rejects an unknown id" "$CLI" path nope/nope
 check_false "path with no argument fails" "$CLI" path
+# A sourced file sees the positional parameters of the function that sources
+# it. The core's own dispatcher then ran on the caller's first argument, so
+# `path machine` printed this machine's name before "unknown id".
+out=$(REPLICANT_MACHINE=probe-host "$CLI" path machine 2>&1)
+check "an id that is also a core command runs no core command" "0" \
+  "$(grep -c probe-host <<<"$out" || true)"
 
 section "reading and writing one setting"
 check "get reads a value"      "300" "$(run get idle.screensaver)"

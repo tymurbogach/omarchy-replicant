@@ -1161,6 +1161,29 @@ check_contains "…and says that the scanner is missing" "scanner is missing" \
 git -C "$REPO_DIR" rm -q --cached hook-probe.txt; rm -f "$REPO_DIR/hook-probe.txt"
 mv "$TMP/scan.keep" "$REPO_DIR/bin/scan-secrets.sh"
 
+section "restore works one area at a time: pending, preview, apply"
+# The loop that restores an area lived in the CLI. The mechanism is in the core
+# now, and the CLI keeps the options, the confirmations and the messages. The
+# terminal area's apply step reaches the harness stub for `omarchy`.
+core_backup >/dev/null 2>&1
+alac="$HOME/.config/alacritty/alacritty.toml"
+saved=$(cat "$alac")
+printf 'colors: changed here\n' > "$alac"
+pending=$(restore_pending terminal 2>/dev/null)
+check_contains "a file that differs is pending" "alacritty/alacritty.toml" "$pending"
+# Right after a backup, no other file that exists here may differ from its
+# copy. A file the repo holds and this machine lacks is pending too, and
+# correctly: the restore would create it. The check names the destinations.
+check "…and no other file on this machine is" "" \
+  "$(grep -v 'alacritty/alacritty.toml' <<<"$pending" |
+     while IFS='|' read -r _s d _m; do if [[ -e "${d%/}" ]]; then echo "$d"; fi; done)"
+alac_entry=$(grep 'alacritty/alacritty.toml' <<<"$pending")
+check_contains "the preview shows the change" "colors: changed here" "$(restore_preview "$alac_entry" 2>&1)"
+n=$(restore_apply terminal "$alac_entry" 2>/dev/null)
+check "restore_apply writes it and says how many" "1" "$n"
+check "…with the repo's content" "$saved" "$(cat "$alac")"
+rm -f "$alac".bak.*
+
 section "restoring a root-owned file asks for root or prints the command"
 # install_file cannot write under /etc as a user, so restore-file on the lid
 # drop-in failed on the permission, and the System area claimed "Copied back

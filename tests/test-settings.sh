@@ -312,6 +312,9 @@ chmod +x "$TMP/fakebin/systemctl"
 export PATH="$TMP/fakebin:$PATH"
 # shellcheck source=/dev/null
 source "$CORE"
+# The core sets -euo pipefail. Without this line, the first failing command
+# after here ended the suite with no summary, instead of reporting a check.
+set +e +u
 is_laptop() { return 0; }
 
 check "a drop-in value is read back"    "ignore" "$(get_setting_value lid.close)"
@@ -349,8 +352,6 @@ section "a root-owned write that cannot happen says so"
 pkexec() { return 1; }
 sudo() { return 1; }
 nowhere="$TMP/not-a-dir/99-lid.conf"
-# The lid section above sourced the core again, which turned `set -e` back on,
-# so the exit code is captured in a form that a failure cannot abort.
 rc=0; out=$(ini_set "$nowhere" Login.HandleLidSwitch ignore "" 2>&1) || rc=$?
 check "the write reports failure" "1" "$rc"
 check_false "…and so does root_apply on its own" root_apply "$nowhere" "$TMP/none" ""

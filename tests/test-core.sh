@@ -1345,6 +1345,13 @@ git -C "$P" fetch -q origin HEAD
 git -C "$P" merge -q --ff-only FETCH_HEAD
 check "a plugin updated the way Omarchy updates is not named" "0" \
   "$(edited_plugins | grep -c com.example.edited || true)"
+# HEAD can be behind while the files already match upstream. Porcelain then
+# counts every difference to HEAD as an edit, and doctor called a real plugin
+# in that state "14 uncommitted changes".
+git -C "$P" update-ref HEAD HEAD~1
+check "a plugin whose files match upstream, with HEAD behind, is not named" "0" \
+  "$(edited_plugins | grep -c com.example.edited || true)"
+git -C "$P" update-ref HEAD FETCH_HEAD
 printf '// a local tweak\n' > "$P/Widget.qml"
 check "an edit made in place is, as one uncommitted change" "1" \
   "$(edited_plugins | awk -F'\t' '$1 == "com.example.edited" {print $3}')"

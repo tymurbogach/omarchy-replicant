@@ -3666,9 +3666,45 @@ edited_plugins() {
     upstream=(--remotes)
     git -C "$pdir" rev-parse -q --verify FETCH_HEAD >/dev/null 2>&1 && upstream+=(FETCH_HEAD)
     ahead=$(git -C "$pdir" rev-list --count HEAD --not "${upstream[@]}" 2>/dev/null || echo 0)
-    (( dirty > 0 || ahead > 0 )) && printf '%s\t%s\t%s\t%s\n' "$pid" "$pdir" "$dirty" "$ahead"
+    (( dirty > 0 || ahead > 0 )) || continue
+    # HEAD can be behind while the files already match a commit upstream.
+    # Porcelain then counts every difference to HEAD as an edit, and doctor
+    # called such a plugin "14 uncommitted changes". Files that match an
+    # upstream commit hold no work of their own.
+    upstream_tree_matches "$pdir" && continue
+    printf '%s\t%s\t%s\t%s\n' "$pid" "$pdir" "$dirty" "$ahead"
   done
   return 0
+}
+
+# tree_matches_commit <dir> <commit>: are the files of the checkout exactly
+# the files of that commit, untracked files included? A temporary index is
+# built from the commit, so the checkout's own index is never written. The
+# shell reloads a plugin on any write under its directory.
+tree_matches_commit() {
+  local dir="$1" commit="$2" idx rc=1
+  idx=$(mktemp) || return 1
+  if GIT_INDEX_FILE="$idx" git -C "$dir" read-tree "$commit" 2>/dev/null \
+     && GIT_INDEX_FILE="$idx" git --no-optional-locks -C "$dir" diff --quiet 2>/dev/null \
+     && [[ -z "$(GIT_INDEX_FILE="$idx" git --no-optional-locks -C "$dir" ls-files --others --exclude-standard 2>/dev/null)" ]]; then
+    rc=0
+  fi
+  rm -f "$idx"
+  return "$rc"
+}
+
+# upstream_tree_matches <dir>: do the files match FETCH_HEAD or the tip of any
+# remote branch? Offline, like edited_plugins: it asks only what the last
+# fetch knew.
+upstream_tree_matches() {
+  local dir="$1" tip
+  local -a tips=()
+  mapfile -t tips < <({ git -C "$dir" rev-parse -q --verify FETCH_HEAD 2>/dev/null
+                       git -C "$dir" for-each-ref --format='%(objectname)' refs/remotes 2>/dev/null; } | sort -u)
+  for tip in ${tips[@]+"${tips[@]}"}; do
+    tree_matches_commit "$dir" "$tip" && return 0
+  done
+  return 1
 }
 
 # Plugins are not files to copy back — they are repos to reinstall. The saved

@@ -451,6 +451,19 @@ layouts=$(setting_options "$(find_setting input.kbLayout)")
 check_true "without localectl, a short list is still offered" grep -qx us <<<"${layouts//,/$'\n'}"
 rm -f "$TMP/fakebin/localectl"
 
+section "toml_set writes one key in one section and nothing else"
+# The same key name appears in more than one section of shell.toml, and the
+# writer is a line editor, not a TOML parser. It must stay inside its section.
+f="$TMP/two-sections.toml"
+printf '[a]\nsize = 1\n\n[b]\nsize = 2\n' > "$f"
+toml_set "$f" b.size 3
+check "the key in the named section changes" "3" "$(map_lookup "$f" toml b.size)"
+check "…and the same key in another section does not" "1" "$(map_lookup "$f" toml a.size)"
+check "…and no section header is written twice" "1" "$(grep -c '^\[b\]' "$f")"
+toml_set "$f" c.size 4
+check "a missing section is added once, with its key" "4" "$(map_lookup "$f" toml c.size)"
+check "…and the sections before it are kept" "1" "$(map_lookup "$f" toml a.size)"
+
 section "the registry itself is well-formed"
 bad_fields=0; dupe=0; seen=""
 for entry in "${SETTINGS[@]}"; do

@@ -335,7 +335,7 @@ CATEGORIES=(
   "secrets|󰌆|Secrets & keys|SSH keys, tokens and .env files — private, mode 600|Copied back as mode 600; contents are never printed"
   "plugins|󰐱|Plugins|Plugin settings, plus every plugin's id and git origin|Plugin settings copied back; third-party plugins are installed only on request"
   "scripts|󰈙|Scripts|Your helper scripts under ~/.local/bin and Omarchy hooks|Copied back with the executable bit kept"
-  "system|󰋊|System|systemd drop-ins for lid, sleep and fingerprint|Copied back with sudo, then systemctl daemon-reload"
+  "system|󰋊|System|systemd drop-ins for lid and sleep|Needs root: one file asks for it, a full restore prints sudo"
   "other|󰈔|Other|Anything else you asked Replicant to track|Copied back as-is"
 )
 CATEGORY_ORDER=(shortcuts appearance desktop hyprland terminal development secrets plugins scripts system other)
@@ -3454,6 +3454,13 @@ core_restore_file() {
     return 0
   fi
   mode=$(restore_mode_for "$rel")
+  # Outside $HOME needs root. install_file failed there on the permission.
+  # root_apply asks through pkexec or passwordless sudo, runs the apply step
+  # in the same call, and otherwise prints the command and fails.
+  if [[ "$src" != "$HOME"/* ]]; then
+    root_apply "$src" "$repo_path" "$(apply_for_category "$(category_for_rel "$rel")")"
+    return
+  fi
   DRY=0 install_file "$repo_path" "$src" "$mode"
   local apply; apply=$(apply_for_category "$(category_for_rel "$rel")")
   [[ -n "$apply" ]] && bash -c "$apply" >/dev/null 2>&1 || true

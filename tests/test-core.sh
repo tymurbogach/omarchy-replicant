@@ -1101,6 +1101,23 @@ check_false "a missing scanner blocks the commit" bash -c 'cd "$1" && .githooks/
 git -C "$REPO_DIR" rm -q --cached hook-probe.txt; rm -f "$REPO_DIR/hook-probe.txt"
 mv "$TMP/scan.keep" "$REPO_DIR/bin/scan-secrets.sh"
 
+section "restoring a root-owned file asks for root or prints the command"
+# install_file cannot write under /etc as a user, so restore-file on the lid
+# drop-in failed on the permission, and the System area claimed "Copied back
+# with sudo". Both ways to root are stubbed as functions, so this can never
+# raise a real prompt or write the real file.
+pkexec() { return 1; }
+sudo() { return 1; }
+lidcopy=$(repo_copy_for_rel etc/99-lid.conf); mkdir -p "$(dirname "$lidcopy")"
+printf '# test only\n[Login]\n' > "$lidcopy"
+rc=0; out=$(core_restore_file etc/99-lid.conf 2>&1) || rc=$?
+check "it fails without root" "1" "$rc"
+check_contains "…and prints the command to run" "sudo install" "$out"
+rm -f "$lidcopy"
+unset -f pkexec sudo
+check_contains "the System area says that it needs root" "Needs root" \
+  "$(category_field "$(find_category system)" 5)"
+
 section "the panel's text has to fit the panel"
 # Every one of these strings is drawn into a fixed-width row that elides. A
 # description that runs long does not wrap or warn — it just loses its last

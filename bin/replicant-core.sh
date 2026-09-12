@@ -2334,7 +2334,7 @@ backup_before_write() {
   cp -a "$file" "$b" || return 1
   mkdir -p "$REPLICANT_HOME" 2>/dev/null || return 0
   printf '%s\n' "$b" >> "$SETTING_BACKUPS_FILE"
-  # shellcheck disable=SC2012  # names are ours: <file>.bak.<epoch>, no spaces
+  # shellcheck disable=SC2012,SC2010  # names are ours: <file>.bak.<epoch>, no spaces
   while read -r old; do
     [[ -n "$old" ]] && rm -f -- "$old"
   done < <(ls -1t -- "$file".bak.* 2>/dev/null | grep -Fxf "$SETTING_BACKUPS_FILE" | tail -n +$((BACKUPS_KEPT + 1)))

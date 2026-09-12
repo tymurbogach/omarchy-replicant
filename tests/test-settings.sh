@@ -177,8 +177,10 @@ check "…without touching other files' backups" "1" \
 restore_bak="$TMP/.config/omarchy/shell.json.bak.1000000000"
 cp "$TMP/.config/omarchy/shell.json" "$restore_bak"
 touch -d '2020-01-01' "$restore_bak"
+# shellcheck disable=SC2034  # read by backup_before_write in the sourced core
 BACKUPS_KEPT=1
 for v in 150 160; do set_setting_value idle.lock "$v" >/dev/null 2>&1; done
+# shellcheck disable=SC2034  # read by backup_before_write in the sourced core
 BACKUPS_KEPT=3
 check_true "a restore's backup survives later setting edits" test -f "$restore_bak"
 n=$(find "$TMP/.config/omarchy" -name 'shell.json.bak.*' ! -name '*.1000000000' | wc -l)

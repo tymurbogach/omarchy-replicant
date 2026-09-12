@@ -1137,6 +1137,10 @@ mv "$REPO_DIR/bin/scan-secrets.sh" "$TMP/scan.keep"
 printf 'x\n' > "$REPO_DIR/hook-probe.txt"
 git -C "$REPO_DIR" add hook-probe.txt
 check_false "a missing scanner blocks the commit" bash -c 'cd "$1" && .githooks/pre-commit' _ "$REPO_DIR"
+# For the right reason. Without the check, running the missing scanner fails
+# as well and blocks the commit, with a message about a credential instead.
+check_contains "…and says that the scanner is missing" "scanner is missing" \
+  "$(bash -c 'cd "$1" && .githooks/pre-commit' _ "$REPO_DIR" 2>&1)"
 git -C "$REPO_DIR" rm -q --cached hook-probe.txt; rm -f "$REPO_DIR/hook-probe.txt"
 mv "$TMP/scan.keep" "$REPO_DIR/bin/scan-secrets.sh"
 

@@ -66,6 +66,9 @@ check_contains "…and says so" "unknown command" "$(run definitely-not-a-comman
 check_false "status on an uninitialised machine still answers" false
 check "status --json before setup is valid JSON" "0" "$(run status --json | jq empty >/dev/null 2>&1; echo $?)"
 check "…and reports not initialized" "false" "$(run status --json | jq -r '.initialized')"
+# It said "run init --savegame", a flag that does nothing. The two real starts
+# are create and clone.
+check_contains "…and the plain answer says how to start" "create --push" "$(run status)"
 
 section "--help is a question, never an instruction"
 # Asking 33 commands what they do used to DO them. `unlink --help` removed the
@@ -225,6 +228,10 @@ section "diff renders as plain text for the panel"
 check_contains "against the repo by default" "this machine" "$(run diff hypr/input.lua)"
 check_contains "--against default works"     "omarchy default" "$(run diff hypr/input.lua --against default)"
 check_false "diff with no id fails" "$CLI" diff nope/nope
+# --terminal opened the floating terminal with the Omarchy logo and a "press a
+# key" prompt, against hard rule 6, and it needed the CLI on PATH, against hard
+# rule 7. The panel never used it.
+check_contains "diff no longer takes --terminal" "unknown option" "$(run diff hypr/input.lua --terminal)"
 
 section "the per-file sync switch, from the command line"
 check_false "sync needs both arguments" "$CLI" sync hypr/input.lua

@@ -9,9 +9,11 @@ PLUGIN_DIR="$(cd -- "$(dirname -- "$REAL_BIN")/.." && pwd)"
 CORE="$PLUGIN_DIR/bin/replicant-core.sh"
 # fallback if running via a copy without the plugin dir
 if [[ ! -f "$CORE" ]]; then
-  for p in "$HOME/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/bin/replicant-core.sh" "/usr/share/omarchy/bin/replicant-core.sh"; do
-    [[ -f "$p" ]] && CORE="$p" && PLUGIN_DIR="$(cd -- "$(dirname -- "$p")/.." && pwd)" && break
-  done
+  installed_core="$HOME/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/bin/replicant-core.sh"
+  if [[ -f "$installed_core" ]]; then
+    CORE="$installed_core"
+    PLUGIN_DIR="$(cd -- "$(dirname -- "$installed_core")/.." && pwd)"
+  fi
 fi
 PLUGIN_ID="io.github.tymurbogach.omarchy-replicant"
 REPLICANT_HOME="${OMARCHY_REPLICANT_HOME:-$HOME/.local/share/omarchy-replicant}"
@@ -386,21 +388,15 @@ cmd_edit() {
 }
 
 cmd_open_diff() {
-  local id="" against="auto" in_terminal=0
+  local id="" against="auto"
   while (( $# )); do case "$1" in
     --against) against="${2:-auto}"; shift 2;;
-    --terminal) in_terminal=1; shift;;
-    --plain) in_terminal=0; shift;;
     -*) fail "unknown option: $1";;
     *) id="$1"; shift;;
   esac; done
-  [[ -n "$id" ]] || fail "usage: diff <id> [--against repo|default] [--terminal]"
+  [[ -n "$id" ]] || fail "usage: diff <id> [--against repo|default]"
   ensure_core
-  if (( in_terminal )) && command -v omarchy-launch-floating-terminal-with-presentation >/dev/null 2>&1; then
-    omarchy-launch-floating-terminal-with-presentation "omarchy-replicant diff '${id//\'/}' --against $against | less -R"
-    return 0
-  fi
-  # plain text on stdout: the panel renders this inline
+  # Plain text on stdout: the panel renders it inline.
   bash "$CORE" diff "$id" "$against"
 }
 

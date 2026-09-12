@@ -1461,8 +1461,6 @@ ensure_repo_layout() {
 *.bak
 **/.cache/
 **/Cache/
-.ssh/id_*
-.ssh/*.pem
 GI
   fi
   # git init if needed
@@ -3270,7 +3268,7 @@ core_status() {
     esac
   done
   if [[ ! -d "$REPO_DIR/.git" ]]; then
-    if (( json )); then echo '{"initialized":false}'; else echo "not initialized — run omarchy-replicant init --savegame"; fi
+    if (( json )); then echo '{"initialized":false}'; else echo "not initialized: run 'omarchy-replicant create --push', or 'clone <url>' for a repo you already have"; fi
     return 0
   fi
   # Best-effort refresh of origin/HEAD so unpushed/ahead/behind are accurate.

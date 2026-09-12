@@ -369,7 +369,7 @@ Panel {
   // to type that why. Pressing Save tracked a secret, copied it in, and left it
   // uncommitted, with every badge as red as before.
   function doSavegame() { root.busyLabel = "Saving to GitHub…"; saveProc.command = [root.cli, "savegame", "--auto"]; saveProc.running = true }
-  function doPull()     { root.busyLabel = "Pulling…";          pullProc.command = [root.cli, "pull", "-y"]; pullProc.running = true }
+  function doPull()     { root.busyLabel = "Pulling…";          pullProc.command = [root.cli, "pull"]; pullProc.running = true }
   function doBackup()   { root.busyLabel = "Copying files…";    backupProc.command = [root.cli, "backup"]; backupProc.running = true }
   function doDoctor()   { root.busyLabel = "Checking…";         root.lastOutput = "Running health check…"; doctorProc.command = [root.cli, "doctor"]; doctorProc.running = true }
 

@@ -1418,6 +1418,17 @@ check "an empty track list is written" "0" "$rc"
 check "…with its header and no blank line" "0" "$(grep -c '^$' "$TMP/empty.track" 2>/dev/null || true)"
 rm -f "$TMP/empty.track"
 
+section "a backup leaves no variables of its own behind"
+# Bash scopes dynamically, and core_backup assigned src, rel, entry and more
+# without `local`. The CLI sources the core, so they leaked into its scope.
+# Every global name is compared, so a new leak cannot hide behind a list.
+leaked=$(bash -c 'source "$1" 2>/dev/null; set +e
+  __before=$(compgen -v | sort)
+  core_backup >/dev/null 2>&1
+  comm -13 <(printf "%s\n" "$__before") <(compgen -v | sort) |
+    grep -vxE "__before|_|BASH_REMATCH|PIPESTATUS|COLUMNS|LINES" | paste -sd" " -' _ "$CORE")
+check "core_backup leaks no globals" "" "$leaked"
+
 section "the core refuses a command it does not have"
 # The chain of ifs that dispatched the core's commands did nothing for an
 # unknown one and exited 0, which a caller reads as success.

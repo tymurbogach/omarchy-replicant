@@ -1482,6 +1482,10 @@ GI
 }
 
 core_backup() {
+  # Bash scopes dynamically, and the CLI sources this file, so a name assigned
+  # here without `local` leaked into the caller: src, rel, entry and twelve more.
+  local entry src rel dst f d copied=0 missing=0 scopied=0 known name \
+        base_omarchy other_omarchy NOISE SCAN
   ensure_repo_layout
   # Before anything is copied, because it decides WHERE profile-scoped copies
   # go. Called here and not from ensure_repo_layout, which core_profile_set

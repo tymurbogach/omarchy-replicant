@@ -142,6 +142,12 @@ suite: test-cli.sh
 from: declare -gA FILE_MAP_LOADED=()
 to: declare -A FILE_MAP_LOADED=()
 why: the core's caches survive being sourced inside a function
+---
+file: bin/lib/scopes.sh
+suite: test-cli.sh
+from: printf -v "$1" '%s' "${SCOPE_OF[$2]:-shared}"
+to: printf -v "$1" '%s' shared
+why: the fork-free scope lookup gives the real scope
 DATA
 )
 

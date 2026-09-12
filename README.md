@@ -1,8 +1,8 @@
 <h1 align="center">Omarchy Replicant</h1>
 
 <p align="center">
-  <b>The right way to manage, save and replicate your Omarchy setup across your machines.</b><br>
-  Built for one repo shared by a desktop <i>and</i> a laptop.
+  <b>Manage, save and replicate your Omarchy setup across your machines.</b><br>
+  Built for one private repo that a desktop <i>and</i> a laptop share.
 </p>
 
 <p align="center">
@@ -11,47 +11,48 @@
   <img src="docs/images/settings.png" alt="Settings" width="270">
 </p>
 
+## Install
+
 ```bash
 omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --enable --yes
 ```
 
-Click the icon in your bar → **Create private repo**. Done. It makes a private GitHub repo,
-copies your configs and secrets in, and pushes.
+Click the icon in your bar, then **Create private repo**. The plugin creates a private GitHub repo,
+copies your configs and secrets into it, and pushes. [First-time setup](docs/getting-started.md)
+walks through it.
 
----
+## Usage
 
-## Why not just copy dotfiles
+### Why not just copy dotfiles
 
-Because copying a file back is only half a restore. Omarchy keeps your setup in more than files,
-and each part has one correct way to be put back.
+A copied file is only half of a restore. Omarchy keeps your setup in more than files, and each part
+has one correct way back.
 
 | | Copying dotfiles | Replicant |
 | --- | --- | --- |
-| **Theme** | copies `theme.name`, or 556 MB of wallpapers | records each theme's git origin, re-applies the theme, and installs a missing one only when you ask |
-| **Hyprland** | copies the Lua | copies, then `hyprctl reload` **and** checks `configerrors` |
-| **Terminals** | wait for a reboot | `omarchy restart terminal` |
-| **Plugins** | commits someone else's source | works out each origin — even for one you wrote — and installs it on request |
-| **Shortcuts** | snapshots every binding on the machine | tracks only *your* overrides — Omarchy's own defaults ship with the distro |
-| **Reset** | `rm` and re-copy | `omarchy refresh config <file>` |
+| **Theme** | Copies `theme.name`, or 556 MB of wallpapers | Records each theme's git origin, applies the theme again, and installs a missing theme only when you ask |
+| **Hyprland** | Copies the Lua | Copies it, runs `hyprctl reload`, **and** checks `configerrors` |
+| **Terminals** | Wait for a reboot | Runs `omarchy restart terminal` |
+| **Plugins** | Commits someone else's source | Records each origin, even for a plugin you wrote, and installs it on request |
+| **Shortcuts** | Saves every binding on the machine | Tracks only *your* overrides, because Omarchy's defaults come with the distribution |
+| **Reset** | `rm`, then copy again | Runs `omarchy refresh config <file>` |
 
 The panel names the method under every area before you press anything.
 
-## Desktop *and* laptop, one repo
+### Desktop *and* laptop, one repo
 
-The part every dotfile repo gets wrong. Some files describe **the machine**, not you.
-
-Every file has a scope, and you set it once — the decision lives in the repo, so both machines
-honour it:
+Some files describe **the machine**, not you. Every file has a scope, and you set it once. The
+decision lives in the repo, so both machines follow it.
 
 | Scope | What happens |
 | --- | --- |
-| **Shared** | one copy, every machine saves and restores it |
-| **`<profile>`** | a copy per profile — your desktop and laptop each keep their own, neither overwrites the other |
-| **Off** | never saved from here, never restored onto here |
+| **Shared** | One copy. Every machine saves it and restores it. |
+| **`<profile>`** | One copy for each profile. The desktop and the laptop each keep their own, and neither overwrites the other. |
+| **Off** | Never saved from here, and never restored onto here. |
 
-`hypr/monitors.lua` starts profile-scoped: both machines get a backup of their screen layout,
-neither gets the other's. Your package and plugin inventory is recorded per hostname too, so two
-machines add to the repo instead of fighting over it.
+`hypr/monitors.lua` starts profile-scoped: each machine keeps a backup of its own screen layout.
+The package and plugin inventory is recorded for each hostname, so two machines add to the repo
+instead of overwriting each other.
 
 ```bash
 omarchy-replicant profile              # which profile this machine is in
@@ -59,60 +60,70 @@ omarchy-replicant profile desktop      # put it in another one
 omarchy-replicant scope hypr/input.lua profile
 ```
 
-## Your list, not somebody else's
+### Your list, not somebody else's
 
-Every dotfile tool ships one person's list of files. This one ships the paths any Omarchy machine
-plausibly has and keeps **yours** in your own repo, so they travel to your second machine without
-being published to everyone else's.
+The plugin ships only the paths that any Omarchy machine plausibly has. **Your** own files go into a
+list in your own repo, so they travel to your second machine and stay private.
 
-Panel → **Configs** → **Add more files** proposes what is not tracked yet, each row with the reason
-and a **Track** button. It will not propose a symlink, a mise shim, a browser's own state, a file
-another plugin installed, or anything identical to Omarchy's default — and it flags a file that
-holds a credential so you track it as a secret instead of world-readable. Nothing is added until
-you press the button.
+Panel, **Configs**, **Add more files** proposes what is not tracked yet. Each row gives a reason and
+a **Track** button. It never proposes a symlink, a mise shim, a browser's own state, a file that
+another plugin installed, or a file identical to Omarchy's default. It marks a file that holds a
+credential, so that you track it as a secret. Nothing is added until you press the button.
 
 ```bash
 omarchy-replicant suggest                                # the same list, in a terminal
 omarchy-replicant track ~/.local/bin/my-script
 omarchy-replicant track ~/.config/nvim/                  # a whole directory
-omarchy-replicant track ~/.config/gh/hosts.yml --secret  # stored 600, never rendered
+omarchy-replicant track ~/.config/gh/hosts.yml --secret  # stored at mode 600, never shown
 ```
 
-## Big things are installed, not copied
+### Big things are installed, not copied
 
-The eight custom themes on the machine this was built on are **556 MB**, 400 of it their own `.git`.
-Copying that into a backup repo would be absurd, so what travels is the URL.
+The eight custom themes on the first machine were **556 MB**, and 400 MB of that was their own `.git`
+directories. So what travels is the URL.
 
 | | Recorded | Put back with |
 | --- | --- | --- |
-| Themes | name + git origin | `omarchy theme set`; a missing one via `install-theme <name>` |
-| Plugins | id + version + origin + method | settings copied back; the plugin via `install-plugin <id>` |
-| Packages | per hostname, official and AUR | your package manager |
+| Themes | Name and git origin | `omarchy theme set`. A missing theme: `install-theme <name>` |
+| Plugins | Id, version, origin and method | Settings are copied back. The plugin: `install-plugin <id>` |
+| Packages | For each hostname, official and AUR | Your package manager |
 
-A theme or plugin that is not on this machine is **not fetched by a restore**. A restore names it
-and its origin, and you install it with `omarchy-replicant install-theme <name>` /
-`omarchy-replicant install-plugin <id>`, or the **Install** button on that row in the panel. The
-reason is that an origin holds whatever its owner pushed today, and no Omarchy install command takes
-a commit to pin to — so fetching somebody else's current code stays your decision, made each time.
-Installing a theme also makes it the active theme. Plugins resolve even with no obvious origin: one
-you wrote yourself is traced back to your own checkout.
+**A restore does not fetch a theme or a plugin.** It names each missing one with its origin. You
+install it with `omarchy-replicant install-theme <name>`, `omarchy-replicant install-plugin <id>`,
+or the **Install** button in the panel. An origin holds whatever its owner pushed today, and no
+Omarchy install command takes a commit to pin, so fetching somebody else's code stays your decision.
 
-## What else it does
+Before a plugin installs, Replicant says what the Omarchy marketplace checked, and whether the origin
+has moved since. Installing a theme also makes it the active theme.
 
-- **46 paths out of the box** — 43 configs and 3 secrets — plus whatever you add, grouped into eleven areas. Nothing scrolls forever; you open the one you came for.
-- **What your setup loads comes with it.** Every module `hyprland.lua` requires is saved with it (OmaSettings keeps everything its window sets in `hypr/omasettings.lua`), and so is every plugin's settings file — including one for a plugin only your other machine has, which a save from this one used to delete.
-- **Directories, not just files.** `~/.config/nvim/` is one row with a file count; a change anywhere inside it says so, and `.git` inside a tracked tree is never copied.
-- **Change detection that tells the truth.** Every file is compared by content against the copy in your repo, so editing one says so immediately — and putting it back clears the warning by itself. Badges, in the panel's own words: **●** unsaved, **↓** to restore, **↑** to push, **◆** saved, **○** default, **⊘** off, **·** not here.
-- **It knows which way a change points.** Two machines on one repo means "this file and its copy differ" has two opposite answers, and only one of them is Save. After a `pull`, anything another machine changed is marked **↓ to restore** instead of ● unsaved — so the obvious button is never the one that commits over somebody else's work.
-- **24 settings from the panel**, in units people use — the lock screen is *10 min*, not *600*.
-- **Lid & sleep** on laptops: what closing the lid does on battery, on AC, and when docked.
-- **Two ways back for every value** — one button to Omarchy's default, one to what your repo has.
-- **Secrets stay secret.** SSH keys and `.env` files are stored at mode 600; the panel shows a kind, a mode and a variable *count*. No value is ever drawn on screen, and the diff refuses to render one.
-- **An undo for the undo.** Every write keeps the version it replaced as `.bak.<epoch>` — and Restore now lists them, says how long ago each was made and whether it still differs from what you have, and puts one back with a button. Undo is a swap, so it is itself reversible and the backups never pile up.
-- **An inventory that only moves when something moved.** A file earns its place by being what a restore consumes or what a person rebuilds a machine from. Versions that bump on their own, countdowns, and the units your distribution enables are not that, and they used to cost a commit every single save.
-- **No terminal pop-ups.** Editing opens your editor, diffs render in the panel, destructive actions confirm in the panel.
+### What else it does
 
-## Second machine
+- **46 paths out of the box**: 43 configs and 3 secrets, plus whatever you add, in eleven areas.
+  You open the area you came for, so nothing scrolls forever.
+- **What your setup loads comes with it.** Every module that `hyprland.lua` requires is saved with
+  it, and so is every plugin's settings file. That includes a plugin that only your other machine has.
+- **Directories, not only files.** `~/.config/nvim/` is one row with a file count. A change anywhere
+  inside it shows up. A `.git` directory inside a tracked tree is never copied.
+- **Change detection that tells the truth.** Every file is compared by content with its copy in
+  your repo. Edit a file and the badge shows it. Put it back and the badge clears by itself.
+- **The badges**, in the panel's own words: **●** unsaved, **↓** to restore, **↑** to push,
+  **◆** saved, **○** default, **⊘** off, **·** not here.
+- **It knows which way a change points.** After a `pull`, a file that another machine changed is
+  marked **↓ to restore**, not ● unsaved. So the obvious button never commits over another
+  machine's work.
+- **It says whether a save reached GitHub.** If another machine pushed first, the save says so and
+  tells you to pull.
+- **24 settings from the panel**, in units that people use: the lock screen is *10 min*, not *600*.
+- **Lid and sleep** on laptops: what closing the lid does on battery, on AC, and when docked.
+- **Two ways back for every value**: one button to Omarchy's default, one to what your repo has.
+- **Secrets stay secret.** SSH keys and `.env` files are stored at mode 600. The panel shows a kind,
+  a mode and a count of variables. No value is ever drawn on screen, and the diff refuses to show one.
+- **An undo for the undo.** Every write keeps the version it replaced as `.bak.<epoch>`. The
+  Restore tab lists them and puts one back with a button. Undo is a swap, so it is itself reversible.
+- **No terminal pop-ups.** Editing opens your editor, a diff renders in the panel, and a destructive
+  action confirms in the panel.
+
+### Second machine
 
 ```bash
 omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --enable --yes
@@ -120,43 +131,56 @@ P=~/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant
 $P/bin/omarchy-replicant clone https://github.com/<you>/<hostname>-replicant
 ```
 
-Panel → **Restore** → *Preview* shows exactly what would change and touches nothing.
+Panel, **Restore**, *Preview* shows what would change, and touches nothing.
+
+## Configure
+
+- **Settings**: panel, **Settings**. A change is written to the real config file, applied, and
+  committed. The CLI does the same with `omarchy-replicant set <id> <value>`, in the stored unit.
+- **Scopes and profiles**: the scope button on every row of **Configs**, or `scope` and `profile`.
+- **Your own files**: **Add more files** in the panel, or `track` and `untrack`.
+- **A key for the panel**: bind `omarchy shell replicant toggle` in `~/.config/hypr/bindings.lua`.
+- **The command line**: the panel does not need it. To put `omarchy-replicant` on your `PATH`, run
+  `$P/bin/omarchy-replicant link`. `unlink` takes it off again.
 
 ## Safety
 
-Dry-run by default. Every overwritten file is kept as `<file>.bak.<epoch>`. Anything outside
-`$HOME` is never written silently. Your data repo is **private and yours** — this repo is only the
-plugin's code, and the two never mix.
+Every command that writes to your machine is a dry run by default. Every file that it overwrites is
+kept as `<file>.bak.<epoch>`. Nothing outside `$HOME` is written without a word: you get the exact
+`sudo` command. Your data repo is **private and yours**. This repo holds only the plugin's code.
 
-## Removing it
+## Remove
 
-`purge` lives inside the plugin, so run it **before** removing the plugin:
+`purge` lives inside the plugin, so run it **before** you remove the plugin:
 
 ```bash
 P=~/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant
-$P/bin/omarchy-replicant purge                 # show what is on disk — changes nothing
-$P/bin/omarchy-replicant purge --apply --repo  # remove it, local clone included
+$P/bin/omarchy-replicant purge                 # show what is on disk, and change nothing
+$P/bin/omarchy-replicant purge --apply --repo  # remove it, the local clone included
 omarchy plugin remove io.github.tymurbogach.omarchy-replicant
 ```
 
-Your GitHub repo is untouched either way.
+Your GitHub repo is not touched either way.
 
 ## Requirements
 
-Omarchy 4 (Quattro). Two things beyond a stock install, both checked by
-`omarchy-replicant doctor`, which names the exact command if either is missing:
+Omarchy 4 (Quattro), and two tools beyond a stock install. `omarchy-replicant doctor` checks both,
+and it names the command that installs a missing one.
 
-| | Why | Install |
+| Tool | Why | Install |
 | --- | --- | --- |
-| `github-cli` (`gh`) | logs you in and creates the private repo | `omarchy pkg add github-cli` |
-| `jq` | reads and writes the JSON configs | `omarchy pkg add jq` |
+| `github-cli` (`gh`) | Logs you in and creates the private repo | `omarchy pkg add github-cli` |
+| `jq` | Reads and writes the JSON configs | `omarchy pkg add jq` |
 
-`git` is already on every Omarchy machine. Nothing else is pulled in, and the plugin writes
-nothing outside its own folder and `~/.local/share/omarchy-replicant/`.
+`git` is on every Omarchy machine. The plugin pulls in nothing else, and it writes nothing outside
+its own folder and `~/.local/share/omarchy-replicant/`.
 
 ## Docs
 
 - [First-time setup](docs/getting-started.md)
-- [Notes for contributors](CLAUDE.md) — the traps this plugin has actually hit
+- [How Replicant works](docs/SPEC.md)
+- [Working on Replicant](CONTRIBUTING.md): the tests, and the traps this plugin has hit
 
-MIT licensed.
+## License
+
+MIT. See [LICENSE](LICENSE).

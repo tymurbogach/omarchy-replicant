@@ -634,6 +634,17 @@ check "…the command lands in the command field" "voxtype record toggle" \
 check "an unbind is recorded as one" "unbind" \
   "$(printf '%s' "$sc" | jq -r '[.own[] | select(.key=="SUPER + SPACE")][0].kind')"
 
+section "shortcuts still answers when Omarchy or the bindings file cannot"
+# The key list comes from `omarchy menu keybindings`, which is the failing
+# harness stub here. Under set -o pipefail that failure ended `shortcuts` with
+# no output, and so did a machine with no hypr/bindings.lua. The subshell has
+# set -e, as the CLI does.
+had_b=1; mv "$HOME/.config/hypr/bindings.lua" "$TMP/bindings.keep" 2>/dev/null && had_b=0
+out=$(bash -c 'source "$1" 2>/dev/null; core_shortcuts' _ "$CORE")
+check "it is still valid JSON" "0" "$(jq empty <<<"$out" >/dev/null 2>&1; echo $?)"
+check "…with nothing of your own" "0" "$(jq -r '.own_count' <<<"$out" 2>/dev/null)"
+if (( had_b == 0 )); then mv "$TMP/bindings.keep" "$HOME/.config/hypr/bindings.lua"; fi
+
 section "secrets describe themselves without revealing anything"
 mkdir -p "$HOME/.ssh" "$HOME/.config/environment.d"
 printf 'PRIVATE KEY MATERIAL\n' > "$HOME/.ssh/id_ed25519"; chmod 600 "$HOME/.ssh/id_ed25519"

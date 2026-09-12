@@ -3212,12 +3212,14 @@ core_shortcuts() {
       if (n >= 3) printf "%s\t%s\t%s\tunbind\n", parts[2], "removed", "", ""
     }
   ' "$own_file" 2>/dev/null | jq -Rsc 'split("\n") | map(select(length > 0) | split("\t")
-      | {key: .[0], description: .[1], command: .[2], kind: .[3]})')
+      | {key: .[0], description: .[1], command: .[2], kind: .[3]})') || true
   [[ -n "$own" ]] || own='[]'
+  # `|| true` on both: with set -o pipefail, a missing bindings.lua or a failing
+  # `omarchy menu keybindings` ended the whole command with no output at all.
   active=$(omarchy menu keybindings --print 2>/dev/null |
     sed -e 's/[[:space:]]*→[[:space:]]*/\t/' |
     jq -Rsc 'split("\n") | map(select(length > 0) | split("\t")
-      | {key: (.[0] // "" | sub("[[:space:]]+$";"")), description: (.[1] // "")})')
+      | {key: (.[0] // "" | sub("[[:space:]]+$";"")), description: (.[1] // "")})') || true
   [[ -n "$active" ]] || active='[]'
   jq -nc --argjson own "$own" --argjson active "$active" --arg file "$own_file" \
     '{file:$file, own:$own, active:$active, own_count:($own|length), active_count:($active|length)}'

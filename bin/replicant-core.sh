@@ -239,7 +239,10 @@ USER_SECRETS=()
 # copy, prune, restore and badge passes cannot treat them differently. See
 # load_auto_manifest.
 AUTO_MANIFEST=()
-declare -A AUTO_LABEL=()
+# -g on every top-level associative array. The CLI sources this file inside a
+# function, and a plain `declare` there makes a local of that function: the
+# array was gone as soon as the function returned.
+declare -gA AUTO_LABEL=()
 
 # A trailing slash is the whole of the directory/file distinction, on the repo
 # side of the entry. It survives every place a rel is passed around as a string.
@@ -977,7 +980,7 @@ owning_rel() {
 # ─── incoming: what another machine changed and this one has not caught up ──
 # Read through one assoc array, filled once. Every row in the panel asks, so a
 # per-row re-read of the file is fifty reads of the same six lines.
-declare -A INCOMING=()
+declare -gA INCOMING=()
 INCOMING_LOADED=0
 read_incoming() {
   (( INCOMING_LOADED )) && return 0
@@ -2616,8 +2619,8 @@ repo_copy_for_rel() {
 # Each file is now parsed once, whole, into "path<TAB>value" lines, and the
 # per-setting reads are lookups in a string. Parsing the whole file costs the
 # same as parsing one key out of it: the process was the expense, not the work.
-declare -A FILE_MAP_CACHE=()
-declare -A FILE_MAP_LOADED=()
+declare -gA FILE_MAP_CACHE=()
+declare -gA FILE_MAP_LOADED=()
 invalidate_file_maps() { FILE_MAP_CACHE=(); FILE_MAP_LOADED=(); }
 
 # Command substitution forks, and a fork copies the caches rather than sharing

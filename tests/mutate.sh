@@ -136,6 +136,12 @@ suite: test-core.sh
 from: print_lines() { (( $# )) || return 0;
 to: print_lines() { (( $# )) || return 1;
 why: a writer with nothing to keep still succeeds
+---
+file: bin/replicant-core.sh
+suite: test-cli.sh
+from: declare -gA FILE_MAP_LOADED=()
+to: declare -A FILE_MAP_LOADED=()
+why: the core's caches survive being sourced inside a function
 DATA
 )
 

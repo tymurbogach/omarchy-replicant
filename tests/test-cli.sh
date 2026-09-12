@@ -99,6 +99,19 @@ check_contains "push --help explains, it does not push"     "commits nothing"   
 # committing, and `set` would be unable to write "-h" at all.
 check_false "-h in the value position is not a help request" "$CLI" set idle.lock -h
 
+section "a core that cannot load stops the command with a message"
+# Each command loaded the core with `2>/dev/null || true`. A syntax error in the
+# core was hidden, and the next line failed with a message about something
+# else. The error goes near the top: the core returns before its last line
+# when it is sourced, so an error at the end would never be read.
+broken="$TMP/broken-plugin"; mkdir -p "$broken"
+cp -a "$HERE/../bin" "$HERE/../manifest.json" "$broken/"
+sed -i '6i if then fi' "$broken/bin/replicant-core.sh"
+rc=0; out=$("$broken/bin/omarchy-replicant" get idle.lock 2>&1) || rc=$?
+check "the command fails" "1" "$rc"
+check_contains "…and names the core it could not load" "could not load" "$out"
+rm -rf "$broken"
+
 section "id -> path resolution"
 check "resolves a tracked id"  "$HOME/.config/hypr/input.lua" "$(run path hypr/input.lua)"
 check_false "rejects an unknown id" "$CLI" path nope/nope

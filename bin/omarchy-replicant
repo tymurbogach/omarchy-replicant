@@ -56,6 +56,16 @@ acquire_repo_lock() {
 
 ensure_core() { [[ -x "$CORE" ]] || fail "replicant-core.sh not found at $CORE"; }
 
+# load_core: source the core for its functions, or stop with a message. Each
+# command used `source "$CORE" 2>/dev/null || true`, which hid a syntax error
+# in the core, and the next line then failed with a message about something
+# else.
+load_core() {
+  ensure_core
+  # shellcheck disable=SC1090
+  source "$CORE" || fail "could not load $CORE"
+}
+
 cmd_status() { ensure_core; bash "$CORE" status "$@"; }
 cmd_backup() { ensure_core; bash "$CORE" backup; }
 
@@ -305,8 +315,7 @@ cmd_diff() {
 # The id -> real path mapping lives in the core (resolve_manifest_src) so the
 # CLI, the panel's diff view and the core all resolve an id identically.
 resolve_src() {
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   resolve_manifest_src "$1"
 }
 
@@ -398,9 +407,7 @@ cmd_open_diff() {
 cmd_reset() {
   local id="${1:-}"
   [[ -n "$id" ]] || fail "usage: reset <id>  (restores the default via omarchy refresh)"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   local src
   src=$(resolve_manifest_src "$id") || fail "unknown id: $id"
   # `omarchy refresh config` restores one FILE. A tracked directory has no
@@ -550,8 +557,7 @@ cmd_restore() {
     *) fail "unknown option: $1";;
   esac; done
   [[ -d "$REPO_DIR/.git" ]] || fail "no repo"
-  # shellcheck source=/dev/null
-  source "$PLUGIN_DIR/bin/replicant-core.sh" 2>/dev/null || true
+  load_core
   # An area this plugin does not have restored nothing and then printed
   # "restore complete". A typo in the word that picks what to restore is an
   # error, and so is an option this command does not know.
@@ -744,9 +750,7 @@ cmd_reset_all() {
     --yes|-y) YES=1; shift;;
     *) fail "unknown option: $1";;
   esac; done
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   local -a candidates=() rels=()
   local entry src rel crel
   for entry in "${TRACKED[@]}"; do
@@ -783,18 +787,14 @@ cmd_reset_all() {
 cmd_get() {
   local id="${1:-}"
   [[ -n "$id" ]] || fail "usage: get <setting-id>"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   get_setting_value "$id" || fail "unknown or unreadable setting: $id"
 }
 
 cmd_set() {
   local id="${1:-}" value="${2:-}"
   [[ -n "$id" && -n "$value" ]] || fail "usage: set <setting-id> <value>"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   set_setting_value "$id" "$value" || fail "could not set $id"
   # this is a real decision (a value you chose), so it gets its own commit —
   # same "one commit per decision, with the why" rule as a manual edit
@@ -809,9 +809,7 @@ cmd_save_file() {
   shift || true
   while (( $# )); do case "$1" in -m|--message) msg="${2:-}"; shift 2;; *) shift;; esac; done
   [[ -n "$id" ]] || fail "usage: save-file <id> [-m \"why\"]"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   local src; src=$(resolve_manifest_src "$id") || fail "unknown id: $id"
 
   # Through the core's own answers, not a second copy of them. This function
@@ -868,9 +866,7 @@ cmd_log() {
 }
 
 cmd_settings() {
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   if [[ "${1:-}" == "--json" ]]; then build_settings_json; return 0; fi
   # Values are printed the way the panel shows them — "10 min", not "600" —
   # because a list you read should not need arithmetic. `get` still answers in
@@ -904,9 +900,7 @@ commit_repo_shape() {
 cmd_sync() {
   local id="${1:-}" want="${2:-}"
   [[ -n "$id" && -n "$want" ]] || fail "usage: omarchy-replicant sync <id> on|off"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   core_sync "$id" "$want" || exit 1
   commit_repo_shape "sync: turn $id $want" .replicant-sync
 }
@@ -916,9 +910,7 @@ cmd_sync() {
 cmd_scope() {
   local id="${1:-}" want="${2:-}"
   [[ -n "$id" && -n "$want" ]] || fail "usage: omarchy-replicant scope <id> shared|profile|off"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   core_scope "$id" "$want" || exit 1
   # Stage the two paths THIS file can occupy, never the whole of config/ and
   # profiles/. Staging the directories would sweep every unrelated dotfile that
@@ -940,9 +932,7 @@ cmd_scope() {
 # the same core functions.
 cmd_track() {
   [[ $# -gt 0 ]] || fail "usage: omarchy-replicant track <path> [name-in-repo] [--secret]"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   local before; before=$(cat "$USER_TRACK_FILE" 2>/dev/null || true)
   core_track "$@" || exit 1
   [[ "$(cat "$USER_TRACK_FILE" 2>/dev/null || true)" == "$before" ]] && return 0
@@ -955,9 +945,7 @@ cmd_track() {
 cmd_untrack() {
   local id="${1:-}"
   [[ -n "$id" ]] || fail "usage: omarchy-replicant untrack <id>"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   core_untrack "$id" || exit 1
   commit_repo_shape "untrack: $id" \
     .replicant-track \
@@ -969,9 +957,7 @@ cmd_untrack() {
 cmd_suggest() {
   local as_json=0
   while (( $# )); do case "$1" in --json) as_json=1; shift;; *) shift;; esac; done
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   if (( as_json )); then core_suggest --json; return 0; fi
   local path rel reason kind flag n=0
   while IFS=$'\t' read -r path rel reason kind; do
@@ -990,9 +976,7 @@ cmd_suggest() {
 }
 
 cmd_profile() {
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   local want="${1:-}"
   if [[ -z "$want" || "$want" == "list" ]]; then
     local cur; cur=$(current_profile)
@@ -1026,9 +1010,7 @@ cmd_revert() {
   shift || true
   while (( $# )); do case "$1" in --to) to="${2:-default}"; shift 2;; default|repo) to="$1"; shift;; *) shift;; esac; done
   [[ -n "$id" ]] || fail "usage: omarchy-replicant revert <setting-id> [--to default|repo]"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   core_revert "$id" "$to" || exit 1
   # Committed the same way as `set`. This used to stage only config/, so the
   # revert of a setting whose file is kept per profile was never committed.
@@ -1040,9 +1022,7 @@ cmd_revert() {
 cmd_restore_file() {
   local id="${1:-}"
   [[ -n "$id" ]] || fail "usage: omarchy-replicant restore-file <id>"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   core_restore_file "$id" || exit 1
 }
 
@@ -1052,9 +1032,7 @@ cmd_restore_file() {
 cmd_install_theme() {
   local name="${1:-}"
   [[ -n "$name" ]] || fail "usage: omarchy-replicant install-theme <name>"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   core_install_theme "$name" || exit 1
 }
 
@@ -1069,9 +1047,7 @@ cmd_install_plugin() {
     esac
   done
   [[ -n "$id" ]] || fail "usage: omarchy-replicant install-plugin <id> [--check]"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   # --check prints what the marketplace checked and where the origin is now,
   # and installs nothing. The panel asks this before it asks for consent.
   if (( check_only )); then core_plugin_verification "$id"; return 0; fi
@@ -1098,9 +1074,7 @@ cmd_shortcuts() {
 }
 
 cmd_doctor() {
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   local problems=0
   chk_ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
   chk_warn() { printf '  \033[33m!\033[0m %s\n' "$1"; problems=$((problems+1)); }
@@ -1482,9 +1456,7 @@ cmd_purge() {
   # .bak.<epoch> copies this plugin left behind next to the configs it edited
   local -a backups=()
   local _rel _src b _epoch _state
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   # Through list_backups, not a second glob of its own. The trailing-slash bug
   # hard rule 8 exists for lived here first (globbing "$src".bak.* on a tracked
   # directory looks INSIDE the directory and finds nothing), and having two

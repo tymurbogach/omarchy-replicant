@@ -178,6 +178,30 @@ check_contains "…saying so out loud" "Pushing" "$out"
 check_true "…which really reached the remote" \
   bash -c 'git -C "$1" diff --quiet origin/main HEAD' _ "$DREPO"
 
+section "a save that did not reach GitHub says so"
+# Another machine pushes first, so the desktop's push is rejected. savegame
+# still printed "Everything saved and pushed." and exited 0. With two machines
+# on one repo, this is the normal case.
+git clone -q "$TMP/origin.git" "$TMP/elsewhere" >/dev/null 2>&1
+git -C "$TMP/elsewhere" config user.email t@example.com
+git -C "$TMP/elsewhere" config user.name Test
+printf 'from another machine\n' > "$TMP/elsewhere/NOTES.txt"
+git -C "$TMP/elsewhere" add NOTES.txt
+git -C "$TMP/elsewhere" commit -q -m "elsewhere"
+git -C "$TMP/elsewhere" push -q origin HEAD:main >/dev/null 2>&1
+printf 'my own input, while another machine saved\n' > "$D/.config/hypr/input.lua"
+rc=0; out=$(on desktop savegame --auto) || rc=$?
+check "a rejected push is a failure" "1" "$rc"
+check_contains "…that says the push failed" "push to GitHub failed" "$out"
+check "…and never claims it pushed" "0" "$(grep -c 'saved and pushed' <<<"$out" || true)"
+# After a pull, the tree is clean and one commit waits. The panel says to press
+# Save, and Save answered "Nothing to save" without pushing that commit.
+on desktop pull >/dev/null 2>&1
+out=$(on desktop savegame --auto)
+check_true "a commit that waits is pushed by the next save" \
+  bash -c 'git -C "$1" fetch -q origin && git -C "$1" diff --quiet origin/main HEAD' _ "$DREPO"
+check_contains "…which says so" "saved and pushed" "$out"
+
 # Put the desktop back the way the rest of the journey expects to find it.
 printf 'my own input\n' > "$D/.config/hypr/input.lua"
 on desktop savegame --auto >/dev/null 2>&1

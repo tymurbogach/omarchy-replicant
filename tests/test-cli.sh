@@ -171,6 +171,16 @@ check "…and it is the one asked for" "config/hypr/input.lua" "$(git -C "$REPO"
 check "…with the message given"      "config: test" "$(git -C "$REPO" log -1 --format=%s)"
 check_false "save-file on an unknown id fails" "$CLI" save-file nope/nope
 
+section "a save with no remote says where it went"
+# This repo has no remote. savegame skipped the push without a word and ended
+# with "Everything saved and pushed."
+printf 'saved where there is no remote\n' > "$HOME/.config/hypr/input.lua"
+out=$(run savegame --auto)
+check_contains "savegame says there is no remote" "no remote" "$out"
+check "…and never claims it pushed" "0" "$(grep -c 'saved and pushed' <<<"$out" || true)"
+check "…while it still commits the change" "0" \
+  "$(git -C "$REPO" status --porcelain -- config/ | grep -c . || true)"
+
 section "log and settings"
 check "log --json is valid JSON" "0" "$(run log --json | jq empty >/dev/null 2>&1; echo $?)"
 check "log --json respects -n"   "1" "$(run log --json -n 1 | jq 'length')"

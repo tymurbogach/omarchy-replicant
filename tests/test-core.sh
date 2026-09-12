@@ -1418,6 +1418,14 @@ check "an empty track list is written" "0" "$rc"
 check "…with its header and no blank line" "0" "$(grep -c '^$' "$TMP/empty.track" 2>/dev/null || true)"
 rm -f "$TMP/empty.track"
 
+section "the core refuses a command it does not have"
+# The chain of ifs that dispatched the core's commands did nothing for an
+# unknown one and exited 0, which a caller reads as success.
+rc=0; out=$(bash "$CORE" definitely-not-a-command 2>&1) || rc=$?
+check "an unknown core command fails" "2" "$rc"
+check_contains "…and says so" "unknown command" "$out"
+check "a known one still works" "$MACHINE" "$(bash "$CORE" machine 2>/dev/null)"
+
 section "status fetches at most once per FETCH_MAX_AGE"
 # The bar polls every minute. A fetch on every poll was a git fetch a minute,
 # forever, on a laptop. Only an explicit refresh passes --fetch.

@@ -4040,30 +4040,34 @@ core_incoming() {
 # this line `omarchy-replicant path machine` ran the `machine` command first.
 [[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
 
-if [[ "${1:-}" == "backup" ]]; then core_backup "${2:-}"
-elif [[ "${1:-}" == "status" ]]; then shift; core_status "$@"
-elif [[ "${1:-}" == "diff" ]]; then core_diff "${2:-}" "${3:-auto}"
-elif [[ "${1:-}" == "log" ]]; then core_log "${2:-8}"
-elif [[ "${1:-}" == "shortcuts" ]]; then core_shortcuts
-elif [[ "${1:-}" == "sync" ]]; then core_sync "${2:-}" "${3:-}"
-elif [[ "${1:-}" == "revert" ]]; then core_revert "${2:-}" "${3:-default}"
-elif [[ "${1:-}" == "restore-file" ]]; then core_restore_file "${2:-}"
-elif [[ "${1:-}" == "scope" ]]; then core_scope "${2:-}" "${3:-}"
-elif [[ "${1:-}" == "profile-set" ]]; then core_profile_set "${2:-}"
-elif [[ "${1:-}" == "profile-get" ]]; then current_profile
-elif [[ "${1:-}" == "profile-list" ]]; then list_profiles
-elif [[ "${1:-}" == "local-only-plugins" ]]; then local_only_plugins
-elif [[ "${1:-}" == "cloned-plugins" ]]; then cloned_plugins
-elif [[ "${1:-}" == "edited-plugins" ]]; then edited_plugins
-elif [[ "${1:-}" == "hypr-unresolved" ]]; then unresolved_hypr_modules
-elif [[ "${1:-}" == "repo-path" ]]; then repo_copy_for_rel "${2:-}"
-elif [[ "${1:-}" == "local-only-themes" ]]; then local_only_themes
-elif [[ "${1:-}" == "track" ]]; then shift; core_track "$@"
-elif [[ "${1:-}" == "untrack" ]]; then core_untrack "${2:-}"
-elif [[ "${1:-}" == "suggest" ]]; then core_suggest "${2:-}"
-elif [[ "${1:-}" == "incoming" ]]; then core_incoming "${2:-}" "${3:-}"
-elif [[ "${1:-}" == "backups" ]]; then list_backups "${2:-}"
-elif [[ "${1:-}" == "backups-json" ]]; then build_backups_json
-elif [[ "${1:-}" == "undo" ]]; then core_undo "${2:-}"
-elif [[ "${1:-}" == "machine" ]]; then printf '%s\n' "$MACHINE"
-fi
+# An unknown command is an error. The chain of ifs that this replaces did
+# nothing for one and exited 0, which a caller reads as success.
+case "${1:-}" in
+  backup)             core_backup "${2:-}" ;;
+  status)             shift; core_status "$@" ;;
+  diff)               core_diff "${2:-}" "${3:-auto}" ;;
+  log)                core_log "${2:-8}" ;;
+  shortcuts)          core_shortcuts ;;
+  sync)               core_sync "${2:-}" "${3:-}" ;;
+  revert)             core_revert "${2:-}" "${3:-default}" ;;
+  restore-file)       core_restore_file "${2:-}" ;;
+  scope)              core_scope "${2:-}" "${3:-}" ;;
+  profile-set)        core_profile_set "${2:-}" ;;
+  profile-get)        current_profile ;;
+  profile-list)       list_profiles ;;
+  local-only-plugins) local_only_plugins ;;
+  cloned-plugins)     cloned_plugins ;;
+  edited-plugins)     edited_plugins ;;
+  hypr-unresolved)    unresolved_hypr_modules ;;
+  repo-path)          repo_copy_for_rel "${2:-}" ;;
+  local-only-themes)  local_only_themes ;;
+  track)              shift; core_track "$@" ;;
+  untrack)            core_untrack "${2:-}" ;;
+  suggest)            core_suggest "${2:-}" ;;
+  incoming)           core_incoming "${2:-}" "${3:-}" ;;
+  backups)            list_backups "${2:-}" ;;
+  backups-json)       build_backups_json ;;
+  undo)               core_undo "${2:-}" ;;
+  machine)            printf '%s\n' "$MACHINE" ;;
+  *)                  echo "replicant-core.sh: unknown command '${1:-}'" >&2; exit 2 ;;
+esac

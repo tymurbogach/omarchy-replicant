@@ -1087,6 +1087,20 @@ if (( had_mon )); then cp "$TMP/monitors.keep" "$mon"; else rm -f "$mon"; fi
 rm -f "$(repo_path_for hypr/monitors.lua)"
 core_backup >/dev/null 2>&1
 
+section "the pre-commit hook keeps up with the plugin and fails closed"
+# The hook was written once and never again, and it exited 0 when it could not
+# find the scanner. The scanner is the last check between a token and GitHub.
+printf '#!/bin/bash\n# an old version\nexit 0\n' > "$GITHOOKS_DIR/pre-commit"
+ensure_repo_layout >/dev/null 2>&1
+check_true "an out-of-date hook is replaced" cmp -s <(precommit_hook_text) "$GITHOOKS_DIR/pre-commit"
+check "…and stays executable" "1" "$(test -x "$GITHOOKS_DIR/pre-commit" && echo 1 || echo 0)"
+mv "$REPO_DIR/bin/scan-secrets.sh" "$TMP/scan.keep"
+printf 'x\n' > "$REPO_DIR/hook-probe.txt"
+git -C "$REPO_DIR" add hook-probe.txt
+check_false "a missing scanner blocks the commit" bash -c 'cd "$1" && .githooks/pre-commit' _ "$REPO_DIR"
+git -C "$REPO_DIR" rm -q --cached hook-probe.txt; rm -f "$REPO_DIR/hook-probe.txt"
+mv "$TMP/scan.keep" "$REPO_DIR/bin/scan-secrets.sh"
+
 section "the panel's text has to fit the panel"
 # Every one of these strings is drawn into a fixed-width row that elides. A
 # description that runs long does not wrap or warn — it just loses its last

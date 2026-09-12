@@ -1344,6 +1344,35 @@ install_tree() {
   ok "$short_path/ ($(tree_count "$src") files, $mode)"
 }
 
+# The pre-commit hook of the data repo. It fails closed: if it cannot find the
+# scanner, it blocks the commit. It used to exit 0 in that case, and the
+# scanner is the last check between a token and GitHub.
+precommit_hook_text() {
+  cat <<'HOOK'
+#!/bin/bash
+set -uo pipefail
+REPO=$(git rev-parse --show-toplevel)
+files=$(git diff --cached --name-only --diff-filter=ACM)
+[[ -z $files ]] && exit 0
+SCAN="$REPO/bin/scan-secrets.sh"
+[[ -x "$SCAN" ]] || SCAN="$HOME/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/bin/scan-secrets.sh"
+if [[ ! -x "$SCAN" ]]; then
+  echo "COMMIT BLOCKED: the secret scanner is missing. Run 'omarchy-replicant backup' to put it back." >&2
+  exit 1
+fi
+fail=0
+while IFS= read -r file; do
+  [[ -f $file ]] || continue
+  [[ $file == secrets/* ]] && continue
+  git show ":$file" 2>/dev/null | "$SCAN" --stdin "$file" || fail=1
+done <<<"$files"
+if (( fail )); then
+  echo "COMMIT BLOCKED: possible credential in config/state/templates." >&2
+  exit 1
+fi
+HOOK
+}
+
 ensure_repo_layout() {
   mkdir -p "$CONFIG_DIR" "$STATE_DIR" "$TEMPLATES_DIR"
   # A repo written before state/ was scoped by machine has its inventory flat in
@@ -1373,33 +1402,13 @@ ensure_repo_layout() {
   if [[ ! -f "$TEMPLATES_DIR/60-secrets.conf.example" && -f "$HOME/omarchy_thinkpad/templates/60-secrets.conf.example" ]]; then
     cp -a "$HOME/omarchy_thinkpad/templates/"*.example "$TEMPLATES_DIR/" 2>/dev/null || true
   fi
-  # githooks
+  # The hook is kept in step with the plugin, like the scanner below. It was
+  # written once, so a repo made by an old release kept that hook forever.
   mkdir -p "$GITHOOKS_DIR"
-  if [[ ! -f "$GITHOOKS_DIR/pre-commit" ]]; then
-    cat >"$GITHOOKS_DIR/pre-commit" <<'HOOK'
-#!/bin/bash
-set -uo pipefail
-REPO=$(git rev-parse --show-toplevel)
-SCAN="$REPO/bin/scan-secrets.sh"
-[[ -x "$SCAN" ]] || SCAN="$HOME/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/bin/scan-secrets.sh"
-[[ -x "$SCAN" ]] || exit 0
-fail=0
-files=$(git diff --cached --name-only --diff-filter=ACM)
-[[ -z $files ]] && exit 0
-while IFS= read -r file; do
-  [[ -f $file ]] || continue
-  [[ $file == secrets/* ]] && continue
-  git show ":$file" 2>/dev/null | "$SCAN" --stdin "$file" || fail=1
-done <<<"$files"
-if (( fail )); then
-  cat <<'MSG'
-COMMIT BLOCKED: possible credential in config/state/templates.
-MSG
-  exit 1
-fi
-HOOK
-    chmod +x "$GITHOOKS_DIR/pre-commit"
+  if ! cmp -s <(precommit_hook_text) "$GITHOOKS_DIR/pre-commit" 2>/dev/null; then
+    precommit_hook_text > "$GITHOOKS_DIR/pre-commit"
   fi
+  chmod +x "$GITHOOKS_DIR/pre-commit"
   # scan-secrets bin — kept in step with the plugin, not just seeded once.
   #
   # The repo's pre-commit hook runs THIS copy, so a repo created in June was

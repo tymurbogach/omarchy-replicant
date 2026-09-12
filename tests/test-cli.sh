@@ -146,6 +146,19 @@ check_false "an unknown option is refused" "$CLI" restore --aply
 check_false "--only needs an area"        "$CLI" restore --only
 check "…and none of it wrote anything" "$before_home" "$(hash_tree "$HOME/.config")"
 
+section "clone listens to Omarchy's URL check"
+# The check refuses a URL that names a git transport helper. Its answer was
+# ignored and the clone went ahead. A stub that always refuses stands in for
+# it, so the test does not depend on what git allows on this machine.
+mkdir -p "$TMP/urlcheck"
+printf '#!/bin/sh\nexit 1\n' > "$TMP/urlcheck/omarchy-git-url-check"
+chmod +x "$TMP/urlcheck/omarchy-git-url-check"
+rc=0; out=$(PATH="$TMP/urlcheck:$PATH" OMARCHY_REPLICANT_HOME="$TMP/clonetest" \
+  "$CLI" clone 'ext::sh -c true' 2>&1) || rc=$?
+check "a URL the check refuses is not cloned" "1" "$rc"
+check_contains "…and clone says why" "refusing to clone" "$out"
+check_false "…and creates nothing" test -e "$TMP/clonetest/repo"
+
 section "reset refuses what it cannot restore"
 # `omarchy refresh config` restores one FILE. A tracked directory has no single
 # default to go back to, and cmp on a directory would decide whether it is

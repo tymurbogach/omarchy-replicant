@@ -508,7 +508,11 @@ cmd_pull() {
 
 cmd_clone() {
   local url="${1:-}"; [[ -n "$url" ]] || { if [[ -t 0 ]]; then url=$(gum input --prompt "Git URL (private): " 2>/dev/null || true); fi; [[ -n "$url" ]] || fail "usage: clone <git-url>"; }
-  command -v omarchy-git-url-check >/dev/null 2>&1 && omarchy-git-url-check "$url" || true
+  # Omarchy's check refuses a URL that names a git transport helper, which is
+  # how `ext::` runs a command at clone time. Its answer used to be ignored.
+  if command -v omarchy-git-url-check >/dev/null 2>&1; then
+    omarchy-git-url-check "$url" || fail "refusing to clone '$url': it does not name a repository"
+  fi
   [[ -d "$REPO_DIR/.git" ]] && fail "$REPO_DIR already exists — pull or remove it"
   mkdir -p "$(dirname "$REPO_DIR")"
   git clone -- "$url" "$REPO_DIR" 2>&1 || fail "clone failed (private repo without gh auth?)"

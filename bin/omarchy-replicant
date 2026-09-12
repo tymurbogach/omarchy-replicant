@@ -505,7 +505,7 @@ cmd_pull() {
     return 0
   fi
   local n; n=$(printf '%s\n' "$moved" | grep -c .)
-  ok "pulled — $n file$( (( n == 1 )) || echo s ) changed on another machine"
+  ok "pulled — $(plural "$n" file) changed on another machine"
   printf '%s\n' "$moved" | sed 's/^/  /' >&2
   echo "  'restore --apply' brings them onto this machine; until then they show as ↓ to restore" >&2
 }

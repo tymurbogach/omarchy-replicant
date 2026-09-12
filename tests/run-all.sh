@@ -125,6 +125,15 @@ done
 
 if (( qml_problem == 0 )); then printf '  \033[32m✓\033[0m none present\n'; else failed=$((failed+1)); fi
 
+# The docs are in Simplified Technical English, which uses no dashes. A new em
+# dash fails here, so that the rewrite does not come undone one line at a time.
+banner "no em dashes in the docs"
+if grep -n '—' "$ROOT/README.md" "$ROOT/CONTRIBUTING.md" "$ROOT/CLAUDE.md" "$ROOT"/docs/*.md; then
+  printf '  \033[31m✗\033[0m an em dash in the docs: use a period, a comma or parentheses\n'; failed=$((failed+1))
+else
+  printf '  \033[32m✓\033[0m none present\n'
+fi
+
 # Shipped code names only what any Omarchy machine plausibly has. One machine's
 # NAS credentials, a private repo on the author's disk and a script name in
 # Spanish reached the plugin once, and nothing noticed.

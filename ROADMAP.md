@@ -21,7 +21,7 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
 
 ## P0: bugs reproduced in a throwaway `$HOME`
 
-- [ ] **B1. `root_apply` reports success when it changed nothing.**
+- [x] **B1. `root_apply` reports success when it changed nothing.**
   `bin/replicant-core.sh:2142` returns `${rc:-1}`. `rc` starts at `0`, so the path where nothing
   can ask for root returns 0. `set lid.close ignore` then prints `Closing the lid -> ignore` and
   exits 0, and the panel shows no failure. Omarchy ships no polkit agent, so this is the common path.
@@ -29,14 +29,14 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
   - Test: stub `sudo` to fail and unset the session variables. Expect a non-zero exit from
     `root_apply` and from `set`.
 
-- [ ] **B2. The manual `sudo install` command names a file that no longer exists.**
+- [x] **B2. The manual `sudo install` command names a file that no longer exists.**
   `root_apply` prints `sudo install -D -m 644 /tmp/replicant-lid.XXXXXX ...`. Then `ini_set` deletes
   that staged file (`bin/replicant-core.sh:2170`).
   - Fix: if root is not available, keep the staged file under `$REPLICANT_HOME/staged/`.
     List that directory in `cmd_purge` (hard rule 8).
   - Test: after a failed apply, the printed path exists and holds the new value.
 
-- [ ] **B3. `savegame` says "Everything saved and pushed." when nothing was pushed.**
+- [x] **B3. `savegame` says "Everything saved and pushed." when nothing was pushed.**
   `bin/omarchy-replicant:220-237`. With no upstream, the push is skipped. When the push fails, the
   failure is ignored. A rejected push is an example, because another machine pushed first. Both
   cases print the same sentence and exit 0. With two machines on one repo, the rejected push is the
@@ -45,7 +45,7 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
     and exit non-zero.
   - Test: a repo with no remote. A bare remote that is one commit ahead.
 
-- [ ] **B4. `source "$CORE"` runs the dispatcher of the core with the caller's `$1`.**
+- [x] **B4. `source "$CORE"` runs the dispatcher of the core with the caller's `$1`.**
   A sourced file sees the positional parameters of the function that sources it.
   `omarchy-replicant path machine` prints the hostname, then "unknown id". `track backup` runs
   `core_backup`. The fix in `cmd_install_theme` (`source "$CORE" ""`) is local. `resolve_src`
@@ -55,14 +55,14 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
     `[[ "${BASH_SOURCE[0]}" == "$0" ]]`. Then remove the `""` workaround.
   - Test: `path machine` prints only the "unknown id" error.
 
-- [ ] **B5. `restore --only` with an unknown area reports success.**
+- [x] **B5. `restore --only` with an unknown area reports success.**
   `restore --apply --yes --only hyperland` prints `restore complete` and `0 files written`.
   `cmd_restore` also accepts any unknown option (`bin/omarchy-replicant:500`, `*) shift;;`).
   - Fix: reject an `--only` value that `find_category` does not know. Reject unknown options, as
     `cmd_reset_all` does.
   - Test: both cases exit non-zero and name the valid areas.
 
-- [ ] **B6. `lid.closeDocked` offers `ignore` twice.** `bin/replicant-core.sh:2083`.
+- [x] **B6. `lid.closeDocked` offers `ignore` twice.** `bin/replicant-core.sh:2083`.
   - Fix: remove the duplicate.
   - Test: `tests/test-settings.sh` fails when an enum setting has a duplicate option.
 

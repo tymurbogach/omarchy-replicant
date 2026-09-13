@@ -315,8 +315,17 @@ done
 check "every saved file appears in some category's plan" "0" "$missing_from_plan"
 check "the theme is never copied back as a file" "0" \
   "$(plan_for_category appearance | grep -c 'theme.name' || true)"
-check "destinations it cannot write are still listed" "3" \
-  "$(plan_for_category system | grep -c '|/etc/' || true)"
+# Only the shipped /etc entries. A machine that has an entry the plugin used to
+# ship finds it in the user's list too, so a count of every /etc line depended
+# on the machine that ran the suite.
+system_plan=$(plan_for_category system); etc_shipped=0; etc_listed=0
+for entry in "${MANIFEST[@]}"; do
+  [[ "${entry%%:*}" == /etc/* ]] || continue
+  etc_shipped=$((etc_shipped + 1))
+  grep -qF "|${entry%%:*}|" <<<"$system_plan" && etc_listed=$((etc_listed + 1))
+done
+check_true "the plugin ships /etc entries at all" test "$etc_shipped" -gt 0
+check "destinations it cannot write are still listed" "$etc_shipped" "$etc_listed"
 check "keys restore as 600"   "600" "$(restore_mode_for ssh/id_ed25519)"
 check "public keys do not"    "644" "$(restore_mode_for ssh/id_ed25519.pub)"
 check "scripts stay runnable" "755" "$(restore_mode_for bin/omarchy-audit)"

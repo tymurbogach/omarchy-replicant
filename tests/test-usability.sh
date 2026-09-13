@@ -13,6 +13,9 @@ source "$HERE/lib.sh"
 
 PANEL="$ROOT/Panel.qml"
 CLI="$ROOT/bin/omarchy-replicant"
+# Every QML file, the panel's parts in components/ included. A check that reads
+# only Panel.qml stops seeing a label the day its component moves to a file.
+QML=("$ROOT"/*.qml "$ROOT"/components/*.qml)
 
 section "every button runs a command the CLI has"
 # The panel builds its commands as [root.cli, "<subcommand>", ...]. A subcommand
@@ -20,7 +23,7 @@ section "every button runs a command the CLI has"
 # Only the dispatcher's arms count: they are the ones that shift or load the core.
 known=$(grep -oE '^[[:space:]]+[a-z][a-z-]*\) (shift|ensure_core)' "$CLI" |
         sed -E 's/^[[:space:]]+([a-z-]+)\).*/\1/' | sort -u)
-used=$(grep -ohE 'root\.cli, "[a-z][a-z-]*"' "$ROOT"/*.qml | sed -E 's/.*"(.*)"/\1/' | sort -u)
+used=$(grep -ohE '(root|panel)\.cli, "[a-z][a-z-]*"' "${QML[@]}" | sed -E 's/.*"(.*)"/\1/' | sort -u)
 check_true "the panel calls the CLI at all" test -n "$used"
 for cmd in $used; do
   check_true "the CLI answers '$cmd'" grep -qx "$cmd" <<<"$known"
@@ -34,7 +37,7 @@ keys=$(grep -oE '(^|[^A-Za-z_])t === "[^"]+"' "$PANEL" | sed -E 's/.*"(.*)"/\1/'
 check_true "the panel answers keys at all" test -n "$keys"
 # Comments do not count. A mutation run proved it: the only "(a)" left after
 # the label lost it was the comment explaining the label.
-shown=$(grep -vE '^[[:space:]]*//' "$PANEL")
+shown=$(cat "${QML[@]}" | grep -vE '^[[:space:]]*//')
 for k in $keys; do
   check_true "key '$k' is named as ($k)" grep -qF "($k)" <<<"$shown"
 done
@@ -51,20 +54,20 @@ unlabelled=$(awk '
       if (block ~ /iconText:/ && block !~ /[^A-Za-z]text:/ && block !~ /tooltipText:/)
         print FILENAME ":" start
     }
-  }' "$ROOT"/*.qml)
+  }' "${QML[@]}")
 check "icon-only buttons with no tooltip" "" "$unlabelled"
 
 section "every word on screen is English"
 # The Language rule, which has no exception for a label: a string in a second
 # language is the one a later grep misses.
-foreign=$(grep -rnP '[áéíóúñÁÉÍÓÚÑ¿¡]' "$ROOT"/*.qml "$ROOT"/bin "$ROOT"/README.md \
+foreign=$(grep -rnP '[áéíóúñÁÉÍÓÚÑ¿¡]' "${QML[@]}" "$ROOT"/replicant.js "$ROOT"/bin "$ROOT"/README.md \
             "$ROOT"/CLAUDE.md "$ROOT"/docs 2>/dev/null || true)
 check "lines with letters English does not use" "" "$foreign"
 
 section "one word for one state"
 # The scope button says Off, the legend says off and a card says "3 off". The
 # row and the stat card said "not synced": two words for one state.
-off_row=$(grep -oE 'if \(st === "off"\) return "[^"]+"' "$PANEL" | sed -E 's/.*return "(.*)"/\1/')
+off_row=$(grep -oE 'if \(st === "off"\) return "[^"]+"' "$ROOT/replicant.js" | sed -E 's/.*return "(.*)"/\1/')
 off_card=$(grep -oE 'label: "[^"]+"; value: String\(root\.countOff\)' "$PANEL" | sed -E 's/label: "([^"]+)".*/\1/')
 check_contains "the row calls it off"        "off" "$off_row"
 check_contains "…and so does the stat card"  "off" "$off_card"
@@ -77,6 +80,6 @@ section "a card's subtitle fits its card"
 while IFS= read -r sub; do
   [[ -n "$sub" ]] || continue
   check_true "fits in 57: ${sub:0:30}…" test "${#sub}" -le 57
-done < <(grep -oE 'subtitle: "[^"]*"' "$PANEL" | sed -E 's/subtitle: "(.*)"/\1/')
+done < <(grep -ohE 'subtitle: "[^"]*"' "${QML[@]}" | sed -E 's/subtitle: "(.*)"/\1/')
 
 summary

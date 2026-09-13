@@ -14,6 +14,9 @@ assistant, and it imports both files.
   and it runs nothing when it is sourced.
 - `bin/lib/common.sh` holds what the CLI and the core both need: `plural` and the machine name.
 - The QML files (`BarWidget.qml`, `Panel.qml`, `Service.qml`) run the CLI and read its JSON.
+- `components/` holds the parts of the panel, one file each. A part reaches the panel only through
+  its `panel` property.
+- `replicant.js` holds the pure functions that the QML files share. `tests/qml` tests them.
 
 | Module | What it holds |
 | --- | --- |

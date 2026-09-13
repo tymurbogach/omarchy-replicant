@@ -13,15 +13,15 @@ Run the one command that checks everything:
 
 It runs the five suites in parallel, then `bash -n`, shellcheck, qmllint, the QML trap guards, the
 personal-data guard, the secret scan of the repo, and `omarchy-plugin-validate`. It takes about two
-and a half minutes, and its last line gives the time.
+and a half minutes. Each suite prints how many checks it ran, and the last line gives the time.
 
-| Suite | Checks | What it covers |
-| --- | ---: | --- |
-| `tests/test-core.sh` | 457 | The tracked lists, scopes, states, restore, plugins, the JSON payloads |
-| `tests/test-settings.sh` | 177 | The settings registry and its writers |
-| `tests/test-cli.sh` | 247 | The commands, their options, purge, backups, locks, `--help` |
-| `tests/test-journey.sh` | 72 | Two machines and one repo, from the first save to a pull |
-| `tests/test-usability.sh` | 42 | What the panel shows: its commands, keys, labels and words |
+| Suite | What it covers |
+| --- | --- |
+| `tests/test-core.sh` | The tracked lists, scopes, states, restore, plugins, the JSON payloads |
+| `tests/test-settings.sh` | The settings registry and its writers |
+| `tests/test-cli.sh` | The commands, their options, purge, backups, locks, `--help` |
+| `tests/test-journey.sh` | Two machines and one repo, from the first save to a pull |
+| `tests/test-usability.sh` | What the panel shows: its commands, keys, labels and words |
 
 While you work, run the suite that covers the change. Keep the full run for the commit.
 
@@ -37,7 +37,7 @@ mise use -g shellcheck@latest
 - To prove the first half, copy the tree, put the old file back in the copy with
   `git checkout -- <file>`, and run the suite there.
 - `./tests/mutate.sh` breaks one line of production code in a copy of the repo and runs the suite
-  that must notice. It holds 18 mutations as data, runs four copies at a time, and takes about six
+  that must notice. It holds the mutations as data, runs four copies at a time, and takes about six
   minutes. `./tests/mutate.sh 7` runs only the seventh.
 - Add a mutation for each new guard. A guard that no one has seen fail is a guard that no one tested.
 - A mutation whose text is not in its file exactly once fails as stale. When you move code, update
@@ -50,6 +50,18 @@ as a normal user, because several checks are about what a user cannot do. The wo
 `.github/workflows/tests.yml` builds that image and runs `run-all.sh` on every pull request.
 `qmllint` and `omarchy-plugin-validate` need Omarchy, so the container reports them as skipped.
 
+The container has none of the files of a desktop, and it runs without `$USER`. Its first runs found
+two faults that a development machine could not show. With no `$USER`, the layout wrote an empty
+git identity. On a machine without the old personal files, the first `init` stopped with no message.
+
+If a suite passes here and fails in CI, run it with a minimal environment, and hide the files of
+this machine that the container does not have:
+
+```bash
+bwrap --dev-bind / / --tmpfs /etc/systemd/system \
+  env -i HOME="$HOME" PATH=/usr/bin LANG=C.UTF-8 ./tests/test-journey.sh
+```
+
 ## Rules for tests
 
 - A test must never reach the real machine, the session or the network. `tests/lib.sh` puts a
@@ -60,6 +72,11 @@ as a normal user, because several checks are about what a user cannot do. The wo
   test also changes what the command returns.
 - No suite may download the marketplace catalog. `tests/lib.sh` points `REPLICANT_CATALOG_URL` at a
   file that does not exist. A test that needs a catalog writes a fixture.
+- A test must not depend on the git config of the person who runs it. `tests/lib.sh` points
+  `GIT_CONFIG_GLOBAL` at a file with a test identity. A test of the code without any identity sets
+  `GIT_CONFIG_GLOBAL=/dev/null`.
+- A test must not depend on a file outside its fake `$HOME` that only some machines have, such as a
+  unit in `/etc/systemd/system`. Plant a copy in the repo, or pin the answer, as with `is_laptop`.
 - A fixture that looks like a credential is a credential to every scanner. Build the prefix from
   pieces (`P_GH="gh""p_"`), and run `bin/scan-secrets.sh tests bin` before you commit.
 - `grep -q` in a pipeline under `set -o pipefail` reports failure on success, because the writer

@@ -77,14 +77,17 @@ entry_differs() {
 # take a few milliseconds; building the full row payload for the same answer
 # took 1.4 s of CPU once a minute.
 count_changes() {
-  local entry src rel repo_path is_dir n_unsaved=0 n_incoming=0
-  read_scopes >/dev/null
+  local entry src rel repo_path is_dir n_unsaved=0 n_incoming=0 scope prof
+  # Built once in this shell, so the loops below need no fork for each row.
+  SCOPE_MAP_READY=0; load_scope_map
+  prof=$(current_profile)
   read_incoming
   for entry in "${TRACKED[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"
-    [[ "$(scope_for "$rel")" == "off" ]] && continue
+    scope_into scope "$rel"
+    [[ "$scope" == "off" ]] && continue
     is_dir=false; is_dir_entry "$rel" && is_dir=true
-    repo_path=$(repo_path_for "$rel")
+    repo_path_into repo_path "$rel" "$prof"
     entry_differs "$src" "$repo_path" "$is_dir" || continue
     # Exclusive, exactly as the badge precedence is: a file the repo has a newer
     # copy of is asking for Restore, not for Save, and counting it in both
@@ -94,7 +97,8 @@ count_changes() {
   done
   for entry in "${TRACKED_SECRETS[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"
-    is_excluded "$rel" && continue
+    scope_into scope "$rel"
+    [[ "$scope" == "off" ]] && continue
     entry_differs "$src" "$SECRETS_DIR/$rel" false || continue
     if [[ -n "${INCOMING[$rel]:-}" ]]; then n_incoming=$(( n_incoming + 1 ))
     else n_unsaved=$(( n_unsaved + 1 )); fi

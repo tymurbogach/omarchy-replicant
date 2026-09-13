@@ -9,10 +9,11 @@ build_configs_json() {
   # every panel refresh and there are forty-odd rows.
   local entry src rel label category exists is_default has_default default_src config_rel
   local dirty unpushed sync_state saved synced source scope repo_path git_rel unsaved is_dir nfiles incoming
-  # Fill the scope cache HERE, in this shell. scope_for is reached through
-  # $(repo_path_for ...) for every row, and a cache filled inside that
-  # substitution is discarded with it — the file was re-read fifty times over.
-  read_scopes >/dev/null
+  # Build the scope map and the profile HERE, in this shell, once. The loop
+  # below reads both without a fork for each row.
+  local prof
+  SCOPE_MAP_READY=0; load_scope_map
+  prof=$(current_profile)
   {
   for entry in "${TRACKED[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"; label="$rel"
@@ -34,8 +35,8 @@ build_configs_json() {
     else
       is_default=false
     fi
-    scope=$(scope_for "$rel")
-    repo_path=$(repo_path_for "$rel")
+    scope_into scope "$rel"
+    repo_path_into repo_path "$rel" "$prof"
     git_rel="${repo_path#"$REPO_DIR"/}"
     saved=false
     if [[ "$is_dir" == true ]]; then

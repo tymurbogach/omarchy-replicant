@@ -158,7 +158,49 @@ list_profiles() {
 # On fifty rows that is a hundred and fifty processes to answer a question about
 # a file of a dozen lines. It is read once per process instead.
 SCOPES_CACHE=""; SCOPES_CACHED=0
-invalidate_scopes_cache() { SCOPES_CACHED=0; SCOPES_CACHE=""; }
+declare -gA SCOPE_OF=()
+SCOPE_MAP_READY=0
+invalidate_scopes_cache() { SCOPES_CACHED=0; SCOPES_CACHE=""; SCOPE_MAP_READY=0; SCOPE_OF=(); }
+
+# load_scope_map: the scope list as an associative array, built in this shell.
+# The first valid line for a path wins, as in scope_for, and the v0.5 off-list
+# counts only while no .replicant-sync exists.
+load_scope_map() {
+  (( SCOPE_MAP_READY )) && return 0
+  SCOPE_MAP_READY=1; SCOPE_OF=()
+  local line k v
+  read_scopes >/dev/null
+  while IFS= read -r line; do
+    k="${line%%=*}"; v="${line#*=}"
+    k="${k//[[:space:]]/}"; v="${v//[[:space:]]/}"
+    case "$v" in shared|profile|off) [[ -n "${SCOPE_OF[$k]:-}" ]] || SCOPE_OF[$k]="$v" ;; esac
+  done < <(read_scopes)
+  if [[ ! -f "$SCOPE_FILE" && -f "$LEGACY_EXCLUDE_FILE" ]]; then
+    while IFS= read -r line; do
+      line="${line//[[:space:]]/}"
+      [[ -n "$line" && -z "${SCOPE_OF[$line]:-}" ]] && SCOPE_OF[$line]=off
+    done < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$LEGACY_EXCLUDE_FILE" 2>/dev/null || true)
+  fi
+  return 0
+}
+
+# scope_into <var> <rel> and repo_path_into <var> <rel> <profile>: the answers
+# of scope_for and repo_path_for, written into <var> without a fork. The loops
+# over every row call these. `$(scope_for ...)` is one fork for each call, and
+# the bar runs count_changes once a minute.
+scope_into() {
+  load_scope_map
+  printf -v "$1" '%s' "${SCOPE_OF[$2]:-shared}"
+}
+repo_path_into() {
+  local scope_into_result
+  scope_into scope_into_result "$2"
+  if [[ "$scope_into_result" == "profile" ]]; then
+    printf -v "$1" '%s' "$REPO_DIR/profiles/$3/config/$2"
+  else
+    printf -v "$1" '%s' "$CONFIG_DIR/$2"
+  fi
+}
 read_scopes() {
   if (( ! SCOPES_CACHED )); then
     SCOPES_CACHED=1

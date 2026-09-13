@@ -1409,6 +1409,15 @@ check "…and names the user the system names" "$(id -un)" \
   "$(git -C "$fresh/repo" config user.name 2>/dev/null)"
 rm -rf "$fresh"
 
+section "a writer with nothing to keep still succeeds"
+# write_track_file ended in `(( n )) && printf`. With nothing to keep it
+# returned 1, and set -e ended the first layout on a machine that has none of
+# the old personal files: init printed nothing and made no repo.
+rc=0; ( USER_TRACK_FILE="$TMP/empty.track"; write_track_file ) || rc=$?
+check "an empty track list is written" "0" "$rc"
+check "…with its header and no blank line" "0" "$(grep -c '^$' "$TMP/empty.track" 2>/dev/null || true)"
+rm -f "$TMP/empty.track"
+
 section "status fetches at most once per FETCH_MAX_AGE"
 # The bar polls every minute. A fetch on every poll was a git fetch a minute,
 # forever, on a laptop. Only an explicit refresh passes --fetch.

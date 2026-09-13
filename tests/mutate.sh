@@ -130,6 +130,12 @@ suite: test-core.sh
 from: -o $(id -un) -g $(id -gn)
 to: -o $USER -g $USER
 why: an unreadable secret is named when $USER is not set
+---
+file: bin/replicant-core.sh
+suite: test-core.sh
+from: print_lines() { (( $# )) || return 0;
+to: print_lines() { (( $# )) || return 1;
+why: a writer with nothing to keep still succeeds
 DATA
 )
 

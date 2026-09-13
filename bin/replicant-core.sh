@@ -617,6 +617,11 @@ repo_path_for() {
   fi
 }
 
+# print_lines <line>... — one line each, and nothing at all for no lines. The
+# writers ended in `(( n )) && printf`, so with nothing to keep a writer returned
+# 1, and set -e ended the first layout on a new machine with no message.
+print_lines() { (( $# )) || return 0; printf '%s\n' "$@"; }
+
 write_scope_file() {
   local -a keep=("$@")
   {
@@ -625,7 +630,7 @@ write_scope_file() {
     echo "#   <path> = profile   a copy per profile, under profiles/<profile>/config/"
     echo "#   <path> = off       never saved from or restored onto any machine"
     echo "# A path that is not listed is shared. Written by the panel; safe to edit."
-    (( ${#keep[@]} )) && printf '%s\n' "${keep[@]}"
+    print_lines "${keep[@]}"
   } > "$SCOPE_FILE"
   invalidate_scopes_cache
 }
@@ -735,7 +740,7 @@ write_track_file() {
     echo "#"
     echo "# This file lives in the repo, so both your machines honour it."
     echo "# Written by the panel and by 'omarchy-replicant track'; safe to edit."
-    (( ${#keep[@]} )) && printf '%s\n' "${keep[@]}"
+    print_lines "${keep[@]}"
   } > "$USER_TRACK_FILE"
 }
 

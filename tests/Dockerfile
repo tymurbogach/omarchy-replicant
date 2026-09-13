@@ -11,7 +11,8 @@
 # and $USER stays unset, as in a systemd unit.
 FROM archlinux:latest
 
-RUN pacman -Syu --noconfirm --needed git jq shellcheck diffutils which \
+# qt6-declarative brings qmltestrunner, for the panel's logic in replicant.js.
+RUN pacman -Syu --noconfirm --needed git jq shellcheck diffutils which qt6-declarative \
  && pacman -Scc --noconfirm
 
 RUN useradd -m tester

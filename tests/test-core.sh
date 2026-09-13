@@ -1376,15 +1376,29 @@ section "a secret this user cannot read is named, not a failed backup"
 # A secret tracked under /etc is often readable by root only. Its copy failed
 # under set -e and ended the whole backup. It runs in a subshell with set -e,
 # as the CLI does. Root can read anything, so there is nothing to test as root.
+# $USER is unset, as in a container: the message named the owner with it, and
+# under set -u that ended the backup the message was there to save.
 if [[ $(id -u) != 0 ]]; then
   printf 'user=me\n' > "$TMP/unreadable.cred"; chmod 000 "$TMP/unreadable.cred"
   core_track "$TMP/unreadable.cred" misc/unreadable.cred --secret >/dev/null 2>&1
-  rc=0; out=$(bash -c 'source "$1" 2>/dev/null; core_backup' _ "$CORE" 2>&1) || rc=$?
+  rc=0; out=$(env -u USER bash -c 'source "$1" 2>/dev/null; core_backup' _ "$CORE" 2>&1) || rc=$?
   check "the backup still finishes" "0" "$rc"
   check_contains "…and names the command that copies it" "sudo install" "$out"
+  check_contains "…for the owner the system names" "-o $(id -un) -g $(id -gn) " "$out"
   core_untrack misc/unreadable.cred >/dev/null 2>&1
   chmod 600 "$TMP/unreadable.cred"; rm -f "$TMP/unreadable.cred"
 fi
+
+section "a new repo gets an identity without \$USER or a global one"
+# In a container or a systemd unit, $USER can be unset and git can have no
+# identity. The layout wrote an empty one, and every commit after it failed.
+fresh="$TMP/fresh-replicant"
+rc=0; out=$(env -u USER GIT_CONFIG_GLOBAL=/dev/null OMARCHY_REPLICANT_HOME="$fresh" \
+  bash -c 'source "$1" 2>/dev/null; ensure_repo_layout' _ "$CORE" 2>&1) || rc=$?
+check "the layout finishes" "0" "$rc"
+check "…and names the user the system names" "$(id -un)" \
+  "$(git -C "$fresh/repo" config user.name 2>/dev/null)"
+rm -rf "$fresh"
 
 section "status fetches at most once per FETCH_MAX_AGE"
 # The bar polls every minute. A fetch on every poll was a git fetch a minute,

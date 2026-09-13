@@ -1461,8 +1461,12 @@ GI
   if [[ ! -d "$REPO_DIR/.git" ]]; then
     git -C "$REPO_DIR" init -q -b main
     git -C "$REPO_DIR" config init.defaultBranch main 2>/dev/null || true
-    git -C "$REPO_DIR" config user.name  "${GIT_AUTHOR_NAME:-$(git config --global user.name 2>/dev/null || echo "$USER")}"
-    git -C "$REPO_DIR" config user.email "${GIT_AUTHOR_EMAIL:-$(git config --global user.email 2>/dev/null || echo "$USER@omarchy-replicant")}"
+    # $USER is not set everywhere (a container, a systemd unit). Under set -u its
+    # absence wrote an empty identity, and every commit after it failed. Ask the
+    # system instead.
+    local who; who=$(id -un)
+    git -C "$REPO_DIR" config user.name  "${GIT_AUTHOR_NAME:-$(git config --global user.name 2>/dev/null || echo "$who")}"
+    git -C "$REPO_DIR" config user.email "${GIT_AUTHOR_EMAIL:-$(git config --global user.email 2>/dev/null || echo "$who@omarchy-replicant")}"
     git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
   else
     git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
@@ -1598,7 +1602,7 @@ core_backup() {
     if [[ -f $src && ! -r $src ]]; then
       # Readable by root only, which is common under /etc. The copy failed
       # under set -e and ended the whole backup. Name it and go on.
-      echo "  · ${src/#$HOME/\~} is readable by root only. To save it: sudo install -D -m600 -o $USER -g $USER $src $dst" >&2
+      echo "  · ${src/#$HOME/\~} is readable by root only. To save it: sudo install -D -m600 -o $(id -un) -g $(id -gn) $src $dst" >&2
     elif [[ -f $src ]]; then
       install -d -m 700 "$(dirname "$dst")" 2>/dev/null || mkdir -p "$(dirname "$dst")"
       install -m 600 "$src" "$dst"

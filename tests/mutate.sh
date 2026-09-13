@@ -118,6 +118,18 @@ suite: test-core.sh
 from: (( age >= FETCH_MAX_AGE ))
 to: true
 why: status fetches at most once per FETCH_MAX_AGE
+---
+file: bin/replicant-core.sh
+suite: test-core.sh
+from: local who; who=$(id -un)
+to: local who; who=$USER
+why: a new repo gets an identity when $USER is not set
+---
+file: bin/replicant-core.sh
+suite: test-core.sh
+from: -o $(id -un) -g $(id -gn)
+to: -o $USER -g $USER
+why: an unreadable secret is named when $USER is not set
 DATA
 )
 

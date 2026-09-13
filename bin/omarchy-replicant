@@ -186,9 +186,7 @@ cmd_savegame() {
   echo "→ savegame: copying into the repo" >&2
   bash "$CORE" backup --for-savegame
 
-  if [[ -z $(git_repo status --porcelain 2>/dev/null) ]]; then
-    echo "No changes. Nothing to save." >&2; return 0; fi
-
+  local did_commit=0
   if [[ -n $(git_repo status --porcelain -- state/ 2>/dev/null) ]]; then
     git_repo add -A state/
     # The date used to be in the subject, which put it twice on every row of
@@ -202,6 +200,7 @@ cmd_savegame() {
     # did the work and then failed at the commit.
     local machine; machine=$(bash "$CORE" machine)
     git_repo commit -q -m "state: $machine inventory (packages, plugins, themes)"
+    did_commit=1
     echo "→ Inventory commit:" >&2; git_repo show --stat --oneline HEAD 2>/dev/null | sed 's/^/    /' >&2; echo >&2
   fi
 
@@ -213,13 +212,20 @@ cmd_savegame() {
   if [[ -n $pending && -n $MSG ]]; then
     git_repo add -A
     git_repo commit -q -m "$MSG"
+    did_commit=1
     echo "→ Single commit (-m):" >&2; git_repo show --stat --oneline HEAD 2>/dev/null | sed 's/^/    /' >&2; echo >&2
     pending=""
   fi
 
-  if (( PUSH )) && [[ -n $(git_repo log --oneline '@{u}..HEAD' 2>/dev/null) ]]; then
-    echo "→ Push to $(git_repo config --get remote.origin.url 2>/dev/null)" >&2
-    git_repo push -q origin HEAD 2>&1 && echo "    done" >&2; echo >&2
+  # Commits made earlier count too. After a pull the tree is clean and a commit
+  # can still wait, and the panel tells the user to press Save for it. This
+  # used to stop at "Nothing to save" before it reached the push.
+  PUSH_STATE=held
+  if (( PUSH )); then push_pending; fi
+
+  if (( ! did_commit )) && [[ -z $pending && $PUSH_STATE != ok && $PUSH_STATE != failed ]]; then
+    echo "No changes. Nothing to save." >&2
+    return 0
   fi
 
   if [[ -n $pending ]]; then
@@ -234,7 +240,46 @@ cmd_savegame() {
       git_repo status --porcelain -- secrets/ 2>/dev/null | sed 's/^/    /' >&2; echo >&2
     fi
     echo "Once committed: git -C $REPO_DIR push origin HEAD" >&2
-  else echo "Everything saved and pushed." >&2; fi
+  fi
+
+  # A save that did not reach GitHub must never say that it did.
+  if [[ $PUSH_STATE == failed ]]; then
+    warn "Committed on this machine, but the push to GitHub failed:"
+    printf '%s\n' "$PUSH_ERROR" | sed 's/^/    /' >&2
+    warn "Another machine may have saved first. Run 'omarchy-replicant pull', then save again."
+    return 1
+  fi
+  [[ -z $pending ]] || return 0
+  case "$PUSH_STATE" in
+    no-remote) echo "Everything saved on this machine. There is no remote yet: run 'omarchy-replicant create --push'." >&2 ;;
+    held)      echo "Everything saved on this machine, not pushed (--no-push)." >&2 ;;
+    *)         echo "Everything saved and pushed." >&2 ;;
+  esac
+}
+
+# push_pending: send the commits that the remote does not have yet. It sets
+# PUSH_STATE to no-remote, nothing, ok or failed, and PUSH_ERROR to what git
+# said when the push failed. The caller decides what to print.
+push_pending() {
+  PUSH_STATE=nothing; PUSH_ERROR=""
+  git_repo remote get-url origin >/dev/null 2>&1 || { PUSH_STATE=no-remote; return 0; }
+  git_repo rev-parse -q --verify HEAD >/dev/null 2>&1 || return 0
+  local -a push_args=(origin HEAD)
+  if git_repo rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
+    [[ "$(git_repo rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)" != 0 ]] || return 0
+  else
+    # Never pushed from here: set the upstream on the way, as `push` does.
+    # `create` without --push tells the user that savegame pushes, and it did
+    # not, because there was no upstream to compare with.
+    push_args=(-u origin "$(git_repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)")
+  fi
+  echo "→ Push to $(git_repo config --get remote.origin.url 2>/dev/null)" >&2
+  if PUSH_ERROR=$(git_repo push -q "${push_args[@]}" 2>&1); then
+    PUSH_STATE=ok
+    echo "    done" >&2
+  else
+    PUSH_STATE=failed
+  fi
 }
 
 # `diff` with no id: what is pending in the repo as a whole. With an id it is
@@ -496,17 +541,23 @@ cmd_restore() {
     --all) ALL_GROUPS=1; shift;;
     --dry-run) DRY=1; shift;;
     --yes|-y) YES=1; shift;;
-    --only) ONLY="${2:-}"; shift 2;;
-    *) shift;;
+    --only) ONLY="${2:-}"; [[ -n "$ONLY" ]] || fail "--only needs an area"; shift 2;;
+    *) fail "unknown option: $1";;
   esac; done
   [[ -d "$REPO_DIR/.git" ]] || fail "no repo"
+  # shellcheck source=/dev/null
+  source "$PLUGIN_DIR/bin/replicant-core.sh" 2>/dev/null || true
+  # An area this plugin does not have restored nothing and then printed
+  # "restore complete". A typo in the word that picks what to restore is an
+  # error, and so is an option this command does not know.
+  if [[ -n "$ONLY" ]] && ! find_category "$ONLY" >/dev/null; then
+    fail "unknown area: $ONLY (areas: ${CATEGORY_ORDER[*]})"
+  fi
   if (( ALL_GROUPS && !DRY && !YES )); then
     warn "restore --apply --all: this will apply every category with pending changes without asking one by one."
     read -rp "Continue and restore EVERYTHING from the repo/GitHub onto this system? .bak.<epoch> backups will be made [y/N] " resp </dev/tty 2>&1 || resp=""
     [[ $resp == [yY] ]] || fail "restore --apply --all cancelled"
   fi
-  # shellcheck source=/dev/null
-  source "$PLUGIN_DIR/bin/replicant-core.sh" 2>/dev/null || true
 
   # The plan comes from MANIFEST via plan_for_category(). It used to be a second
   # hand-written list right here, which meant adding a file to the manifest
@@ -1003,11 +1054,8 @@ cmd_install_theme() {
   local name="${1:-}"
   [[ -n "$name" ]] || fail "usage: omarchy-replicant install-theme <name>"
   ensure_core
-  # Sourced with an empty "$1" on purpose: the core file ends in its own
-  # dispatcher, and this function's own "$1" would otherwise run an unrelated
-  # core command as a side effect (install-theme backup ran core_backup).
   # shellcheck disable=SC1090
-  source "$CORE" "" 2>/dev/null || true
+  source "$CORE" 2>/dev/null || true
   core_install_theme "$name" || exit 1
 }
 
@@ -1016,9 +1064,8 @@ cmd_install_plugin() {
   local id="${1:-}"
   [[ -n "$id" ]] || fail "usage: omarchy-replicant install-plugin <id>"
   ensure_core
-  # Empty "$1" for the core file's own dispatcher — see cmd_install_theme.
   # shellcheck disable=SC1090
-  source "$CORE" "" 2>/dev/null || true
+  source "$CORE" 2>/dev/null || true
   core_install_plugin "$id" || exit 1
 }
 
@@ -1412,6 +1459,9 @@ cmd_purge() {
   # runs in the CLI's own shell and an unbound variable here kills the one
   # command whose job is to leave nothing behind.
   [[ -f "$REPLICANT_HOME/incoming" ]] && targets+=("$REPLICANT_HOME/incoming")
+  # Left by a root-owned write that nothing could ask for root for. It is the
+  # file that the printed `sudo install` command names.
+  [[ -d "$REPLICANT_HOME/staged" ]] && targets+=("$REPLICANT_HOME/staged")
   if (( ! KEEP_REPO )); then
     [[ -d "$REPLICANT_HOME" ]] && targets+=("$REPLICANT_HOME")
   fi

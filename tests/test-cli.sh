@@ -96,6 +96,12 @@ section "id -> path resolution"
 check "resolves a tracked id"  "$HOME/.config/hypr/input.lua" "$(run path hypr/input.lua)"
 check_false "rejects an unknown id" "$CLI" path nope/nope
 check_false "path with no argument fails" "$CLI" path
+# A sourced file sees the positional parameters of the function that sources
+# it. The core's own dispatcher then ran on the caller's first argument, so
+# `path machine` printed this machine's name before "unknown id".
+out=$(REPLICANT_MACHINE=probe-host "$CLI" path machine 2>&1)
+check "an id that is also a core command runs no core command" "0" \
+  "$(grep -c probe-host <<<"$out" || true)"
 
 section "reading and writing one setting"
 check "get reads a value"      "300" "$(run get idle.screensaver)"
@@ -130,6 +136,16 @@ check "restore with no flags is a dry run"  "$before_home" "$(hash_tree "$HOME/.
 out=$(run reset-all)
 check "reset-all with no flags is a dry run" "$before_home" "$(hash_tree "$HOME/.config")"
 
+section "restore refuses what it does not understand"
+# `restore --apply --yes --only hyperland` restored nothing and printed
+# "restore complete". Unknown options were skipped in the same silent way.
+out=$(run restore --only hyperland)
+check_false "an unknown area is refused" "$CLI" restore --only hyperland
+check_contains "…and the real areas are named" "hyprland" "$out"
+check_false "an unknown option is refused" "$CLI" restore --aply
+check_false "--only needs an area"        "$CLI" restore --only
+check "…and none of it wrote anything" "$before_home" "$(hash_tree "$HOME/.config")"
+
 section "reset refuses what it cannot restore"
 # `omarchy refresh config` restores one FILE. A tracked directory has no single
 # default to go back to, and cmp on a directory would decide whether it is
@@ -154,6 +170,16 @@ check "committed exactly one file" "1" "$(git -C "$REPO" show --stat --name-only
 check "…and it is the one asked for" "config/hypr/input.lua" "$(git -C "$REPO" show --name-only --format='' HEAD | head -1)"
 check "…with the message given"      "config: test" "$(git -C "$REPO" log -1 --format=%s)"
 check_false "save-file on an unknown id fails" "$CLI" save-file nope/nope
+
+section "a save with no remote says where it went"
+# This repo has no remote. savegame skipped the push without a word and ended
+# with "Everything saved and pushed."
+printf 'saved where there is no remote\n' > "$HOME/.config/hypr/input.lua"
+out=$(run savegame --auto)
+check_contains "savegame says there is no remote" "no remote" "$out"
+check "…and never claims it pushed" "0" "$(grep -c 'saved and pushed' <<<"$out" || true)"
+check "…while it still commits the change" "0" \
+  "$(git -C "$REPO" status --porcelain -- config/ | grep -c . || true)"
 
 section "log and settings"
 check "log --json is valid JSON" "0" "$(run log --json | jq empty >/dev/null 2>&1; echo $?)"
@@ -478,8 +504,13 @@ run link >/dev/null 2>&1
 # removal used rm -f, which silently does nothing to a directory.
 mkdir -p "$HOME/.config/nvim.bak.1700000000"
 printf 'old\n' > "$HOME/.config/nvim.bak.1700000000/init.lua"
+# A root-owned write that could not happen leaves its staged file for the
+# printed `sudo install` command. That is a trace of this plugin, too.
+mkdir -p "$OMARCHY_REPLICANT_HOME/staged"
+printf '[Login]\n' > "$OMARCHY_REPLICANT_HOME/staged/99-lid.conf"
 out=$(run purge)
 check_contains "a directory backup is listed too" ".bak.<epoch> backup" "$out"
+check_contains "…and so is a staged root-owned write" "staged" "$out"
 check "…and the dry run leaves it alone" "1" "$(ls -d "$HOME/.config/nvim.bak.1700000000" 2>/dev/null | wc -l)"
 out=$(run purge)
 check_contains "lists what it would remove" "would remove" "$out"
@@ -490,6 +521,7 @@ run purge --apply --yes >/dev/null 2>&1
 check "purge --apply removes the symlink" "0" "$(ls "$PATH_LINK" 2>/dev/null | wc -l)"
 check "…and still keeps the repo"         "1" "$(ls -d "$REPO" 2>/dev/null | wc -l)"
 check "…and the lock file is gone"        "0" "$(ls "$OMARCHY_REPLICANT_HOME/.replicant.lock" 2>/dev/null | wc -l)"
+check "…and the staged write is gone"     "0" "$(ls -d "$OMARCHY_REPLICANT_HOME/staged" 2>/dev/null | wc -l)"
 run purge --apply --yes --repo >/dev/null 2>&1
 check "…and the directory backup is really gone, not just listed" "0" \
   "$(ls -d "$HOME/.config/nvim.bak.1700000000" 2>/dev/null | wc -l)"

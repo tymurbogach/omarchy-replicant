@@ -7,7 +7,8 @@
 # The suites run as a normal user. Several checks are about what a user cannot
 # do, and root can read and write anything. qmllint and omarchy-plugin-validate
 # are not here: run-all.sh reports them as skipped, and they run on a machine
-# with Omarchy installed.
+# with Omarchy installed. The suites bring their own git identity (tests/lib.sh),
+# and $USER stays unset, as in a systemd unit.
 FROM archlinux:latest
 
 RUN pacman -Syu --noconfirm --needed git jq shellcheck diffutils which \
@@ -17,7 +18,5 @@ RUN useradd -m tester
 COPY --chown=tester:tester . /home/tester/replicant
 USER tester
 WORKDIR /home/tester/replicant
-RUN git config --global user.email tests@example.com \
- && git config --global user.name Tests
 
 CMD ["./tests/run-all.sh"]

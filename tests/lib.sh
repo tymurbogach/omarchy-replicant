@@ -30,6 +30,13 @@ done
 unset _stub
 export PATH="$STUB_DIR:$PATH"
 
+# git reads the global config of the person who runs the suite. A fake $HOME
+# does not hide it when XDG_CONFIG_HOME points at the real one, so the suites
+# passed on a machine with a git identity and failed in a container without
+# one. Every suite reads this file instead.
+export GIT_CONFIG_GLOBAL="$STUB_DIR/gitconfig"
+printf '[user]\n\tname = Tests\n\temail = tests@example.com\n' > "$GIT_CONFIG_GLOBAL"
+
 pass=0; fail=0
 t_ok()  { printf '  \033[32m✓\033[0m %s\n' "$1"; pass=$((pass+1)); }
 t_bad() { printf '  \033[31m✗\033[0m %s\n' "$1"; fail=$((fail+1)); }

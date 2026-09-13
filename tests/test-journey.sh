@@ -75,9 +75,17 @@ git init -q "$D/.config/omarchy/themes/mine"
 git -C "$D/.config/omarchy/themes/mine" remote add origin https://example.com/omarchy-mine-theme
 
 section "the desktop saves"
-on desktop init >/dev/null 2>&1
-on desktop track "$D/.local/bin/my-script" >/dev/null 2>&1
 DREPO="$TMP/desktop/replicant/repo"
+init_out=$(on desktop init)
+# Every check below stands on this one. When it fails, the reason is in the
+# output of init, and a check that hides it leaves nothing to debug in CI.
+if git -C "$DREPO" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+  t_ok "init makes a repo with a first commit"
+else
+  t_bad "init makes a repo with a first commit — init said:"
+  printf '%s\n' "$init_out" | sed 's/^/      /'
+fi
+on desktop track "$D/.local/bin/my-script" >/dev/null 2>&1
 git -C "$DREPO" config user.email t@example.com
 git -C "$DREPO" config user.name Test
 git -C "$DREPO" remote add origin "$TMP/origin.git" 2>/dev/null

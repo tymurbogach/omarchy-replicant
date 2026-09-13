@@ -190,6 +190,9 @@ check "JSON is still parseable"       "0" "$(jq empty "$TMP/.config/omarchy/shel
 check "TOML has no duplicate sections" "1" "$(grep -c '^\[bar\]' "$TMP/.config/omarchy/shell.toml")"
 
 section "the JSON the panel consumes"
+# Every registry line is an entry only on a laptop: a desktop drops the Lid
+# group (checked below). Pin the answer, so the count is the same on every machine.
+is_laptop() { return 0; }
 settings_json=$(build_settings_json)
 check "valid JSON"                    "0"  "$(printf '%s' "$settings_json" | jq empty >/dev/null 2>&1; echo $?)"
 check "one entry per registry line"   "${#SETTINGS[@]}" "$(printf '%s' "$settings_json" | jq 'length')"

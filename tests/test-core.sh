@@ -144,6 +144,14 @@ section "the sync states, driven for real through git"
 git init -q "$REPO_DIR" 2>/dev/null
 git -C "$REPO_DIR" config user.email t@example.com
 git -C "$REPO_DIR" config user.name Test
+# The /etc entries exist on some machines and not on others, and no check may
+# depend on which. A saved copy makes each one a row and a plan line on every
+# machine. Where the live file exists, the backup refreshes the copy.
+for entry in "${MANIFEST[@]}"; do
+  [[ "${entry%%:*}" == /etc/* ]] || continue
+  etc_copy=$(repo_path_for "${entry##*:}")
+  mkdir -p "$(dirname "$etc_copy")"; printf '# saved\n' > "$etc_copy"
+done
 core_backup >/dev/null 2>&1
 git -C "$REPO_DIR" add -A >/dev/null 2>&1
 git -C "$REPO_DIR" commit -q -m initial >/dev/null 2>&1

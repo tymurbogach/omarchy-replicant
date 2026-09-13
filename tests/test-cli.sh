@@ -146,6 +146,19 @@ check_false "an unknown option is refused" "$CLI" restore --aply
 check_false "--only needs an area"        "$CLI" restore --only
 check "…and none of it wrote anything" "$before_home" "$(hash_tree "$HOME/.config")"
 
+section "clone listens to Omarchy's URL check"
+# The check refuses a URL that names a git transport helper. Its answer was
+# ignored and the clone went ahead. A stub that always refuses stands in for
+# it, so the test does not depend on what git allows on this machine.
+mkdir -p "$TMP/urlcheck"
+printf '#!/bin/sh\nexit 1\n' > "$TMP/urlcheck/omarchy-git-url-check"
+chmod +x "$TMP/urlcheck/omarchy-git-url-check"
+rc=0; out=$(PATH="$TMP/urlcheck:$PATH" OMARCHY_REPLICANT_HOME="$TMP/clonetest" \
+  "$CLI" clone 'ext::sh -c true' 2>&1) || rc=$?
+check "a URL the check refuses is not cloned" "1" "$rc"
+check_contains "…and clone says why" "refusing to clone" "$out"
+check_false "…and creates nothing" test -e "$TMP/clonetest/repo"
+
 section "reset refuses what it cannot restore"
 # `omarchy refresh config` restores one FILE. A tracked directory has no single
 # default to go back to, and cmp on a directory would decide whether it is
@@ -280,6 +293,15 @@ run revert idle.lock --to default >/dev/null 2>&1
 check "reverting to Omarchy's default puts it back" "300" "$(run get idle.lock)"
 check "…in the stored unit, not the panel's"        "300" \
   "$(jq -r '.idle.lock' "$HOME/.config/omarchy/shell.json")"
+# A setting whose file is kept per profile lives under profiles/. revert staged
+# only config/, so that revert was never committed.
+run scope omarchy/shell.json profile >/dev/null 2>&1
+run set idle.lock 900 >/dev/null 2>&1
+run revert idle.lock --to default >/dev/null 2>&1
+check "the revert of a profile-scoped setting is committed" "0" \
+  "$(git -C "$REPO" status --porcelain -- profiles/ | grep -c . || true)"
+check_contains "…under a revert subject" "revert: idle.lock" "$(git -C "$REPO" log -1 --format=%s)"
+run scope omarchy/shell.json shared >/dev/null 2>&1
 
 section "restoring one file from the repo"
 check_false "restore-file needs an id" "$CLI" restore-file
@@ -354,6 +376,12 @@ check_false "install-theme with no name fails" \
   env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" install-theme
 check_false "install-plugin with no id fails" \
   env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" install-plugin
+# --check is what the panel asks before it asks for consent. It must install
+# nothing. The catalog URL from lib.sh points at no file, so this stays offline.
+: > "$FAKE_LOG"
+out=$(env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" install-plugin demo.widget --check 2>&1)
+check_contains "install-plugin --check says what the marketplace knows" "Marketplace:" "$out"
+check "…and never calls omarchy" "" "$(cat "$FAKE_LOG")"
 
 section "restore never installs third-party code on its own"
 : > "$FAKE_LOG"
@@ -539,6 +567,24 @@ for i in 1 2 3; do ( "$CLI" backup >/dev/null 2>&1 ) & done
 wait
 check "no leftover git index lock" "0" "$(ls "$REPO/.git/index.lock" 2>/dev/null | wc -l)"
 check_true "the repo is still usable afterwards" git -C "$REPO" status --porcelain
+
+section "every command that writes waits for the others"
+# purge, undo, backups --prune and the two installs wrote without the lock, so
+# `purge --apply --repo` could delete the repo under a running save. The fake
+# omarchy goes first on PATH: without the lock, the installs would reach it.
+lock="$OMARCHY_REPLICANT_HOME/.replicant.lock"
+mkdir -p "$OMARCHY_REPLICANT_HOME"
+flock -o "$lock" sleep 30 & holder=$!
+until ! flock -n "$lock" true 2>/dev/null; do sleep 0.1; done
+for c in "undo hypr/input.lua --apply" "backups --prune --apply" "install-theme mine" \
+         "install-plugin demo.widget" "purge --apply --yes"; do
+  # shellcheck disable=SC2086
+  out=$(PATH="$TMP/fakebin:$PATH" REPLICANT_LOCK_WAIT=1 run $c)
+  check_contains "'$c' waits for the lock" "another omarchy-replicant operation" "$out"
+done
+# While the lock is still held: a dry run must not wait for it.
+check_contains "a dry run takes no lock" "would remove" "$(REPLICANT_LOCK_WAIT=1 run purge)"
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
 
 section "track / untrack commit only their own paths"
 printf 'mine\n' > "$HOME/.config/mine.conf"

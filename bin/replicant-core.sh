@@ -1,8 +1,7 @@
 #!/bin/bash
-# replicant-core.sh — core logic for the omarchy-replicant plugin (savegame pattern
-# ported from ~/omarchy_thinkpad). Doesn't reinvent: MANIFEST/SECRETS_MANIFEST +
-# install-with-backup + scan-secrets + backup/savegame/restore.
-# Located at: ~/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/bin/
+# replicant-core.sh: the logic of the omarchy-replicant plugin. It holds the
+# tracked lists (MANIFEST, SECRETS_MANIFEST), install with backup, the secret
+# scan, and backup, savegame and restore. The CLI and the panel call it.
 set -euo pipefail
 
 REAL_CORE="$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
@@ -76,7 +75,6 @@ MANIFEST=(
   "$HOME/.config/git/config:git/config"
   "$HOME/.claude/settings.json:claude/settings.json"
   "$HOME/.claude/settings.local.json:claude/settings.local.json"
-  "$HOME/.claude/.mcp.json:claude/mcp.json"
   "$HOME/.config/Code/User/settings.json:vscode/settings.json"
   "$HOME/.config/mise/config.toml:mise/config.toml"
   "$HOME/.config/nvim/:nvim/"
@@ -149,6 +147,30 @@ LEGACY_PERSONAL_SECRETS=(
   "$HOME/Projects/portfolio/.env:env/portfolio.env"
   "$HOME/Projects/lazytripz/backend/.env:env/lazytrip-backend.env"
 )
+
+# Entries that an earlier release shipped and this one does not, because they
+# are not what every Omarchy machine has. If the repo holds a copy, the entry
+# moves into the user's own list once. Without that step, the prune pass would
+# delete the copy on the next save. A machine that only has the file does not
+# start to track it.
+RETIRED_SHIPPED=(
+  "$HOME/.claude/.mcp.json:claude/mcp.json"
+)
+
+migrate_retired_shipped() {
+  [[ -f "$USER_TRACK_FILE" ]] || return 0
+  local entry src rel moved=0
+  for entry in "${RETIRED_SHIPPED[@]}"; do
+    src="${entry%%:*}"; rel="${entry##*:}"
+    is_user_entry "$rel" && continue
+    [[ -e "$(repo_path_for "$rel")" ]] || continue
+    track_line_for "$src" "$rel" config >> "$USER_TRACK_FILE"
+    moved=$((moved + 1))
+  done
+  (( moved )) || return 0
+  load_user_manifest
+  echo "  · $(plural "$moved" entry entries) that the plugin no longer ships moved into your .replicant-track" >&2
+}
 
 # ─── THE USER'S OWN LIST ────────────────────────────────────────────────────
 # Everything above ships with the plugin. Everything a particular person wants
@@ -335,7 +357,7 @@ CATEGORIES=(
   "secrets|󰌆|Secrets & keys|SSH keys, tokens and .env files — private, mode 600|Copied back as mode 600; contents are never printed"
   "plugins|󰐱|Plugins|Plugin settings, plus every plugin's id and git origin|Plugin settings copied back; third-party plugins are installed only on request"
   "scripts|󰈙|Scripts|Your helper scripts under ~/.local/bin and Omarchy hooks|Copied back with the executable bit kept"
-  "system|󰋊|System|systemd drop-ins for lid, sleep and fingerprint|Copied back with sudo, then systemctl daemon-reload"
+  "system|󰋊|System|systemd drop-ins for lid and sleep|Needs root: one file asks for it, a full restore prints sudo"
   "other|󰈔|Other|Anything else you asked Replicant to track|Copied back as-is"
 )
 CATEGORY_ORDER=(shortcuts appearance desktop hyprland terminal development secrets plugins scripts system other)
@@ -1344,6 +1366,35 @@ install_tree() {
   ok "$short_path/ ($(tree_count "$src") files, $mode)"
 }
 
+# The pre-commit hook of the data repo. It fails closed: if it cannot find the
+# scanner, it blocks the commit. It used to exit 0 in that case, and the
+# scanner is the last check between a token and GitHub.
+precommit_hook_text() {
+  cat <<'HOOK'
+#!/bin/bash
+set -uo pipefail
+REPO=$(git rev-parse --show-toplevel)
+files=$(git diff --cached --name-only --diff-filter=ACM)
+[[ -z $files ]] && exit 0
+SCAN="$REPO/bin/scan-secrets.sh"
+[[ -x "$SCAN" ]] || SCAN="$HOME/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/bin/scan-secrets.sh"
+if [[ ! -x "$SCAN" ]]; then
+  echo "COMMIT BLOCKED: the secret scanner is missing. Run 'omarchy-replicant backup' to put it back." >&2
+  exit 1
+fi
+fail=0
+while IFS= read -r file; do
+  [[ -f $file ]] || continue
+  [[ $file == secrets/* ]] && continue
+  git show ":$file" 2>/dev/null | "$SCAN" --stdin "$file" || fail=1
+done <<<"$files"
+if (( fail )); then
+  echo "COMMIT BLOCKED: possible credential in config/state/templates." >&2
+  exit 1
+fi
+HOOK
+}
+
 ensure_repo_layout() {
   mkdir -p "$CONFIG_DIR" "$STATE_DIR" "$TEMPLATES_DIR"
   # A repo written before state/ was scoped by machine has its inventory flat in
@@ -1366,40 +1417,17 @@ ensure_repo_layout() {
   done
   ensure_scope_file
   ensure_track_file
+  migrate_retired_shipped
   record_repo_version
   mkdir -p "$REPO_DIR/profiles/$(current_profile)/config" 2>/dev/null || true
   install -d -m 700 "$SECRETS_DIR" 2>/dev/null || mkdir -p "$SECRETS_DIR"
-  # templates placeholder
-  if [[ ! -f "$TEMPLATES_DIR/60-secrets.conf.example" && -f "$HOME/omarchy_thinkpad/templates/60-secrets.conf.example" ]]; then
-    cp -a "$HOME/omarchy_thinkpad/templates/"*.example "$TEMPLATES_DIR/" 2>/dev/null || true
-  fi
-  # githooks
+  # The hook is kept in step with the plugin, like the scanner below. It was
+  # written once, so a repo made by an old release kept that hook forever.
   mkdir -p "$GITHOOKS_DIR"
-  if [[ ! -f "$GITHOOKS_DIR/pre-commit" ]]; then
-    cat >"$GITHOOKS_DIR/pre-commit" <<'HOOK'
-#!/bin/bash
-set -uo pipefail
-REPO=$(git rev-parse --show-toplevel)
-SCAN="$REPO/bin/scan-secrets.sh"
-[[ -x "$SCAN" ]] || SCAN="$HOME/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/bin/scan-secrets.sh"
-[[ -x "$SCAN" ]] || exit 0
-fail=0
-files=$(git diff --cached --name-only --diff-filter=ACM)
-[[ -z $files ]] && exit 0
-while IFS= read -r file; do
-  [[ -f $file ]] || continue
-  [[ $file == secrets/* ]] && continue
-  git show ":$file" 2>/dev/null | "$SCAN" --stdin "$file" || fail=1
-done <<<"$files"
-if (( fail )); then
-  cat <<'MSG'
-COMMIT BLOCKED: possible credential in config/state/templates.
-MSG
-  exit 1
-fi
-HOOK
-    chmod +x "$GITHOOKS_DIR/pre-commit"
+  if ! cmp -s <(precommit_hook_text) "$GITHOOKS_DIR/pre-commit" 2>/dev/null; then
+    precommit_hook_text > "$GITHOOKS_DIR/pre-commit"
   fi
+  chmod +x "$GITHOOKS_DIR/pre-commit"
   # scan-secrets bin — kept in step with the plugin, not just seeded once.
   #
   # The repo's pre-commit hook runs THIS copy, so a repo created in June was
@@ -1415,16 +1443,8 @@ HOOK
         echo "  · updating the repo's secret scanner to this version's" >&2
       cp -a "$PLUGIN_DIR/bin/scan-secrets.sh" "$REPO_DIR/bin/scan-secrets.sh"
     fi
-  elif [[ ! -f "$REPO_DIR/bin/scan-secrets.sh" && -f "$HOME/omarchy_thinkpad/bin/scan-secrets.sh" ]]; then
-    mkdir -p "$REPO_DIR/bin"
-    cp -a "$HOME/omarchy_thinkpad/bin/scan-secrets.sh" "$REPO_DIR/bin/scan-secrets.sh"
   fi
   chmod +x "$REPO_DIR/bin/scan-secrets.sh" 2>/dev/null || true
-  # pacman-delta-ignore
-  if [[ ! -f "$REPO_DIR/bin/pacman-delta-ignore" && -f "$HOME/omarchy_thinkpad/bin/pacman-delta-ignore" ]]; then
-    mkdir -p "$REPO_DIR/bin"
-    cp -a "$HOME/omarchy_thinkpad/bin/pacman-delta-ignore" "$REPO_DIR/bin/pacman-delta-ignore"
-  fi
   # .gitignore — savegame style (state/ is generated, .bak.* ignored, secrets/ tracked)
   if [[ ! -f "$REPO_DIR/.gitignore" ]]; then
     cat >"$REPO_DIR/.gitignore" <<'GI'
@@ -1575,21 +1595,16 @@ core_backup() {
     rel="${entry##*:}"
     dst="$SECRETS_DIR/$rel"
     is_excluded "$rel" && continue
-    if [[ -f $src ]]; then
+    if [[ -f $src && ! -r $src ]]; then
+      # Readable by root only, which is common under /etc. The copy failed
+      # under set -e and ended the whole backup. Name it and go on.
+      echo "  · ${src/#$HOME/\~} is readable by root only. To save it: sudo install -D -m600 -o $USER -g $USER $src $dst" >&2
+    elif [[ -f $src ]]; then
       install -d -m 700 "$(dirname "$dst")" 2>/dev/null || mkdir -p "$(dirname "$dst")"
       install -m 600 "$src" "$dst"
       ((scopied++)) || true
     else
       echo "  · missing: ${src/#$HOME/\~}" >&2
-    fi
-  done
-  # CIFS credentials (root:600, best-effort)
-  install -d -m 700 "$SECRETS_DIR/samba" 2>/dev/null || true
-  for src in /etc/samba/credentials-pi /etc/samba/credentials-nas; do
-    dst="$SECRETS_DIR/samba/$(basename "$src")"
-    if [[ -r $src ]]; then install -m 600 "$src" "$dst" 2>/dev/null || true
-    elif [[ -e $src && ! -f $dst ]]; then
-      echo "  · $src needs sudo: sudo install -m600 -o $USER -g $USER $src $dst" >&2
     fi
   done
   echo "  $(plural "$scopied" secret) copied" >&2
@@ -1730,8 +1745,13 @@ core_backup() {
   echo "→ Scanning what was copied (excludes secrets/)" >&2
   SCAN="$REPO_DIR/bin/scan-secrets.sh"
   [[ -x "$SCAN" ]] || SCAN="$PLUGIN_DIR/bin/scan-secrets.sh"
+  # This profile's tree too. A file kept per profile is copied there, and a
+  # token in it went unscanned until the pre-commit hook, if the hook ran.
+  local -a scan_dirs=("$CONFIG_DIR" "$STATE_DIR")
+  [[ -d "$REPO_DIR/profiles/$(current_profile)/config" ]] &&
+    scan_dirs+=("$REPO_DIR/profiles/$(current_profile)/config")
   if [[ -x "$SCAN" ]]; then
-    if ! "$SCAN" "$CONFIG_DIR" "$STATE_DIR" 2>&1; then
+    if ! "$SCAN" "${scan_dirs[@]}" 2>&1; then
       echo "  ✗ POSSIBLE SECRET — DO NOT commit" >&2
       return 1
     fi
@@ -2069,7 +2089,7 @@ SETTINGS=(
   # ── Input — Hyprland reads Lua at startup, so these need an explicit reload
   "input.repeatRate|Input|$HOME/.config/hypr/input.lua|input:repeat_rate|lua-int|Key repeat rate|/s|1|100||Characters a held key sends per second|hyprctl reload||1|"
   "input.repeatDelay|Input|$HOME/.config/hypr/input.lua|input:repeat_delay|lua-int|Key repeat delay|ms|100|2000||How long a key is held before it starts repeating|hyprctl reload||1|"
-  "input.kbLayout|Input|$HOME/.config/hypr/input.lua|input:kb_layout|lua-enum|Keyboard layout||||es,us,gb,de,fr,it,pt,latam|X11 layout code for the keyboard|hyprctl reload||1|"
+  "input.kbLayout|Input|$HOME/.config/hypr/input.lua|input:kb_layout|lua-enum|Keyboard layout||||@x11-layouts|X11 layout code for the keyboard|hyprctl reload||1|"
   "input.numlock|Input|$HOME/.config/hypr/input.lua|input:numlock_by_default|lua-bool|Num lock at login|||||Turn the numeric keypad on when the session starts|hyprctl reload||1|"
   "input.naturalScroll|Input|$HOME/.config/hypr/input.lua|input:touchpad:natural_scroll|lua-bool|Natural scrolling|||||Touchpad: two fingers down moves the page up|hyprctl reload||1|"
   "input.tapToClick|Input|$HOME/.config/hypr/input.lua|input:touchpad:tap_to_click|lua-bool|Tap to click|||||Touchpad: a tap counts as a click|hyprctl reload||1|"
@@ -2307,25 +2327,47 @@ hypr_overrider() {
 # three most recent per file: enough to walk back a bad afternoon, few enough
 # that `ls ~/.config/omarchy` still reads.
 BACKUPS_KEPT=${REPLICANT_BACKUPS_KEPT:-3}
+# The backups that this function made, one path per line. Pruning uses this
+# list and never the glob alone: `<file>.bak.*` also matches the backup that a
+# restore made (install_file) and the ones that `omarchy refresh config` makes.
+# The glob made three edits to a setting after a restore delete the undo for
+# that restore.
+SETTING_BACKUPS_FILE="$REPLICANT_HOME/setting-backups"
 backup_before_write() {
-  local file="$1" old
+  local file="$1" b old kept
   [[ -f "$file" ]] || return 0
-  cp -a "$file" "$file.bak.$(date +%s)" || return 1
-  # shellcheck disable=SC2012  # names are ours: <file>.bak.<epoch>, no spaces
+  b="$file.bak.$(date +%s)"
+  cp -a "$file" "$b" || return 1
+  mkdir -p "$REPLICANT_HOME" 2>/dev/null || return 0
+  printf '%s\n' "$b" >> "$SETTING_BACKUPS_FILE"
+  # shellcheck disable=SC2012,SC2010  # names are ours: <file>.bak.<epoch>, no spaces
   while read -r old; do
     [[ -n "$old" ]] && rm -f -- "$old"
-  done < <(ls -1t -- "$file".bak.* 2>/dev/null | tail -n +$((BACKUPS_KEPT + 1)))
+  done < <(ls -1t -- "$file".bak.* 2>/dev/null | grep -Fxf "$SETTING_BACKUPS_FILE" | tail -n +$((BACKUPS_KEPT + 1)))
+  # Forget what no longer exists, so that the list cannot grow without end.
+  kept=$(sort -u "$SETTING_BACKUPS_FILE" | while read -r old; do
+           if [[ -e "$old" ]]; then printf '%s\n' "$old"; fi
+         done)
+  printf '%s\n' "$kept" | sed '/^$/d' > "$SETTING_BACKUPS_FILE"
 }
 
 # ── read / write one setting ────────────────────────────────────────────────
 setting_options() {
-  # The only dynamic option list: whatever themes are installed right now.
-  local entry="$1"
+  # Two option lists are not fixed: the themes installed now, and the keyboard
+  # layouts this machine knows (`@x11-layouts` in the registry). A fixed list
+  # of eight layouts left anyone outside it with a control that could not show
+  # or keep the value.
+  local entry="$1" opts
   if [[ "$(setting_field "$entry" 5)" == "theme" ]]; then
     omarchy-theme-list 2>/dev/null | paste -sd, - || true
-  else
-    setting_field "$entry" 10
+    return 0
   fi
+  opts=$(setting_field "$entry" 10)
+  if [[ "$opts" == "@x11-layouts" ]]; then
+    opts=$(localectl list-x11-keymap-layouts 2>/dev/null | paste -sd, - || true)
+    [[ -n "$opts" ]] || opts="us,es,gb,de,fr,it,pt,latam"
+  fi
+  printf '%s\n' "$opts"
 }
 
 get_setting_value() {
@@ -3381,6 +3423,23 @@ plan_for_category() {
     [[ -f "$repo_path" ]] || continue
     printf '%s|%s|%s\n' "$repo_path" "$src" "$(restore_mode_for "$rel")"
   done
+  # A settings plugin that writes a Hyprland module keeps its own store: the
+  # OmaSettings window writes hypr/omasettings.lua from plugins/omasettings.json.
+  # Restoring Hyprland alone brought the module back without the store, so the
+  # plugin's window showed the old values, and its next write put them back.
+  if [[ "$want" == "hyprland" ]]; then
+    local mrel prel psrc
+    for entry in "${TRACKED[@]}"; do
+      mrel="${entry##*:}"
+      [[ "$mrel" == hypr/*.lua ]] || continue
+      prel="plugins/${mrel##*/}"; prel="${prel%.lua}.json"
+      psrc=$(resolve_manifest_src "$prel") || continue
+      is_excluded "$prel" && continue
+      repo_path=$(repo_path_for "$prel")
+      [[ -f "$repo_path" ]] || continue
+      printf '%s|%s|%s\n' "$repo_path" "$psrc" "$(restore_mode_for "$prel")"
+    done
+  fi
   [[ "$want" == "secrets" ]] || return 0
   for entry in "${TRACKED_SECRETS[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"
@@ -3426,6 +3485,13 @@ core_restore_file() {
     return 0
   fi
   mode=$(restore_mode_for "$rel")
+  # Outside $HOME needs root. install_file failed there on the permission.
+  # root_apply asks through pkexec or passwordless sudo, runs the apply step
+  # in the same call, and otherwise prints the command and fails.
+  if [[ "$src" != "$HOME"/* ]]; then
+    root_apply "$src" "$repo_path" "$(apply_for_category "$(category_for_rel "$rel")")"
+    return
+  fi
   DRY=0 install_file "$repo_path" "$src" "$mode"
   local apply; apply=$(apply_for_category "$(category_for_rel "$rel")")
   [[ -n "$apply" ]] && bash -c "$apply" >/dev/null 2>&1 || true
@@ -3617,9 +3683,45 @@ edited_plugins() {
     upstream=(--remotes)
     git -C "$pdir" rev-parse -q --verify FETCH_HEAD >/dev/null 2>&1 && upstream+=(FETCH_HEAD)
     ahead=$(git -C "$pdir" rev-list --count HEAD --not "${upstream[@]}" 2>/dev/null || echo 0)
-    (( dirty > 0 || ahead > 0 )) && printf '%s\t%s\t%s\t%s\n' "$pid" "$pdir" "$dirty" "$ahead"
+    (( dirty > 0 || ahead > 0 )) || continue
+    # HEAD can be behind while the files already match a commit upstream.
+    # Porcelain then counts every difference to HEAD as an edit, and doctor
+    # called such a plugin "14 uncommitted changes". Files that match an
+    # upstream commit hold no work of their own.
+    upstream_tree_matches "$pdir" && continue
+    printf '%s\t%s\t%s\t%s\n' "$pid" "$pdir" "$dirty" "$ahead"
   done
   return 0
+}
+
+# tree_matches_commit <dir> <commit>: are the files of the checkout exactly
+# the files of that commit, untracked files included? A temporary index is
+# built from the commit, so the checkout's own index is never written. The
+# shell reloads a plugin on any write under its directory.
+tree_matches_commit() {
+  local dir="$1" commit="$2" idx rc=1
+  idx=$(mktemp) || return 1
+  if GIT_INDEX_FILE="$idx" git -C "$dir" read-tree "$commit" 2>/dev/null \
+     && GIT_INDEX_FILE="$idx" git --no-optional-locks -C "$dir" diff --quiet 2>/dev/null \
+     && [[ -z "$(GIT_INDEX_FILE="$idx" git --no-optional-locks -C "$dir" ls-files --others --exclude-standard 2>/dev/null)" ]]; then
+    rc=0
+  fi
+  rm -f "$idx"
+  return "$rc"
+}
+
+# upstream_tree_matches <dir>: do the files match FETCH_HEAD or the tip of any
+# remote branch? Offline, like edited_plugins: it asks only what the last
+# fetch knew.
+upstream_tree_matches() {
+  local dir="$1" tip
+  local -a tips=()
+  mapfile -t tips < <({ git -C "$dir" rev-parse -q --verify FETCH_HEAD 2>/dev/null
+                       git -C "$dir" for-each-ref --format='%(objectname)' refs/remotes 2>/dev/null; } | sort -u)
+  for tip in ${tips[@]+"${tips[@]}"}; do
+    tree_matches_commit "$dir" "$tip" && return 0
+  done
+  return 1
 }
 
 # Plugins are not files to copy back — they are repos to reinstall. The saved
@@ -3690,6 +3792,67 @@ core_install_theme() {
   echo "$want installed from ${unique_origins[0]} — this also makes it the active theme" >&2
 }
 
+# ─── What the marketplace checked, asked only when a person installs ───────
+# Omaplug reads the same catalog fields. The catalog is 7.6 MB, so it is
+# fetched at most once an hour, and never by the status poll: only when a
+# person asks to install a plugin. It informs and never refuses, because
+# `omarchy plugin add` takes no commit to pin to.
+MARKETPLACE_CATALOG_URL="${REPLICANT_CATALOG_URL:-https://plugins.omarchy.org/catalog.json}"
+CATALOG_CACHE="$REPLICANT_HOME/catalog.json"
+CATALOG_MAX_AGE=3600
+
+# marketplace_catalog: print the path of a catalog no older than an hour.
+marketplace_catalog() {
+  local tmp age
+  if [[ -f "$CATALOG_CACHE" ]]; then
+    age=$(( $(date +%s) - $(stat -c %Y "$CATALOG_CACHE" 2>/dev/null || echo 0) ))
+    if (( age < CATALOG_MAX_AGE )); then printf '%s\n' "$CATALOG_CACHE"; return 0; fi
+  fi
+  mkdir -p "$REPLICANT_HOME" 2>/dev/null || return 1
+  tmp=$(mktemp "$REPLICANT_HOME/catalog.XXXXXX") || return 1
+  if curl -fsSL --max-time 20 -o "$tmp" "$MARKETPLACE_CATALOG_URL" 2>/dev/null \
+     && jq -e '.plugins | type == "array"' "$tmp" >/dev/null 2>&1; then
+    mv -f "$tmp" "$CATALOG_CACHE"
+  else
+    rm -f "$tmp"
+  fi
+  [[ -f "$CATALOG_CACHE" ]] || return 1
+  printf '%s\n' "$CATALOG_CACHE"
+}
+
+normalize_repo_url() { printf '%s\n' "$1" | sed -E 's#\.git$##; s#/$##' | tr '[:upper:]' '[:lower:]'; }
+
+# core_plugin_verification <id> [origin]: the marketplace status of a plugin,
+# and where its origin is now, as plain facts on stdout. The origin is asked
+# only when the catalog names a commit to compare it with.
+core_plugin_verification() {
+  local id="$1" origin="${2:-}" catalog entry vstatus vcommit now
+  [[ -n "$origin" ]] || origin=$(missing_plugins | awk -F'\t' -v i="$id" '$1 == i { print $2; exit }')
+  if ! catalog=$(marketplace_catalog); then
+    echo "Marketplace: the catalog could not be read (offline?)."
+    return 0
+  fi
+  entry=$(jq -c --arg id "$id" --arg repo "$(normalize_repo_url "${origin:-none}")" '
+    [.plugins[] | select(.id == $id or ((.repo // "") | ascii_downcase
+      | sub("\\.git$"; "") | sub("/$"; "")) == $repo)][0] // empty' "$catalog" 2>/dev/null)
+  if [[ -z "$entry" ]]; then
+    echo "Marketplace: $id is not listed."
+    return 0
+  fi
+  vstatus=$(jq -r '.verificationStatus // "unknown"' <<<"$entry")
+  vcommit=$(jq -r '.verificationCommit // .listingValidatedCommit // ""' <<<"$entry")
+  echo "Marketplace: $id is listed as $vstatus${vcommit:+, checked at ${vcommit:0:12}}."
+  [[ -n "$vcommit" && -n "$origin" && "$origin" != "-" ]] || return 0
+  now=$(timeout 15 git ls-remote "$origin" HEAD 2>/dev/null | awk 'NR == 1 { print $1 }')
+  if [[ -z "$now" ]]; then
+    echo "Origin: $origin could not be reached."
+  elif [[ "$now" == "$vcommit" ]]; then
+    echo "Origin: $origin is still at the commit that the marketplace checked."
+  else
+    echo "Origin: $origin is at ${now:0:12} now. It has moved since the marketplace checked it."
+  fi
+}
+
 # core_install_plugin <id> — the same action for a plugin. `missing_plugins`
 # already carries the method column that tells clone (an edited built-in)
 # from add (a real third-party plugin) — same two commands restore_plugins
@@ -3718,6 +3881,8 @@ core_install_plugin() {
   fi
   local origin="${unique_pairs[0]%%$'\t'*}" method="${unique_pairs[0]#*$'\t'}"
   command -v omarchy >/dev/null 2>&1 || { echo "omarchy not found on PATH" >&2; return 1; }
+  # A clone copies Omarchy's own built-in, which has no marketplace entry.
+  [[ "$method" == "clone" ]] || core_plugin_verification "$want" "$origin" >&2
   if [[ "$method" == "clone" ]]; then
     omarchy plugin clone "$origin" || { echo "$want — omarchy plugin clone failed" >&2; return 1; }
     echo "$want re-cloned from $origin (any edits you made are not in this)" >&2

@@ -170,6 +170,22 @@ if (( n >= 1 && n <= 3 )); then t_ok "backups are capped per file (kept $n)"; el
 check "…and the newest survives"    "140" "$(get_setting_value idle.lock)"
 check "…without touching other files' backups" "1" \
   "$(find "$TMP/.local" -name 'editor.bak.*' | wc -l)"
+# A restore leaves its own <file>.bak.<epoch>, and that backup is the undo for
+# the restore. The cap counted it with the setting's own backups, so a few
+# edits to the setting after a restore deleted it. A cap of 1 makes the old
+# behaviour fail every time instead of only sometimes.
+restore_bak="$TMP/.config/omarchy/shell.json.bak.1000000000"
+cp "$TMP/.config/omarchy/shell.json" "$restore_bak"
+touch -d '2020-01-01' "$restore_bak"
+# shellcheck disable=SC2034  # read by backup_before_write in the sourced core
+BACKUPS_KEPT=1
+for v in 150 160; do set_setting_value idle.lock "$v" >/dev/null 2>&1; done
+# shellcheck disable=SC2034  # read by backup_before_write in the sourced core
+BACKUPS_KEPT=3
+check_true "a restore's backup survives later setting edits" test -f "$restore_bak"
+n=$(find "$TMP/.config/omarchy" -name 'shell.json.bak.*' ! -name '*.1000000000' | wc -l)
+check "…while the setting's own backups stay capped" "1" "$n"
+rm -f "$restore_bak"
 check "JSON is still parseable"       "0" "$(jq empty "$TMP/.config/omarchy/shell.json" >/dev/null 2>&1; echo $?)"
 check "TOML has no duplicate sections" "1" "$(grep -c '^\[bar\]' "$TMP/.config/omarchy/shell.toml")"
 
@@ -298,6 +314,9 @@ chmod +x "$TMP/fakebin/systemctl"
 export PATH="$TMP/fakebin:$PATH"
 # shellcheck source=/dev/null
 source "$CORE"
+# The core sets -euo pipefail. Without this line, the first failing command
+# after here ended the suite with no summary, instead of reporting a check.
+set +e +u
 is_laptop() { return 0; }
 
 check "a drop-in value is read back"    "ignore" "$(get_setting_value lid.close)"
@@ -335,8 +354,6 @@ section "a root-owned write that cannot happen says so"
 pkexec() { return 1; }
 sudo() { return 1; }
 nowhere="$TMP/not-a-dir/99-lid.conf"
-# The lid section above sourced the core again, which turned `set -e` back on,
-# so the exit code is captured in a form that a failure cannot abort.
 rc=0; out=$(ini_set "$nowhere" Login.HandleLidSwitch ignore "" 2>&1) || rc=$?
 check "the write reports failure" "1" "$rc"
 check_false "…and so does root_apply on its own" root_apply "$nowhere" "$TMP/none" ""
@@ -416,6 +433,23 @@ rm -f "$HYPRCTL_OPTIONS"
 check "with no Hyprland to ask, nothing is claimed" "" "$(notice_of input.naturalScroll)"
 rm -f "$HOME/.config/hypr/omasettings.lua" "$HOME/.config/hypr/hyprland.lua"
 load_auto_manifest
+
+section "the keyboard layouts are this machine's own"
+# The list was fixed to eight layouts, so a user outside them had a control
+# that could not show or keep the value. It comes from localectl now.
+cat > "$TMP/fakebin/localectl" <<'EOF'
+#!/bin/bash
+[[ "$1" == list-x11-keymap-layouts ]] && printf 'es\nru\nus\n'
+EOF
+chmod +x "$TMP/fakebin/localectl"
+layouts=$(setting_options "$(find_setting input.kbLayout)")
+check_true "a layout the machine knows is offered" grep -qx ru <<<"${layouts//,/$'\n'}"
+set_setting_value input.kbLayout ru >/dev/null 2>&1
+check "…and can be written" "ru" "$(get_setting_value input.kbLayout)"
+printf '#!/bin/bash\nexit 1\n' > "$TMP/fakebin/localectl"
+layouts=$(setting_options "$(find_setting input.kbLayout)")
+check_true "without localectl, a short list is still offered" grep -qx us <<<"${layouts//,/$'\n'}"
+rm -f "$TMP/fakebin/localectl"
 
 section "the registry itself is well-formed"
 bad_fields=0; dupe=0; seen=""

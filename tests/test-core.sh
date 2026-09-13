@@ -851,6 +851,33 @@ check_true "install-plugin succeeds for a pending clone" \
 check "…and calls omarchy plugin clone, not plugin add" "plugin clone https://example.com/demo-clone" \
   "$(cat "$FAKE_LOG")"
 
+section "installing a plugin says what the marketplace checked"
+# Omaplug shows the same fields. The check informs and never refuses, because
+# `omarchy plugin add` takes no commit to pin to. A local origin and a catalog
+# fixture keep this off the network.
+vsrc="$TMP/verified-src"; git init -q -b main "$vsrc"; printf 'x\n' > "$vsrc/f"
+git -C "$vsrc" add -A; git -C "$vsrc" -c user.email=t@example.com -c user.name=t commit -qm one
+first=$(git -C "$vsrc" rev-parse HEAD)
+printf '{"plugins":[{"id":"com.example.verified","repo":"%s","verificationStatus":"verified","verificationCommit":"%s"}]}\n' \
+  "$vsrc" "$first" > "$TMP/catalog-fixture.json"
+verify() {
+  REPLICANT_CATALOG_URL="file://$TMP/catalog-fixture.json" \
+    bash -c 'source "$1" 2>/dev/null; CATALOG_CACHE="$2"; core_plugin_verification "$3" "$4"' \
+    _ "$CORE" "$TMP/catalog-cache.json" "$@"
+}
+out=$(verify com.example.verified "$vsrc")
+check_contains "the marketplace status is named" "listed as verified" "$out"
+check_contains "…and an origin still at that commit says so" "still at the commit" "$out"
+git -C "$vsrc" -c user.email=t@example.com -c user.name=t commit -qm two --allow-empty
+check_contains "an origin that moved since the check says so" "has moved" \
+  "$(verify com.example.verified "$vsrc")"
+check_contains "a plugin the marketplace does not list says so" "is not listed" \
+  "$(verify com.example.unlisted "")"
+rm -f "$TMP/catalog-cache.json"
+check_contains "no catalog is said plainly, and blocks nothing" "could not be read" \
+  "$(bash -c 'source "$1" 2>/dev/null; CATALOG_CACHE="$2"; core_plugin_verification com.example.verified' \
+     _ "$CORE" "$TMP/no-cache.json")"
+
 section "pending reinstalls, as JSON for the panel"
 # NOT "mine" — see Task 1's note: that name already has an installed
 # directory on disk from an earlier section in this same file, so
@@ -1073,6 +1100,51 @@ ensure_repo_layout >/dev/null 2>&1
 check "…and an up-to-date one is left alone" "$before" \
   "$(sha256sum "$REPO_DIR/bin/scan-secrets.sh" | cut -d' ' -f1)"
 
+section "a token in a file kept per profile is caught at backup time"
+# The backup scan covered config/ and state/ only. A file kept per profile is
+# copied under profiles/, so a token in it went unscanned until the pre-commit
+# hook, and only if the hook ran. Assembled from pieces, like test-cli.sh.
+core_scope hypr/monitors.lua profile >/dev/null 2>&1
+mon="$HOME/.config/hypr/monitors.lua"; had_mon=0
+[[ -f "$mon" ]] && { had_mon=1; cp "$mon" "$TMP/monitors.keep"; }
+P_GH="gh""p_"
+printf 'token = %sabcdefghijklmnopqrstuvwxyz0123456789\n' "$P_GH" > "$mon"
+check_false "backup fails on a token in a profile-scoped file" core_backup
+if (( had_mon )); then cp "$TMP/monitors.keep" "$mon"; else rm -f "$mon"; fi
+rm -f "$(repo_path_for hypr/monitors.lua)"
+core_backup >/dev/null 2>&1
+
+section "the pre-commit hook keeps up with the plugin and fails closed"
+# The hook was written once and never again, and it exited 0 when it could not
+# find the scanner. The scanner is the last check between a token and GitHub.
+printf '#!/bin/bash\n# an old version\nexit 0\n' > "$GITHOOKS_DIR/pre-commit"
+ensure_repo_layout >/dev/null 2>&1
+check_true "an out-of-date hook is replaced" cmp -s <(precommit_hook_text) "$GITHOOKS_DIR/pre-commit"
+check "…and stays executable" "1" "$(test -x "$GITHOOKS_DIR/pre-commit" && echo 1 || echo 0)"
+mv "$REPO_DIR/bin/scan-secrets.sh" "$TMP/scan.keep"
+printf 'x\n' > "$REPO_DIR/hook-probe.txt"
+git -C "$REPO_DIR" add hook-probe.txt
+check_false "a missing scanner blocks the commit" bash -c 'cd "$1" && .githooks/pre-commit' _ "$REPO_DIR"
+git -C "$REPO_DIR" rm -q --cached hook-probe.txt; rm -f "$REPO_DIR/hook-probe.txt"
+mv "$TMP/scan.keep" "$REPO_DIR/bin/scan-secrets.sh"
+
+section "restoring a root-owned file asks for root or prints the command"
+# install_file cannot write under /etc as a user, so restore-file on the lid
+# drop-in failed on the permission, and the System area claimed "Copied back
+# with sudo". Both ways to root are stubbed as functions, so this can never
+# raise a real prompt or write the real file.
+pkexec() { return 1; }
+sudo() { return 1; }
+lidcopy=$(repo_copy_for_rel etc/99-lid.conf); mkdir -p "$(dirname "$lidcopy")"
+printf '# test only\n[Login]\n' > "$lidcopy"
+rc=0; out=$(core_restore_file etc/99-lid.conf 2>&1) || rc=$?
+check "it fails without root" "1" "$rc"
+check_contains "…and prints the command to run" "sudo install" "$out"
+rm -f "$lidcopy"
+unset -f pkexec sudo
+check_contains "the System area says that it needs root" "Needs root" \
+  "$(category_field "$(find_category system)" 5)"
+
 section "the panel's text has to fit the panel"
 # Every one of these strings is drawn into a fixed-width row that elides. A
 # description that runs long does not wrap or warn — it just loses its last
@@ -1149,6 +1221,17 @@ core_backup >/dev/null 2>&1
 check_true "a save copies it into the repo" test -f "$CONFIG_DIR/hypr/omasettings.lua"
 check_contains "…and restoring Hyprland puts it back" "|$HOME/.config/hypr/omasettings.lua|" \
   "$(plan_for_category hyprland)"
+# OmaSettings writes that module from its own store, plugins/omasettings.json.
+# Restoring Hyprland alone brought the module back without the store.
+mkdir -p "$HOME/.config/omarchy/plugins/com.example.omasettings"
+printf '{"id":"com.example.omasettings","name":"OmaSettings"}\n' \
+  > "$HOME/.config/omarchy/plugins/com.example.omasettings/manifest.json"
+printf '{"gaps":2}\n' > "$HOME/.config/omarchy/omasettings.json"
+load_auto_manifest; core_backup >/dev/null 2>&1
+check_contains "…together with the store that the plugin writes it from" \
+  "|$HOME/.config/omarchy/omasettings.json|" "$(plan_for_category hyprland)"
+rm -rf "$HOME/.config/omarchy/plugins/com.example.omasettings" "$HOME/.config/omarchy/omasettings.json"
+load_auto_manifest
 # A machine restoring for the first time has Omarchy's stock hyprland.lua, which
 # loads nothing of the user's. What the repo's copy loads has to count too.
 cp "$HOME/.config/hypr/hyprland.lua" "$TMP/hyprland.keep"
@@ -1248,6 +1331,37 @@ check "a hook restores runnable" "755" "$(restore_mode_for omarchy/hooks/theme-s
 check "a template is filed under Appearance" "appearance" "$(category_for_rel omarchy/themed/alacritty.toml.tpl)"
 rm -rf "$HOME/.config/omarchy/hooks" "$HOME/.config/omarchy/themed"
 
+section "an entry the plugin stops shipping stays tracked where it was saved"
+# The shipped list names only what every Omarchy machine has, and
+# ~/.claude/.mcp.json is not that. A repo that saved it keeps it: it moves into
+# the user's own list instead of being pruned on the next save.
+mkdir -p "$HOME/.claude"; printf '{}\n' > "$HOME/.claude/.mcp.json"
+check "it is no longer in the shipped list" "0" \
+  "$(printf '%s\n' "${MANIFEST[@]}" | grep -c ':claude/mcp.json$' || true)"
+ensure_repo_layout >/dev/null 2>&1
+check "a machine that only has the file does not start tracking it" "0" \
+  "$(grep -c 'claude/.mcp.json' "$USER_TRACK_FILE" || true)"
+mcp_copy=$(repo_path_for claude/mcp.json); mkdir -p "$(dirname "$mcp_copy")"
+cp "$HOME/.claude/.mcp.json" "$mcp_copy"
+core_backup >/dev/null 2>&1
+check_true "a repo that saved it keeps its copy" test -f "$mcp_copy"
+check_contains "…because it moved into the user's list" ".claude/.mcp.json" "$(cat "$USER_TRACK_FILE")"
+core_untrack claude/mcp.json >/dev/null 2>&1; rm -f "$HOME/.claude/.mcp.json"
+
+section "a secret this user cannot read is named, not a failed backup"
+# A secret tracked under /etc is often readable by root only. Its copy failed
+# under set -e and ended the whole backup. It runs in a subshell with set -e,
+# as the CLI does. Root can read anything, so there is nothing to test as root.
+if [[ $(id -u) != 0 ]]; then
+  printf 'user=me\n' > "$TMP/unreadable.cred"; chmod 000 "$TMP/unreadable.cred"
+  core_track "$TMP/unreadable.cred" misc/unreadable.cred --secret >/dev/null 2>&1
+  rc=0; out=$(bash -c 'source "$1" 2>/dev/null; core_backup' _ "$CORE" 2>&1) || rc=$?
+  check "the backup still finishes" "0" "$rc"
+  check_contains "…and names the command that copies it" "sudo install" "$out"
+  core_untrack misc/unreadable.cred >/dev/null 2>&1
+  chmod 600 "$TMP/unreadable.cred"; rm -f "$TMP/unreadable.cred"
+fi
+
 section "a plugin with work its origin does not have"
 # Omaplug sorts plugins by this before it offers an update. For a backup it is
 # the same hole as a clone: install-plugin elsewhere fetches the origin's code.
@@ -1269,6 +1383,13 @@ git -C "$P" fetch -q origin HEAD
 git -C "$P" merge -q --ff-only FETCH_HEAD
 check "a plugin updated the way Omarchy updates is not named" "0" \
   "$(edited_plugins | grep -c com.example.edited || true)"
+# HEAD can be behind while the files already match upstream. Porcelain then
+# counts every difference to HEAD as an edit, and doctor called a real plugin
+# in that state "14 uncommitted changes".
+git -C "$P" update-ref HEAD HEAD~1
+check "a plugin whose files match upstream, with HEAD behind, is not named" "0" \
+  "$(edited_plugins | grep -c com.example.edited || true)"
+git -C "$P" update-ref HEAD FETCH_HEAD
 printf '// a local tweak\n' > "$P/Widget.qml"
 check "an edit made in place is, as one uncommitted change" "1" \
   "$(edited_plugins | awk -F'\t' '$1 == "com.example.edited" {print $3}')"

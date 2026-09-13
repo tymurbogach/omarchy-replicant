@@ -94,7 +94,7 @@ Panel {
 
   // Paths are shown the way the CLI shows them. A row is about 40 characters
   // wide once the scope button and five actions have taken their share, and
-  // "/home/cyberdyne" is a third of that spent saying nothing.
+  // "/home/<user>" is a third of that spent saying nothing.
   function pretty(p) {
     var h = root.repoState.home || ""
     if (h !== "" && String(p).indexOf(h) === 0) return "~" + String(p).slice(h.length)

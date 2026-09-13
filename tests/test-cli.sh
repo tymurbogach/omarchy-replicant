@@ -37,6 +37,13 @@ export PATH="$TMP/stubbin:$PATH"
 
 run() { "$CLI" "$@" 2>&1; }
 
+section "the harness keeps the tests off the real machine"
+# lib.sh puts a failing stub first on PATH for every command that can change
+# the machine or reach the network. doctor called the real gh before it did.
+check "sudo in a test is the harness stub" "${STUB_DIR:-}/sudo" "$(command -v sudo)"
+check "…and so is gh"                      "${STUB_DIR:-}/gh"   "$(command -v gh)"
+check_false "…which fails"                 gh auth status
+
 section "the command surface"
 # Derived from the dispatcher, not a hand-picked handful: a command you can run
 # and cannot find in --help is a command nobody knows about. This replaces a

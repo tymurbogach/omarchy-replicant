@@ -144,6 +144,14 @@ section "the sync states, driven for real through git"
 git init -q "$REPO_DIR" 2>/dev/null
 git -C "$REPO_DIR" config user.email t@example.com
 git -C "$REPO_DIR" config user.name Test
+# The /etc entries exist on some machines and not on others, and no check may
+# depend on which. A saved copy makes each one a row and a plan line on every
+# machine. Where the live file exists, the backup refreshes the copy.
+for entry in "${MANIFEST[@]}"; do
+  [[ "${entry%%:*}" == /etc/* ]] || continue
+  etc_copy=$(repo_path_for "${entry##*:}")
+  mkdir -p "$(dirname "$etc_copy")"; printf '# saved\n' > "$etc_copy"
+done
 core_backup >/dev/null 2>&1
 git -C "$REPO_DIR" add -A >/dev/null 2>&1
 git -C "$REPO_DIR" commit -q -m initial >/dev/null 2>&1
@@ -307,8 +315,17 @@ done
 check "every saved file appears in some category's plan" "0" "$missing_from_plan"
 check "the theme is never copied back as a file" "0" \
   "$(plan_for_category appearance | grep -c 'theme.name' || true)"
-check "destinations it cannot write are still listed" "3" \
-  "$(plan_for_category system | grep -c '|/etc/' || true)"
+# Only the shipped /etc entries. A machine that has an entry the plugin used to
+# ship finds it in the user's list too, so a count of every /etc line depended
+# on the machine that ran the suite.
+system_plan=$(plan_for_category system); etc_shipped=0; etc_listed=0
+for entry in "${MANIFEST[@]}"; do
+  [[ "${entry%%:*}" == /etc/* ]] || continue
+  etc_shipped=$((etc_shipped + 1))
+  grep -qF "|${entry%%:*}|" <<<"$system_plan" && etc_listed=$((etc_listed + 1))
+done
+check_true "the plugin ships /etc entries at all" test "$etc_shipped" -gt 0
+check "destinations it cannot write are still listed" "$etc_shipped" "$etc_listed"
 check "keys restore as 600"   "600" "$(restore_mode_for ssh/id_ed25519)"
 check "public keys do not"    "644" "$(restore_mode_for ssh/id_ed25519.pub)"
 check "scripts stay runnable" "755" "$(restore_mode_for bin/omarchy-audit)"
@@ -633,6 +650,18 @@ check "…the command lands in the command field" "voxtype record toggle" \
   "$(printf '%s' "$sc" | jq -r '[.own[] | select(.key=="SUPER + H")][0].command')"
 check "an unbind is recorded as one" "unbind" \
   "$(printf '%s' "$sc" | jq -r '[.own[] | select(.key=="SUPER + SPACE")][0].kind')"
+
+section "shortcuts still answers when Omarchy or the bindings file cannot"
+# The key list comes from `omarchy menu keybindings`, which is the failing
+# harness stub here. Under set -o pipefail that failure ended `shortcuts` with
+# no output, and so did a machine with no hypr/bindings.lua. The subshell has
+# set -e, as the CLI does.
+had_b=1; mv "$HOME/.config/hypr/bindings.lua" "$TMP/bindings.keep" 2>/dev/null && had_b=0
+out=$(bash -c 'source "$1" 2>/dev/null; core_shortcuts' _ "$CORE")
+# `jq -e`, not `jq empty`: empty output is valid JSON too, and it is the bug.
+check "it still answers with a JSON object" "0" "$(jq -e 'type == "object"' <<<"$out" >/dev/null 2>&1; echo $?)"
+check "…with nothing of your own" "0" "$(jq -r '.own_count' <<<"$out" 2>/dev/null)"
+if (( had_b == 0 )); then mv "$TMP/bindings.keep" "$HOME/.config/hypr/bindings.lua"; fi
 
 section "secrets describe themselves without revealing anything"
 mkdir -p "$HOME/.ssh" "$HOME/.config/environment.d"
@@ -1125,6 +1154,10 @@ mv "$REPO_DIR/bin/scan-secrets.sh" "$TMP/scan.keep"
 printf 'x\n' > "$REPO_DIR/hook-probe.txt"
 git -C "$REPO_DIR" add hook-probe.txt
 check_false "a missing scanner blocks the commit" bash -c 'cd "$1" && .githooks/pre-commit' _ "$REPO_DIR"
+# For the right reason. Without the check, running the missing scanner fails
+# as well and blocks the commit, with a message about a credential instead.
+check_contains "…and says that the scanner is missing" "scanner is missing" \
+  "$(bash -c 'cd "$1" && .githooks/pre-commit' _ "$REPO_DIR" 2>&1)"
 git -C "$REPO_DIR" rm -q --cached hook-probe.txt; rm -f "$REPO_DIR/hook-probe.txt"
 mv "$TMP/scan.keep" "$REPO_DIR/bin/scan-secrets.sh"
 
@@ -1352,15 +1385,69 @@ section "a secret this user cannot read is named, not a failed backup"
 # A secret tracked under /etc is often readable by root only. Its copy failed
 # under set -e and ended the whole backup. It runs in a subshell with set -e,
 # as the CLI does. Root can read anything, so there is nothing to test as root.
+# $USER is unset, as in a container: the message named the owner with it, and
+# under set -u that ended the backup the message was there to save.
 if [[ $(id -u) != 0 ]]; then
   printf 'user=me\n' > "$TMP/unreadable.cred"; chmod 000 "$TMP/unreadable.cred"
   core_track "$TMP/unreadable.cred" misc/unreadable.cred --secret >/dev/null 2>&1
-  rc=0; out=$(bash -c 'source "$1" 2>/dev/null; core_backup' _ "$CORE" 2>&1) || rc=$?
+  rc=0; out=$(env -u USER bash -c 'source "$1" 2>/dev/null; core_backup' _ "$CORE" 2>&1) || rc=$?
   check "the backup still finishes" "0" "$rc"
   check_contains "…and names the command that copies it" "sudo install" "$out"
+  check_contains "…for the owner the system names" "-o $(id -un) -g $(id -gn) " "$out"
   core_untrack misc/unreadable.cred >/dev/null 2>&1
   chmod 600 "$TMP/unreadable.cred"; rm -f "$TMP/unreadable.cred"
 fi
+
+section "a new repo gets an identity without \$USER or a global one"
+# In a container or a systemd unit, $USER can be unset and git can have no
+# identity. The layout wrote an empty one, and every commit after it failed.
+fresh="$TMP/fresh-replicant"
+rc=0; out=$(env -u USER GIT_CONFIG_GLOBAL=/dev/null OMARCHY_REPLICANT_HOME="$fresh" \
+  bash -c 'source "$1" 2>/dev/null; ensure_repo_layout' _ "$CORE" 2>&1) || rc=$?
+check "the layout finishes" "0" "$rc"
+check "…and names the user the system names" "$(id -un)" \
+  "$(git -C "$fresh/repo" config user.name 2>/dev/null)"
+rm -rf "$fresh"
+
+section "a writer with nothing to keep still succeeds"
+# write_track_file ended in `(( n )) && printf`. With nothing to keep it
+# returned 1, and set -e ended the first layout on a machine that has none of
+# the old personal files: init printed nothing and made no repo.
+rc=0; ( USER_TRACK_FILE="$TMP/empty.track"; write_track_file ) || rc=$?
+check "an empty track list is written" "0" "$rc"
+check "…with its header and no blank line" "0" "$(grep -c '^$' "$TMP/empty.track" 2>/dev/null || true)"
+rm -f "$TMP/empty.track"
+
+section "status fetches at most once per FETCH_MAX_AGE"
+# The bar polls every minute. A fetch on every poll was a git fetch a minute,
+# forever, on a laptop. Only an explicit refresh passes --fetch.
+rm -f "$REPLICANT_HOME/.last-fetch"
+check_true  "with no stamp, a fetch is due" should_fetch
+date +%s > "$REPLICANT_HOME/.last-fetch"
+check_false "right after a fetch, it is not" should_fetch
+echo $(( $(date +%s) - FETCH_MAX_AGE - 1 )) > "$REPLICANT_HOME/.last-fetch"
+check_true  "…and it is due again once the age has passed" should_fetch
+rm -f "$REPLICANT_HOME/.last-fetch"
+
+section "a pull marks only this profile's files as incoming"
+# profiles/<other>/ is the other machine's own copy of a file kept per profile.
+# Marking it incoming would tell this machine to restore the other machine's
+# monitor layout onto itself. Probe names that no entry tracks keep this out of
+# the badges that later sections read.
+before=$(git -C "$REPO_DIR" rev-parse HEAD)
+mine=$(current_profile)
+mkdir -p "$REPO_DIR/profiles/$mine/config" "$REPO_DIR/profiles/zz-other/config"
+printf 'a\n' > "$REPO_DIR/profiles/$mine/config/zz-mine.conf"
+printf 'b\n' > "$REPO_DIR/profiles/zz-other/config/zz-other.conf"
+git -C "$REPO_DIR" add -A profiles
+git -C "$REPO_DIR" -c user.email=t@example.com -c user.name=t commit -qm "probe"
+after=$(git -C "$REPO_DIR" rev-parse HEAD)
+got=$(core_incoming "$before" "$after")
+check "this profile's changed file is incoming" "1" "$(grep -cx 'zz-mine.conf' <<<"$got" || true)"
+check "…and another profile's is not"           "0" "$(grep -c 'zz-other' <<<"$got" || true)"
+record_incoming
+git -C "$REPO_DIR" rm -rq "profiles/$mine/config/zz-mine.conf" profiles/zz-other
+git -C "$REPO_DIR" -c user.email=t@example.com -c user.name=t commit -qm "probe removed"
 
 section "a plugin with work its origin does not have"
 # Omaplug sorts plugins by this before it offers an update. For a backup it is

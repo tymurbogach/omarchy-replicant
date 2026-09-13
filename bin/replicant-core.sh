@@ -617,6 +617,11 @@ repo_path_for() {
   fi
 }
 
+# print_lines <line>... — one line each, and nothing at all for no lines. The
+# writers ended in `(( n )) && printf`, so with nothing to keep a writer returned
+# 1, and set -e ended the first layout on a new machine with no message.
+print_lines() { (( $# )) || return 0; printf '%s\n' "$@"; }
+
 write_scope_file() {
   local -a keep=("$@")
   {
@@ -625,7 +630,7 @@ write_scope_file() {
     echo "#   <path> = profile   a copy per profile, under profiles/<profile>/config/"
     echo "#   <path> = off       never saved from or restored onto any machine"
     echo "# A path that is not listed is shared. Written by the panel; safe to edit."
-    (( ${#keep[@]} )) && printf '%s\n' "${keep[@]}"
+    print_lines "${keep[@]}"
   } > "$SCOPE_FILE"
   invalidate_scopes_cache
 }
@@ -735,7 +740,7 @@ write_track_file() {
     echo "#"
     echo "# This file lives in the repo, so both your machines honour it."
     echo "# Written by the panel and by 'omarchy-replicant track'; safe to edit."
-    (( ${#keep[@]} )) && printf '%s\n' "${keep[@]}"
+    print_lines "${keep[@]}"
   } > "$USER_TRACK_FILE"
 }
 
@@ -1461,8 +1466,12 @@ GI
   if [[ ! -d "$REPO_DIR/.git" ]]; then
     git -C "$REPO_DIR" init -q -b main
     git -C "$REPO_DIR" config init.defaultBranch main 2>/dev/null || true
-    git -C "$REPO_DIR" config user.name  "${GIT_AUTHOR_NAME:-$(git config --global user.name 2>/dev/null || echo "$USER")}"
-    git -C "$REPO_DIR" config user.email "${GIT_AUTHOR_EMAIL:-$(git config --global user.email 2>/dev/null || echo "$USER@omarchy-replicant")}"
+    # $USER is not set everywhere (a container, a systemd unit). Under set -u its
+    # absence wrote an empty identity, and every commit after it failed. Ask the
+    # system instead.
+    local who; who=$(id -un)
+    git -C "$REPO_DIR" config user.name  "${GIT_AUTHOR_NAME:-$(git config --global user.name 2>/dev/null || echo "$who")}"
+    git -C "$REPO_DIR" config user.email "${GIT_AUTHOR_EMAIL:-$(git config --global user.email 2>/dev/null || echo "$who@omarchy-replicant")}"
     git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
   else
     git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
@@ -1598,7 +1607,7 @@ core_backup() {
     if [[ -f $src && ! -r $src ]]; then
       # Readable by root only, which is common under /etc. The copy failed
       # under set -e and ended the whole backup. Name it and go on.
-      echo "  · ${src/#$HOME/\~} is readable by root only. To save it: sudo install -D -m600 -o $USER -g $USER $src $dst" >&2
+      echo "  · ${src/#$HOME/\~} is readable by root only. To save it: sudo install -D -m600 -o $(id -un) -g $(id -gn) $src $dst" >&2
     elif [[ -f $src ]]; then
       install -d -m 700 "$(dirname "$dst")" 2>/dev/null || mkdir -p "$(dirname "$dst")"
       install -m 600 "$src" "$dst"
@@ -3212,12 +3221,14 @@ core_shortcuts() {
       if (n >= 3) printf "%s\t%s\t%s\tunbind\n", parts[2], "removed", "", ""
     }
   ' "$own_file" 2>/dev/null | jq -Rsc 'split("\n") | map(select(length > 0) | split("\t")
-      | {key: .[0], description: .[1], command: .[2], kind: .[3]})')
+      | {key: .[0], description: .[1], command: .[2], kind: .[3]})') || true
   [[ -n "$own" ]] || own='[]'
+  # `|| true` on both: with set -o pipefail, a missing bindings.lua or a failing
+  # `omarchy menu keybindings` ended the whole command with no output at all.
   active=$(omarchy menu keybindings --print 2>/dev/null |
     sed -e 's/[[:space:]]*→[[:space:]]*/\t/' |
     jq -Rsc 'split("\n") | map(select(length > 0) | split("\t")
-      | {key: (.[0] // "" | sub("[[:space:]]+$";"")), description: (.[1] // "")})')
+      | {key: (.[0] // "" | sub("[[:space:]]+$";"")), description: (.[1] // "")})') || true
   [[ -n "$active" ]] || active='[]'
   jq -nc --argjson own "$own" --argjson active "$active" --arg file "$own_file" \
     '{file:$file, own:$own, active:$active, own_count:($own|length), active_count:($active|length)}'

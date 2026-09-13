@@ -1,0 +1,19 @@
+# Every suite, on every pull request and on every push to main. The
+# environment is tests/Dockerfile, the same one a person can run locally.
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  suites:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the test image
+        run: docker build -f tests/Dockerfile -t replicant-tests .
+      - name: Run every suite
+        run: docker run --rm replicant-tests

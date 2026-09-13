@@ -190,6 +190,9 @@ check "JSON is still parseable"       "0" "$(jq empty "$TMP/.config/omarchy/shel
 check "TOML has no duplicate sections" "1" "$(grep -c '^\[bar\]' "$TMP/.config/omarchy/shell.toml")"
 
 section "the JSON the panel consumes"
+# Every registry line is an entry only on a laptop: a desktop drops the Lid
+# group (checked below). Pin the answer, so the count is the same on every machine.
+is_laptop() { return 0; }
 settings_json=$(build_settings_json)
 check "valid JSON"                    "0"  "$(printf '%s' "$settings_json" | jq empty >/dev/null 2>&1; echo $?)"
 check "one entry per registry line"   "${#SETTINGS[@]}" "$(printf '%s' "$settings_json" | jq 'length')"
@@ -450,6 +453,19 @@ printf '#!/bin/bash\nexit 1\n' > "$TMP/fakebin/localectl"
 layouts=$(setting_options "$(find_setting input.kbLayout)")
 check_true "without localectl, a short list is still offered" grep -qx us <<<"${layouts//,/$'\n'}"
 rm -f "$TMP/fakebin/localectl"
+
+section "toml_set writes one key in one section and nothing else"
+# The same key name appears in more than one section of shell.toml, and the
+# writer is a line editor, not a TOML parser. It must stay inside its section.
+f="$TMP/two-sections.toml"
+printf '[a]\nsize = 1\n\n[b]\nsize = 2\n' > "$f"
+toml_set "$f" b.size 3
+check "the key in the named section changes" "3" "$(map_lookup "$f" toml b.size)"
+check "…and the same key in another section does not" "1" "$(map_lookup "$f" toml a.size)"
+check "…and no section header is written twice" "1" "$(grep -c '^\[b\]' "$f")"
+toml_set "$f" c.size 4
+check "a missing section is added once, with its key" "4" "$(map_lookup "$f" toml c.size)"
+check "…and the sections before it are kept" "1" "$(map_lookup "$f" toml a.size)"
 
 section "the registry itself is well-formed"
 bad_fields=0; dupe=0; seen=""

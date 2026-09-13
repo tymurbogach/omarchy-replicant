@@ -148,28 +148,28 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
 
 ## P2: tests
 
-- [ ] **T1. Add a regression test for every P0 and P1 item** before its fix.
-- [ ] **T2. Add direct tests for risky functions that no test names.**
+- [x] **T1. Add a regression test for every P0 and P1 item** before its fix.
+- [x] **T2. Add direct tests for risky functions that no test names.**
   `root_apply`, `backup_before_write`, `ini_set`, `toml_set` and `lua_set` (a comment after the
   value, a trailing comma, a key in two tables). Also `hypr_in_force` and `hypr_overrider` with a
   `hyprctl` stub, the four branches of `resolve_plugin_origin`, `core_incoming` (it ignores the
   files of other profiles) and `should_fetch`. Some of these run indirectly today. A direct test
   says which one broke.
-- [ ] **T3. Make a real system call fail by default.**
+- [x] **T3. Make a real system call fail by default.**
   In `tests/lib.sh`, put stubs first on `PATH` for `systemctl`, `hyprctl`, `omarchy`, `pkexec`,
   `sudo`, `xdg-open` and `omarchy-launch-editor`. Each stub logs the call and exits non-zero. A test
   that needs one of them opts in. Then two past incidents cannot occur again: a real logind reload,
   and nvim on the user's screen.
-- [ ] **T4. Run the suites in a container.**
+- [x] **T4. Run the suites in a container.**
   A `Dockerfile` (Arch base with bash, git, jq and shellcheck) runs the core, settings, CLI and
   journey suites. `qmllint` and `omarchy-plugin-validate` stay on the host.
-- [ ] **T5. Add CI.** A GitHub Actions workflow runs T4 on every pull request. Today, "Everything
+- [x] **T5. Add CI.** A GitHub Actions workflow runs T4 on every pull request. Today, "Everything
   passed" means that the suite passed on one laptop.
-- [ ] **T6. Run the suites in parallel.**
+- [x] **T6. Run the suites in parallel.**
   Each suite has its own temporary `$HOME`. Verify that first, then start the suites as background
   jobs in `run-all.sh`. Measure each section before you change it: the table in `CLAUDE.md` adds up
   to about 2 min 13 s, and the full run took 5 min 14 s.
-- [ ] **T7. Script the mutation tests.**
+- [x] **T7. Script the mutation tests.**
   `CLAUDE.md` describes mutation testing as a manual routine. Put the mutations in
   `tests/mutate.sh` as data (file, pattern, replacement). The script applies each mutation to a copy
   and runs the suites. It fails if a mutation survives.

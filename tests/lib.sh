@@ -14,6 +14,29 @@
 # network. A test that needs a catalog points this at a fixture of its own.
 export REPLICANT_CATALOG_URL="file:///nonexistent/replicant-test-catalog.json"
 
+# A test must never reach the real machine, the session or the network. These
+# commands can change one of them, so each is a stub that logs its call to
+# $STUB_LOG and fails. A suite that needs one writes its own stub and puts it
+# first on PATH. A real logind reload, an editor opened on the user's screen
+# and calls to GitHub from doctor all came from tests that reached a real one.
+STUB_DIR=$(mktemp -d)
+STUB_LOG="$STUB_DIR/calls.log"
+for _stub in sudo pkexec systemctl hyprctl omarchy gh xdg-open notify-send \
+             omarchy-theme-set omarchy-restart-shell omarchy-launch-editor \
+             omarchy-launch-floating-terminal-with-presentation; do
+  printf '#!/bin/sh\necho "%s $*" >> "%s"\nexit 97\n' "$_stub" "$STUB_LOG" > "$STUB_DIR/$_stub"
+  chmod +x "$STUB_DIR/$_stub"
+done
+unset _stub
+export PATH="$STUB_DIR:$PATH"
+
+# git reads the global config of the person who runs the suite. A fake $HOME
+# does not hide it when XDG_CONFIG_HOME points at the real one, so the suites
+# passed on a machine with a git identity and failed in a container without
+# one. Every suite reads this file instead.
+export GIT_CONFIG_GLOBAL="$STUB_DIR/gitconfig"
+printf '[user]\n\tname = Tests\n\temail = tests@example.com\n' > "$GIT_CONFIG_GLOBAL"
+
 pass=0; fail=0
 t_ok()  { printf '  \033[32m✓\033[0m %s\n' "$1"; pass=$((pass+1)); }
 t_bad() { printf '  \033[31m✗\033[0m %s\n' "$1"; fail=$((fail+1)); }
@@ -44,6 +67,7 @@ check_false() {
 section() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 
 summary() {
+  rm -rf "$STUB_DIR"
   echo
   if (( fail == 0 )); then
     printf '\033[32mAll %d checks passed.\033[0m\n' "$pass"; exit 0

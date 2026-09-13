@@ -9,35 +9,35 @@ PLUGIN_DIR="$(cd -- "$(dirname -- "$REAL_BIN")/.." && pwd)"
 CORE="$PLUGIN_DIR/bin/replicant-core.sh"
 # fallback if running via a copy without the plugin dir
 if [[ ! -f "$CORE" ]]; then
-  for p in "$HOME/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/bin/replicant-core.sh" "/usr/share/omarchy/bin/replicant-core.sh"; do
-    [[ -f "$p" ]] && CORE="$p" && PLUGIN_DIR="$(cd -- "$(dirname -- "$p")/.." && pwd)" && break
-  done
+  installed_core="$HOME/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/bin/replicant-core.sh"
+  if [[ -f "$installed_core" ]]; then
+    CORE="$installed_core"
+    PLUGIN_DIR="$(cd -- "$(dirname -- "$installed_core")/.." && pwd)"
+  fi
 fi
 PLUGIN_ID="io.github.tymurbogach.omarchy-replicant"
 REPLICANT_HOME="${OMARCHY_REPLICANT_HOME:-$HOME/.local/share/omarchy-replicant}"
 REPO_DIR="$REPLICANT_HOME/repo"
-# Default name for `create`: <this machine's hostname>-replicant, so each user/machine
-# gets its own distinctly-named private repo instead of everyone colliding on the same
-# literal name — which would also collide with the plugin's own repo name,
-# "omarchy-replicant", on any machine whose hostname happens to be "omarchy" (the
-# distro's own default hostname — not a hypothetical, this actually happened). If that
-# exact collision would occur, fall back to $USER instead.
-_replicant_hostname="$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo host)"
-if [[ "$_replicant_hostname-replicant" == "omarchy-replicant" ]]; then
-  DEFAULT_REPO_NAME="${USER:-user}-replicant"
-else
-  DEFAULT_REPO_NAME="$_replicant_hostname-replicant"
-fi
-
 fail() { echo "omarchy-replicant: $*" >&2; exit 1; }
 info() { echo -e "\e[36m$*\e[0m" >&2; }
 warn() { echo -e "\e[33m$*\e[0m" >&2; }
 ok()   { echo -e "\e[32m$*\e[0m" >&2; }
-# "1 file", "4 files". Every count this tool printed used to read "4 file(s)" —
-# twenty of them across the CLI and eleven on one screen of the panel — and the
-# parenthesis never carried information the number next to it did not.
-plural() { local n="$1" one="$2" many="${3:-$2s}"
-           if [[ "$n" == 1 ]]; then printf '%s %s\n' "$n" "$one"; else printf '%s %s\n' "$n" "$many"; fi; }
+
+# plural and replicant_machine are shared with the core, in one file.
+[[ -f "$PLUGIN_DIR/bin/lib/common.sh" ]] || fail "bin/lib/common.sh not found under $PLUGIN_DIR"
+# shellcheck source=bin/lib/common.sh
+source "$PLUGIN_DIR/bin/lib/common.sh"
+
+# Default name for `create`: <machine>-replicant, so that each machine gets its
+# own private repo. The machine name is the core's, cut at the first dot. A
+# machine called "omarchy", the distribution's default hostname, would get the
+# name of this plugin's own repo, so it takes $USER instead.
+_replicant_host=$(replicant_machine); _replicant_host="${_replicant_host%%.*}"
+if [[ "$_replicant_host-replicant" == "omarchy-replicant" ]]; then
+  DEFAULT_REPO_NAME="${USER:-user}-replicant"
+else
+  DEFAULT_REPO_NAME="$_replicant_host-replicant"
+fi
 
 git_repo() { git -C "$REPO_DIR" "$@"; }
 
@@ -55,6 +55,16 @@ acquire_repo_lock() {
 }
 
 ensure_core() { [[ -x "$CORE" ]] || fail "replicant-core.sh not found at $CORE"; }
+
+# load_core: source the core for its functions, or stop with a message. Each
+# command used `source "$CORE" 2>/dev/null || true`, which hid a syntax error
+# in the core, and the next line then failed with a message about something
+# else.
+load_core() {
+  ensure_core
+  # shellcheck disable=SC1090
+  source "$CORE" || fail "could not load $CORE"
+}
 
 cmd_status() { ensure_core; bash "$CORE" status "$@"; }
 cmd_backup() { ensure_core; bash "$CORE" backup; }
@@ -305,8 +315,7 @@ cmd_diff() {
 # The id -> real path mapping lives in the core (resolve_manifest_src) so the
 # CLI, the panel's diff view and the core all resolve an id identically.
 resolve_src() {
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   resolve_manifest_src "$1"
 }
 
@@ -377,30 +386,22 @@ cmd_edit() {
 }
 
 cmd_open_diff() {
-  local id="" against="auto" in_terminal=0
+  local id="" against="auto"
   while (( $# )); do case "$1" in
     --against) against="${2:-auto}"; shift 2;;
-    --terminal) in_terminal=1; shift;;
-    --plain) in_terminal=0; shift;;
     -*) fail "unknown option: $1";;
     *) id="$1"; shift;;
   esac; done
-  [[ -n "$id" ]] || fail "usage: diff <id> [--against repo|default] [--terminal]"
+  [[ -n "$id" ]] || fail "usage: diff <id> [--against repo|default]"
   ensure_core
-  if (( in_terminal )) && command -v omarchy-launch-floating-terminal-with-presentation >/dev/null 2>&1; then
-    omarchy-launch-floating-terminal-with-presentation "omarchy-replicant diff '${id//\'/}' --against $against | less -R"
-    return 0
-  fi
-  # plain text on stdout: the panel renders this inline
+  # Plain text on stdout: the panel renders it inline.
   bash "$CORE" diff "$id" "$against"
 }
 
 cmd_reset() {
   local id="${1:-}"
   [[ -n "$id" ]] || fail "usage: reset <id>  (restores the default via omarchy refresh)"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   local src
   src=$(resolve_manifest_src "$id") || fail "unknown id: $id"
   # `omarchy refresh config` restores one FILE. A tracked directory has no
@@ -502,7 +503,7 @@ cmd_pull() {
     return 0
   fi
   local n; n=$(printf '%s\n' "$moved" | grep -c .)
-  ok "pulled — $n file$( (( n == 1 )) || echo s ) changed on another machine"
+  ok "pulled — $(plural "$n" file) changed on another machine"
   printf '%s\n' "$moved" | sed 's/^/  /' >&2
   echo "  'restore --apply' brings them onto this machine; until then they show as ↓ to restore" >&2
 }
@@ -550,8 +551,7 @@ cmd_restore() {
     *) fail "unknown option: $1";;
   esac; done
   [[ -d "$REPO_DIR/.git" ]] || fail "no repo"
-  # shellcheck source=/dev/null
-  source "$PLUGIN_DIR/bin/replicant-core.sh" 2>/dev/null || true
+  load_core
   # An area this plugin does not have restored nothing and then printed
   # "restore complete". A typo in the word that picks what to restore is an
   # error, and so is an option this command does not know.
@@ -564,134 +564,21 @@ cmd_restore() {
     [[ $resp == [yY] ]] || fail "restore --apply --all cancelled"
   fi
 
-  # The plan comes from MANIFEST via plan_for_category(). It used to be a second
-  # hand-written list right here, which meant adding a file to the manifest
-  # backed it up but never restored it — a bug you only find on the day you need
-  # the backup.
-
-  # A third-party theme is never installed by `restore` itself — see the
-  # 2026-09 marketplace security review: `omarchy theme install` has no way
-  # to pin a commit, so an automatic reinstall here silently trusts whatever
-  # is at that origin TODAY, not what was there when the theme was first
-  # installed. `install-theme <name>` is the explicit, on-purpose version of
-  # this same action.
-  restore_themes() {
-    local tname _ n=0
-    while IFS=$'\t' read -r tname _; do
-      [[ -n "$tname" ]] || continue
-      n=$((n + 1))
-      skip "$tname — third-party theme, not auto-installed: omarchy-replicant install-theme $tname" >&2
-    done < <(missing_themes)
-    (( n == 0 )) && skip "every theme in the inventory is already installed" >&2
-    return 0
-  }
-
-  restore_theme() {
-    local dry="$1" want current
-    # Through repo_path_for, never a hardcoded config/ path: if theme.name is
-    # ever scoped to a profile its copy moves, and a restore reading the old path
-    # would silently find nothing. This is the rule the restore plan already
-    # follows — one function decides where a copy lives.
-    want=$(head -n1 "$(repo_path_for omarchy/theme.name)" 2>/dev/null | tr -d '\r' || true)
-    if [[ -z "$want" ]]; then skip "no theme recorded in the repo" >&2; return 0; fi
-    current=$(omarchy-theme-current 2>/dev/null || echo "")
-    # omarchy-theme-current answers "Enter The Matrix"; the file records
-    # "enter-the-matrix". They differ in case AND in separator, so comparing
-    # them raw — or only case-folded — made every restore claim the theme
-    # needed re-applying, on a machine already wearing it.
-    local wnorm cnorm
-    wnorm=$(tr -cd '[:alnum:]' <<<"${want,,}")
-    cnorm=$(tr -cd '[:alnum:]' <<<"${current,,}")
-    if [[ -n "$wnorm" && "$wnorm" == "$cnorm" ]]; then ok "$want (already applied)" >&2; return 0; fi
-    if (( dry )); then skip "dry-run: would apply theme '$want' (currently '${current:-unknown}')" >&2; return 0; fi
-    if command -v omarchy-theme-set >/dev/null 2>&1; then
-      omarchy-theme-set "$want" >/dev/null 2>&1 && ok "theme -> $want" >&2 || warn "could not apply theme '$want' — if it is not installed here: omarchy-replicant install-theme $want" >&2
-    else
-      warn "omarchy-theme-set not found" >&2
-    fi
-  }
-
-  # Same reasoning as restore_themes: a third-party plugin is code Quickshell
-  # will run once enabled, so reinstalling it automatically on every restore
-  # means silently trusting whatever the origin holds today. install-plugin
-  # <id> is the explicit version.
-  restore_plugins() {
-    local pid _ n=0
-    while IFS=$'\t' read -r pid _; do
-      [[ -n "$pid" ]] || continue
-      n=$((n + 1))
-      skip "$pid — third-party plugin, not auto-installed: omarchy-replicant install-plugin $pid" >&2
-    done < <(missing_plugins)
-    (( n == 0 )) && skip "every plugin in the inventory is already installed" >&2
-    return 0
-  }
-
-  export DRY
-  local cat entry src dst mode pending changed apply
-  local total_changed=0
+  # The mechanism lives in the core (restore_area_extras, restore_pending,
+  # restore_preview, restore_apply). This loop keeps the policy: which areas,
+  # the confirmations, and the messages around them.
+  local cat centry label changed total_changed=0
+  local -a pending
   for cat in "${CATEGORY_ORDER[@]}"; do
     [[ -n "$ONLY" && "$ONLY" != "$cat" ]] && continue
-    local centry label
     centry=$(find_category "$cat") || continue
     label=$(category_field "$centry" 3)
     echo; echo "== $cat · $label" >&2
 
-    if [[ "$cat" == "appearance" ]]; then
-      # The theme rides with appearance, because that is where a user looks for
-      # it — but it is applied, never copied (see restore_themes /
-      # restore_theme). restore_themes only names the themes this machine does
-      # not have; installing one is a separate, explicit command.
-      restore_themes
-      restore_theme "$DRY"
-    fi
-    if [[ "$cat" == "plugins" ]]; then
-      restore_plugins
-    fi
-
-    pending=()
-    while IFS='|' read -r src dst mode; do
-      # A trailing slash means a tree. It answers the same three questions a
-      # file does — is it here, does it already match, what would change — just
-      # over every file under it.
-      if [[ "$src" == */ ]]; then
-        [[ -d "${src%/}" ]] || continue
-        if tree_same "$src" "$dst"; then
-          ok "${dst/#$HOME/\~} (already matches, $(tree_count "$src") files)" >&2
-        else
-          pending+=("$src|$dst|$mode")
-        fi
-        continue
-      fi
-      [[ -f "$src" ]] || continue
-      if [[ "$dst" != "$HOME"/* ]]; then
-        # Anything outside $HOME needs root, and a backup tool silently asking
-        # for a password is worse than a backup tool telling you the command.
-        if [[ -f "$dst" ]] && cmp -s "$src" "$dst" 2>/dev/null; then
-          ok "$dst (already matches)" >&2
-        else
-          warn "$dst needs root — run: sudo install -m $mode $src $dst" >&2
-        fi
-        continue
-      fi
-      if [[ -f "$dst" ]] && cmp -s "$src" "$dst" 2>/dev/null; then
-        ok "${dst/#$HOME/\~} (already matches)" >&2
-      else
-        pending+=("$src|$dst|$mode")
-      fi
-    done < <(plan_for_category "$cat")
-
+    restore_area_extras "$cat" "$DRY"
+    mapfile -t pending < <(restore_pending "$cat")
     if (( ${#pending[@]} == 0 )); then skip "nothing to change" >&2; continue; fi
-    for e in "${pending[@]}"; do
-      IFS='|' read -r src dst mode <<<"$e"
-      echo "  ── ${dst/#$HOME/\~}" >&2
-      if [[ "$src" == */ ]]; then
-        tree_diff_summary "$src" "$dst" | sed 's/^/      /' >&2
-      elif [[ -f $dst ]]; then
-        diff -u --label system --label repo "$dst" "$src" 2>/dev/null | sed -n '3,40p' | sed 's/^/      /' >&2 || true
-      else
-        echo "      (doesn't exist: would be created)" >&2
-      fi
-    done
+    restore_preview "${pending[@]}"
     if (( DRY )); then skip "dry-run: $(plural "${#pending[@]}" file) untouched. Repeat with --apply" >&2; continue; fi
     # --yes means yes here too. It used to be honoured only through --all, so
     # `restore --apply --only hyprland --yes` still stopped to ask — and with no
@@ -707,26 +594,8 @@ cmd_restore() {
       read -rp "  apply $cat? [y/N] " resp </dev/tty 2>&1 || resp=""
       [[ $resp == [yY] ]] || { skip "$cat skipped" >&2; continue; }
     fi
-    changed=0
-    for e in "${pending[@]}"; do
-      IFS='|' read -r src dst mode <<<"$e"
-      if [[ "$src" == */ ]]; then install_tree "$src" "$dst" "$mode" 2>&1
-      else install_file "$src" "$dst" "$mode" 2>&1; fi
-      changed=$((changed + 1))
-    done
+    changed=$(restore_apply "$cat" "${pending[@]}")
     total_changed=$((total_changed + changed))
-    # Make it take effect. This is the difference between a backup tool and a
-    # restore tool: Hyprland does not re-read its Lua on its own, and a restored
-    # terminal config is invisible until the terminal is told about it.
-    apply=$(apply_for_category "$cat")
-    if (( changed > 0 )) && [[ -n "$apply" ]]; then
-      echo "  → $apply" >&2
-      bash -c "$apply" >/dev/null 2>&1 || warn "'$apply' failed — you may need to run it yourself" >&2
-      if [[ "$apply" == "hyprctl reload" ]]; then
-        local errs; errs=$(hyprctl configerrors 2>/dev/null | grep -v '^no errors' || true)
-        [[ -n "$errs" ]] && warn "Hyprland reported config errors after the reload:" >&2 && echo "$errs" >&2
-      fi
-    fi
   done
   echo
   if (( DRY )); then
@@ -744,9 +613,7 @@ cmd_reset_all() {
     --yes|-y) YES=1; shift;;
     *) fail "unknown option: $1";;
   esac; done
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   local -a candidates=() rels=()
   local entry src rel crel
   for entry in "${TRACKED[@]}"; do
@@ -783,18 +650,14 @@ cmd_reset_all() {
 cmd_get() {
   local id="${1:-}"
   [[ -n "$id" ]] || fail "usage: get <setting-id>"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   get_setting_value "$id" || fail "unknown or unreadable setting: $id"
 }
 
 cmd_set() {
   local id="${1:-}" value="${2:-}"
   [[ -n "$id" && -n "$value" ]] || fail "usage: set <setting-id> <value>"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   set_setting_value "$id" "$value" || fail "could not set $id"
   # this is a real decision (a value you chose), so it gets its own commit —
   # same "one commit per decision, with the why" rule as a manual edit
@@ -809,9 +672,7 @@ cmd_save_file() {
   shift || true
   while (( $# )); do case "$1" in -m|--message) msg="${2:-}"; shift 2;; *) shift;; esac; done
   [[ -n "$id" ]] || fail "usage: save-file <id> [-m \"why\"]"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   local src; src=$(resolve_manifest_src "$id") || fail "unknown id: $id"
 
   # Through the core's own answers, not a second copy of them. This function
@@ -868,9 +729,7 @@ cmd_log() {
 }
 
 cmd_settings() {
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   if [[ "${1:-}" == "--json" ]]; then build_settings_json; return 0; fi
   # Values are printed the way the panel shows them — "10 min", not "600" —
   # because a list you read should not need arithmetic. `get` still answers in
@@ -904,9 +763,7 @@ commit_repo_shape() {
 cmd_sync() {
   local id="${1:-}" want="${2:-}"
   [[ -n "$id" && -n "$want" ]] || fail "usage: omarchy-replicant sync <id> on|off"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   core_sync "$id" "$want" || exit 1
   commit_repo_shape "sync: turn $id $want" .replicant-sync
 }
@@ -916,9 +773,7 @@ cmd_sync() {
 cmd_scope() {
   local id="${1:-}" want="${2:-}"
   [[ -n "$id" && -n "$want" ]] || fail "usage: omarchy-replicant scope <id> shared|profile|off"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   core_scope "$id" "$want" || exit 1
   # Stage the two paths THIS file can occupy, never the whole of config/ and
   # profiles/. Staging the directories would sweep every unrelated dotfile that
@@ -940,9 +795,7 @@ cmd_scope() {
 # the same core functions.
 cmd_track() {
   [[ $# -gt 0 ]] || fail "usage: omarchy-replicant track <path> [name-in-repo] [--secret]"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   local before; before=$(cat "$USER_TRACK_FILE" 2>/dev/null || true)
   core_track "$@" || exit 1
   [[ "$(cat "$USER_TRACK_FILE" 2>/dev/null || true)" == "$before" ]] && return 0
@@ -955,9 +808,7 @@ cmd_track() {
 cmd_untrack() {
   local id="${1:-}"
   [[ -n "$id" ]] || fail "usage: omarchy-replicant untrack <id>"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   core_untrack "$id" || exit 1
   commit_repo_shape "untrack: $id" \
     .replicant-track \
@@ -969,9 +820,7 @@ cmd_untrack() {
 cmd_suggest() {
   local as_json=0
   while (( $# )); do case "$1" in --json) as_json=1; shift;; *) shift;; esac; done
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   if (( as_json )); then core_suggest --json; return 0; fi
   local path rel reason kind flag n=0
   while IFS=$'\t' read -r path rel reason kind; do
@@ -990,9 +839,7 @@ cmd_suggest() {
 }
 
 cmd_profile() {
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   local want="${1:-}"
   if [[ -z "$want" || "$want" == "list" ]]; then
     local cur; cur=$(current_profile)
@@ -1026,9 +873,7 @@ cmd_revert() {
   shift || true
   while (( $# )); do case "$1" in --to) to="${2:-default}"; shift 2;; default|repo) to="$1"; shift;; *) shift;; esac; done
   [[ -n "$id" ]] || fail "usage: omarchy-replicant revert <setting-id> [--to default|repo]"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   core_revert "$id" "$to" || exit 1
   # Committed the same way as `set`. This used to stage only config/, so the
   # revert of a setting whose file is kept per profile was never committed.
@@ -1040,9 +885,7 @@ cmd_revert() {
 cmd_restore_file() {
   local id="${1:-}"
   [[ -n "$id" ]] || fail "usage: omarchy-replicant restore-file <id>"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   core_restore_file "$id" || exit 1
 }
 
@@ -1052,9 +895,7 @@ cmd_restore_file() {
 cmd_install_theme() {
   local name="${1:-}"
   [[ -n "$name" ]] || fail "usage: omarchy-replicant install-theme <name>"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   core_install_theme "$name" || exit 1
 }
 
@@ -1069,9 +910,7 @@ cmd_install_plugin() {
     esac
   done
   [[ -n "$id" ]] || fail "usage: omarchy-replicant install-plugin <id> [--check]"
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   # --check prints what the marketplace checked and where the origin is now,
   # and installs nothing. The panel asks this before it asks for consent.
   if (( check_only )); then core_plugin_verification "$id"; return 0; fi
@@ -1098,9 +937,7 @@ cmd_shortcuts() {
 }
 
 cmd_doctor() {
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   local problems=0
   chk_ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
   chk_warn() { printf '  \033[33m!\033[0m %s\n' "$1"; problems=$((problems+1)); }
@@ -1482,9 +1319,7 @@ cmd_purge() {
   # .bak.<epoch> copies this plugin left behind next to the configs it edited
   local -a backups=()
   local _rel _src b _epoch _state
-  ensure_core
-  # shellcheck disable=SC1090
-  source "$CORE" 2>/dev/null || true
+  load_core
   # Through list_backups, not a second glob of its own. The trailing-slash bug
   # hard rule 8 exists for lived here first (globbing "$src".bak.* on a tracked
   # directory looks INSIDE the directory and finds nothing), and having two

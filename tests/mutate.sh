@@ -17,61 +17,61 @@ ONLY="${1:-}"
 
 # file, suite, from, to, why. One record per block, blocks separated by "---".
 MUTATIONS=$(cat <<'DATA'
-file: bin/replicant-core.sh
+file: bin/lib/layout.sh
 suite: test-core.sh
 from: is_excluded "$(owning_rel "$candrel")" && continue
 to: :
 why: the prune pass keeps the copy of a file that is switched off
 ---
-file: bin/replicant-core.sh
+file: bin/lib/manifest.sh
 suite: test-core.sh
 from: version_lt "$running" "$seen" && return 1
 to: :
 why: an older client does not prune what a newer one tracks
 ---
-file: bin/replicant-core.sh
+file: bin/lib/settings.sh
 suite: test-core.sh
 from: $NF == "block" {
 to: $NF == "never" {
 why: a block inhibitor on the lid switch is named
 ---
-file: bin/replicant-core.sh
+file: bin/lib/common.sh
 suite: test-core.sh
 from: if [[ "$n" == 1 ]]; then printf '%s %s\n' "$n" "$one"; else printf '%s %s\n' "$n" "$many"; fi
 to: printf '%s %s\n' "$n" "$many"
 why: counts read as English
 ---
-file: bin/replicant-core.sh
+file: bin/lib/plugins.sh
 suite: test-core.sh
 from: upstream_tree_matches "$pdir" && continue
 to: :
 why: a plugin whose files match upstream is not called edited
 ---
-file: bin/replicant-core.sh
+file: bin/lib/layout.sh
 suite: test-core.sh
 from: if [[ ! -x "$SCAN" ]]; then
 to: if false; then
 why: the pre-commit hook blocks a commit when the scanner is missing
 ---
-file: bin/replicant-core.sh
+file: bin/lib/layout.sh
 suite: test-core.sh
 from: scan_dirs+=("$REPO_DIR/profiles/$(current_profile)/config")
 to: :
 why: the backup scans the profile tree for secrets
 ---
-file: bin/replicant-core.sh
+file: bin/lib/restore.sh
 suite: test-core.sh
 from: is_secret_rel "$1" && { echo 600; return; }
 to: :
 why: a secret the user tracked is restored at mode 600
 ---
-file: bin/replicant-core.sh
+file: bin/lib/settings.sh
 suite: test-settings.sh
 from:   # Always a failure. This read `return "${rc:-1}"` with rc starting at 0, so
 to:   return 0 #
 why: a root-owned write that did not happen is a failure
 ---
-file: bin/replicant-core.sh
+file: bin/lib/backups.sh
 suite: test-settings.sh
 from: | grep -Fxf "$SETTING_BACKUPS_FILE"
 to:
@@ -95,47 +95,53 @@ from:     PUSH_STATE=failed
 to:     PUSH_STATE=ok
 why: savegame reports a push that failed
 ---
-file: bin/replicant-core.sh
+file: bin/lib/layout.sh
 suite: test-journey.sh
 from: if [[ -n "${INCOMING[$rel]:-}" ]] && entry_differs
 to: if false && entry_differs
 why: saving everything holds back a file another machine changed
 ---
-file: bin/replicant-core.sh
+file: bin/lib/settings.sh
 suite: test-settings.sh
 from: in_sect && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
 to: $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
 why: toml_set writes the key only inside its own section
 ---
-file: bin/replicant-core.sh
+file: bin/lib/incoming.sh
 suite: test-core.sh
 from: [[ "${rel%%/*}" == "$(current_profile)" ]] || continue
 to: :
 why: a pull marks only this profile's files as incoming
 ---
-file: bin/replicant-core.sh
+file: bin/lib/status.sh
 suite: test-core.sh
 from: (( age >= FETCH_MAX_AGE ))
 to: true
 why: status fetches at most once per FETCH_MAX_AGE
 ---
-file: bin/replicant-core.sh
+file: bin/lib/layout.sh
 suite: test-core.sh
 from: local who; who=$(id -un)
 to: local who; who=$USER
 why: a new repo gets an identity when $USER is not set
 ---
-file: bin/replicant-core.sh
+file: bin/lib/layout.sh
 suite: test-core.sh
 from: -o $(id -un) -g $(id -gn)
 to: -o $USER -g $USER
 why: an unreadable secret is named when $USER is not set
 ---
-file: bin/replicant-core.sh
+file: bin/lib/scopes.sh
 suite: test-core.sh
 from: print_lines() { (( $# )) || return 0;
 to: print_lines() { (( $# )) || return 1;
 why: a writer with nothing to keep still succeeds
+---
+file: bin/lib/settings.sh
+suite: test-cli.sh
+from: declare -gA FILE_MAP_LOADED=()
+to: declare -A FILE_MAP_LOADED=()
+why: the core's caches survive being sourced inside a function
 DATA
 )
 

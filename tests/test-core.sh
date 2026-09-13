@@ -1000,7 +1000,7 @@ check "the settings count matches the registry" "1" \
 # final `return` and renders as "saved on GitHub" — the calmest badge there is,
 # on the row that needed attention.
 panel="$HERE/../Panel.qml"
-core_states=$(grep -oE 'sync_state="[a-z]+"' "$HERE/../bin/replicant-core.sh" |
+core_states=$(grep -ohE 'sync_state="[a-z]+"' "$HERE/../bin/replicant-core.sh" "$HERE"/../bin/lib/*.sh |
               sed -e 's/sync_state="//' -e 's/"//' | sort -u)
 unrendered=0
 for st in $core_states; do
@@ -1160,6 +1160,29 @@ check_contains "…and says that the scanner is missing" "scanner is missing" \
   "$(bash -c 'cd "$1" && .githooks/pre-commit' _ "$REPO_DIR" 2>&1)"
 git -C "$REPO_DIR" rm -q --cached hook-probe.txt; rm -f "$REPO_DIR/hook-probe.txt"
 mv "$TMP/scan.keep" "$REPO_DIR/bin/scan-secrets.sh"
+
+section "restore works one area at a time: pending, preview, apply"
+# The loop that restores an area lived in the CLI. The mechanism is in the core
+# now, and the CLI keeps the options, the confirmations and the messages. The
+# terminal area's apply step reaches the harness stub for `omarchy`.
+core_backup >/dev/null 2>&1
+alac="$HOME/.config/alacritty/alacritty.toml"
+saved=$(cat "$alac")
+printf 'colors: changed here\n' > "$alac"
+pending=$(restore_pending terminal 2>/dev/null)
+check_contains "a file that differs is pending" "alacritty/alacritty.toml" "$pending"
+# Right after a backup, no other file that exists here may differ from its
+# copy. A file the repo holds and this machine lacks is pending too, and
+# correctly: the restore would create it. The check names the destinations.
+check "…and no other file on this machine is" "" \
+  "$(grep -v 'alacritty/alacritty.toml' <<<"$pending" |
+     while IFS='|' read -r _s d _m; do if [[ -e "${d%/}" ]]; then echo "$d"; fi; done)"
+alac_entry=$(grep 'alacritty/alacritty.toml' <<<"$pending")
+check_contains "the preview shows the change" "colors: changed here" "$(restore_preview "$alac_entry" 2>&1)"
+n=$(restore_apply terminal "$alac_entry" 2>/dev/null)
+check "restore_apply writes it and says how many" "1" "$n"
+check "…with the repo's content" "$saved" "$(cat "$alac")"
+rm -f "$alac".bak.*
 
 section "restoring a root-owned file asks for root or prints the command"
 # install_file cannot write under /etc as a user, so restore-file on the lid
@@ -1417,6 +1440,25 @@ rc=0; ( USER_TRACK_FILE="$TMP/empty.track"; write_track_file ) || rc=$?
 check "an empty track list is written" "0" "$rc"
 check "…with its header and no blank line" "0" "$(grep -c '^$' "$TMP/empty.track" 2>/dev/null || true)"
 rm -f "$TMP/empty.track"
+
+section "a backup leaves no variables of its own behind"
+# Bash scopes dynamically, and core_backup assigned src, rel, entry and more
+# without `local`. The CLI sources the core, so they leaked into its scope.
+# Every global name is compared, so a new leak cannot hide behind a list.
+leaked=$(bash -c 'source "$1" 2>/dev/null; set +e
+  __before=$(compgen -v | sort)
+  core_backup >/dev/null 2>&1
+  comm -13 <(printf "%s\n" "$__before") <(compgen -v | sort) |
+    grep -vxE "__before|_|BASH_REMATCH|PIPESTATUS|COLUMNS|LINES" | paste -sd" " -' _ "$CORE")
+check "core_backup leaks no globals" "" "$leaked"
+
+section "the core refuses a command it does not have"
+# The chain of ifs that dispatched the core's commands did nothing for an
+# unknown one and exited 0, which a caller reads as success.
+rc=0; out=$(bash "$CORE" definitely-not-a-command 2>&1) || rc=$?
+check "an unknown core command fails" "2" "$rc"
+check_contains "…and says so" "unknown command" "$out"
+check "a known one still works" "$MACHINE" "$(bash "$CORE" machine 2>/dev/null)"
 
 section "status fetches at most once per FETCH_MAX_AGE"
 # The bar polls every minute. A fetch on every poll was a git fetch a minute,

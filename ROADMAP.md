@@ -173,11 +173,12 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
   `CLAUDE.md` describes mutation testing as a manual routine. Put the mutations in
   `tests/mutate.sh` as data (file, pattern, replacement). The script applies each mutation to a copy
   and runs the suites. It fails if a mutation survives.
-- [ ] **T8. Add unit tests for the panel logic.**
+- [x] **T8. Add unit tests for the panel logic.**
   Move the pure functions (`stateGlyph`, `stateColor`, `stateWord`, `summary`, `advice`,
   `backupRows`, `agoText`, `nextScope`, `rowsFor`) from `Panel.qml` to a `.js` file that
-  `Panel.qml` imports. Test that file with `qmltestrunner`, which is at `/usr/bin/qmltestrunner`.
-  Layout still needs a screenshot (hard rule 4).
+  `Panel.qml` imports. Test that file with `qmltestrunner`. Done: `replicant.js` and
+  `tests/qml/tst_replicant.qml`. `/usr/bin/qmltestrunner` is the Qt 5 runner; the tests use
+  `/usr/lib/qt6/bin/qmltestrunner`, and CI installs `qt6-declarative` for it.
 
 ## P2: structure
 
@@ -192,13 +193,15 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
   the full restore loop (`cmd_restore`, 190 lines, with `restore_themes`, `restore_theme` and
   `restore_plugins`). It also holds the candidate selection of `reset-all`, the copy in `save-file`,
   the checks in `doctor` and `auto_commit_subject`.
-- [ ] **S4. Split `Panel.qml`** (2,537 lines, eleven inline components) into one file for each
+- [x] **S4. Split `Panel.qml`** (2,537 lines, eleven inline components) into one file for each
   component (`FileRow`, `SettingRow`, `CategoryCard`, `SuggestCard`, `RestoreCard` and the others).
-  Clear the QML cache and take a screenshot after each move.
-- [ ] **S5. Keep one definition of each shared fact.**
-  The shell part is done: `bin/lib/common.sh` holds `plural` and the machine name for the CLI and
-  the core. The QML part is left: `plural` and `mdi` in the two QML files, the CLI path, and the
-  panel IPC. It needs a screenshot (hard rule 4).
+  Clear the QML cache and take a screenshot after each move. Done with a generator: the eleven
+  parts are in `components/`, and `Panel.qml` has 1,481 lines. Every tab was captured, with every
+  card open, and the journal showed no QML error.
+- [x] **S5. Keep one definition of each shared fact.**
+  The shell part: `bin/lib/common.sh` holds `plural` and the machine name for the CLI and the core.
+  The QML part: `replicant.js` holds `plural` and `mdi`, the CLI path comment is in `Service.qml`
+  only, and `replicant` is the one IPC target (in `BarWidget.qml`, with `tab` and `isOpen`).
   - `plural`: `bin/omarchy-replicant:39`, `bin/replicant-core.sh:44`, `BarWidget.qml:62` and
     `Panel.qml:193`. `bin/omarchy-replicant:459` builds the plural by hand again.
   - `mdi`, and the CLI path with the same seven-line comment, in three QML files. A shared `.js`
@@ -225,10 +228,12 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
   Each `source "$CORE" 2>/dev/null || true` hides a syntax error or a missing file. The next line
   then fails with a message that points to the wrong place.
 
-- [ ] **S9. Show the marketplace facts in the panel before an install.**
+- [x] **S9. Show the marketplace facts in the panel before an install.**
   `install-plugin <id> --check` prints them (C10), but the Install button in the panel still asks
   for consent without them. Run `--check` when the button is pressed, and put its output in the
-  confirmation. Take a screenshot after the change (hard rule 4).
+  confirmation. Done in `askInstall`. Not yet seen on screen: the Install row appears only for a
+  plugin that another machine records and this one lacks, and the development machine had none.
+  Capture the dialog the first time such a row appears.
 
 ## P3: docs and process
 
@@ -256,9 +261,10 @@ Baseline: `./tests/run-all.sh` passes with 905 checks in 5 min 14 s. The repo ha
 
 ## P3: performance (measure before and after)
 
-- [ ] **F1. Run one full `status` when the shell starts, not two.**
+- [x] **F1. Run one full `status` when the shell starts, not two.**
   `Service.qml` and `BarWidget.qml` both run a full `status --json` at start, and each run costs
-  about 1.4 s of CPU. Make the service ask for `--brief`, or use the answer of the bar.
+  about 1.4 s of CPU. Make the service ask for `--brief`, or use the answer of the bar. Done: the
+  service loads the brief answer, and its `refresh` builds the full one.
 - [x] **F3. Look up scopes without a fork in the loops over every row.**
   Measured on 2026-09-13 with 60 rows: `status --json --brief`, which the bar runs every minute,
   takes about 0.9 s, and more than a third of it is `$(scope_for ...)` and `$(repo_path_for ...)`,

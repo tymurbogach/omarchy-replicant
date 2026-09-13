@@ -55,47 +55,71 @@ else
 fi
 
 banner "QML syntax"
+# Every QML file, the panel's components included. qmllint needs Omarchy's own
+# modules (qs.Commons, qs.Ui), so it runs only where Omarchy is installed.
+QML_FILES=("$ROOT"/*.qml "$ROOT"/components/*.qml)
 QMLLINT=$(command -v qmllint-qt6 || command -v qmllint || true)
-if [[ -n "$QMLLINT" ]]; then
+if [[ -n "$QMLLINT" && -d /usr/share/omarchy/shell ]]; then
   scratch=$(mktemp -d); trap 'rm -rf "$scratch"' EXIT
-  for f in "$ROOT"/*.qml; do
+  # The copy keeps the layout, so the relative imports (components/,
+  # replicant.js) still resolve.
+  cp -r "$ROOT"/*.qml "$ROOT/replicant.js" "$ROOT/components" "$scratch/"
+  for f in "${QML_FILES[@]}"; do
+    rel=${f#"$ROOT"/}
     # qmllint cannot parse `function name(): void`, which Quickshell's
-    # IpcHandler requires for a function that returns nothing — it exits 255
+    # IpcHandler requires for a function that returns nothing. It exits 255
     # with no diagnostic at all. Lint a copy with that annotation dropped so
     # the check still catches real errors in the same file.
-    sed 's/): void {/) {/' "$f" > "$scratch/$(basename "$f")"
-    if "$QMLLINT" -I /usr/share/omarchy/shell "$scratch/$(basename "$f")" >/dev/null 2>&1; then
-      printf '  \033[32m✓\033[0m %s\n' "$(basename "$f")"
+    sed -i 's/): void {/) {/' "$scratch/$rel"
+    if "$QMLLINT" -I /usr/share/omarchy/shell "$scratch/$rel" >/dev/null 2>&1; then
+      printf '  \033[32m✓\033[0m %s\n' "$rel"
     else
-      printf '  \033[31m✗\033[0m %s\n' "$(basename "$f")"
-      "$QMLLINT" -I /usr/share/omarchy/shell "$scratch/$(basename "$f")"
+      printf '  \033[31m✗\033[0m %s\n' "$rel"
+      "$QMLLINT" -I /usr/share/omarchy/shell "$scratch/$rel"
       failed=$((failed+1))
     fi
   done
 else
-  printf '  \033[33m·\033[0m qmllint not installed — skipped\n'
+  printf '  \033[33m·\033[0m qmllint or the Omarchy shell modules are not installed, skipped\n'
+fi
+
+banner "panel logic (qmltestrunner)"
+# The Qt 6 runner. /usr/bin/qmltestrunner is the Qt 5 one, and it cannot load
+# a Qt 6 test.
+QMLTEST=$(command -v qmltestrunner6 || true)
+[[ -z "$QMLTEST" && -x /usr/lib/qt6/bin/qmltestrunner ]] && QMLTEST=/usr/lib/qt6/bin/qmltestrunner
+if [[ -n "$QMLTEST" ]]; then
+  if qml_out=$(QT_QPA_PLATFORM=offscreen "$QMLTEST" -input "$ROOT/tests/qml" 2>&1); then
+    printf '  \033[32m✓\033[0m %s\n' "$(grep -oE 'Totals: [0-9]+ passed, [0-9]+ failed' <<<"$qml_out")"
+  else
+    printf '  \033[31m✗\033[0m the panel logic tests failed\n'
+    printf '%s\n' "$qml_out" | grep -vE '^PASS|^QDEBUG' | sed 's/^/    /'
+    failed=$((failed+1))
+  fi
+else
+  printf '  \033[33m·\033[0m qmltestrunner (Qt 6) is not installed, skipped\n'
 fi
 
 banner "the QML traps this plugin has actually hit"
 qml_problem=0
 # 1. `state` is a built-in property of every Item; a bare `state.` inside a
 #    nested item resolves to that empty string, not to our data.
-if grep -nE '(^|[^.a-zA-Z])state\.' "$ROOT"/*.qml | grep -v '^\S*:[0-9]*:\s*//'; then
+if grep -nE '(^|[^.a-zA-Z])state\.' "${QML_FILES[@]}" | grep -v '^\S*:[0-9]*:\s*//'; then
   printf '  \033[31m✗\033[0m an unqualified `state.` — see CLAUDE.md\n'; qml_problem=1
 fi
 # 2. Style.spacing.rowPaddingY does not exist; it evaluates to NaN and the
 #    delegate silently renders at zero height.
-if grep -n 'rowPaddingY' "$ROOT"/*.qml | grep -v '^\S*:[0-9]*:\s*//'; then
+if grep -n 'rowPaddingY' "${QML_FILES[@]}" | grep -v '^\S*:[0-9]*:\s*//'; then
   printf '  \033[31m✗\033[0m Style.spacing.rowPaddingY does not exist — use controlPaddingY\n'; qml_problem=1
 fi
 # 3. Debug logging left in a released panel.
-if grep -n 'console\.log' "$ROOT"/*.qml; then
+if grep -n 'console\.log' "${QML_FILES[@]}"; then
   printf '  \033[31m✗\033[0m console.log left in the panel\n'; qml_problem=1
 fi
 # 4. The UI must never look for the CLI on PATH. `omarchy plugin add` runs no
 #    install hook, so nothing puts omarchy-replicant in ~/.local/bin, and a
 #    fresh install pointing there leaves every button silently doing nothing.
-if grep -n 'local/bin' "$ROOT"/*.qml | grep -v ':[0-9]*: *//'; then
+if grep -n 'local/bin' "${QML_FILES[@]}" | grep -v ':[0-9]*: *//'; then
   printf '  \033[31m✗\033[0m the UI resolves the CLI on PATH — use Qt.resolvedUrl("bin/...")\n'; qml_problem=1
 fi
 # 5. Each QML entry point resolves the CLI from its own location.
@@ -107,8 +131,8 @@ done
 #    normal edit but not every re-encoding, and a truncated one silently becomes
 #    a different symbol (a plus-minus sign shipped as "reset" once). Hold them as
 #    code points and let mdi() build the string.
-if grep -nP '[\x{f0000}-\x{ffffd}]' "$ROOT"/*.qml; then
-  printf '  \033[31m✗\033[0m a pasted Nerd Font glyph in QML — use root.mdi(0xF….) — see CLAUDE.md\n'; qml_problem=1
+if grep -nP '[\x{f0000}-\x{ffffd}]' "${QML_FILES[@]}"; then
+  printf '  \033[31m✗\033[0m a pasted Nerd Font glyph in QML — use R.mdi(0xF….) — see CLAUDE.md\n'; qml_problem=1
 fi
 # 7. A sync_state the QML tests for that the core never emits. Renaming a state
 #    in replicant-core.sh left `sync_state === "modified"` in Panel.qml, which
@@ -116,7 +140,7 @@ fi
 #    rows showed unsaved changes. The comparison is a string on both sides and
 #    nothing but this check makes them agree.
 known_states=$(grep -ohE 'sync_state="[a-z]+"' "$ROOT/bin/replicant-core.sh" "$ROOT"/bin/lib/*.sh | sed 's/.*="//; s/"//' | sort -u)
-for st in $(grep -oE 'sync_state === "[a-z]+"' "$ROOT"/*.qml | sed 's/.*=== "//; s/"//' | sort -u); do
+for st in $(grep -oE 'sync_state === "[a-z]+"' "${QML_FILES[@]}" | sed 's/.*=== "//; s/"//' | sort -u); do
   if ! printf '%s\n' "$known_states" | grep -qx "$st"; then
     printf '  \033[31m✗\033[0m Panel.qml tests for sync_state "%s", which replicant-core.sh never emits\n' "$st"
     qml_problem=1
@@ -141,7 +165,7 @@ banner "no personal data in shipped code"
 # A /home that follows a letter is a repo path such as config/home/bashrc.
 # -r on bin/: `bin/*` hands grep the directory bin/lib, which it skips.
 if grep -rnE 'omarchy_thinkpad|credentials-(pi|nas)|install-paquetes|(^|[^A-Za-z0-9_.])/home/[a-z]' \
-     "$ROOT/bin" "$ROOT"/*.qml "$ROOT/manifest.json"; then
+     "$ROOT/bin" "${QML_FILES[@]}" "$ROOT/manifest.json"; then
   printf '  \033[31m✗\033[0m a personal path or name is in shipped code\n'; failed=$((failed+1))
 else
   printf '  \033[32m✓\033[0m none present\n'
@@ -152,12 +176,12 @@ fi
 # push protection rejected the commit that first added these, correctly.
 banner "this repo, by its own secret scanner"
 if bash "$ROOT/bin/scan-secrets.sh" "$ROOT/bin" "$ROOT/tests" "$ROOT/Panel.qml" \
-        "$ROOT/BarWidget.qml" "$ROOT/docs" "$ROOT/README.md" >/dev/null 2>&1; then
+        "$ROOT/BarWidget.qml" "$ROOT/components" "$ROOT/replicant.js" "$ROOT/docs" "$ROOT/README.md" >/dev/null 2>&1; then
   printf '  \033[32m✓\033[0m no credential-shaped strings in the source\n'
 else
   printf '  \033[31m✗\033[0m a credential-shaped string is in the source — split it, see CLAUDE.md\n'
   bash "$ROOT/bin/scan-secrets.sh" "$ROOT/bin" "$ROOT/tests" "$ROOT/Panel.qml" \
-       "$ROOT/BarWidget.qml" "$ROOT/docs" "$ROOT/README.md" 2>&1 | sed 's/^/    /'
+       "$ROOT/BarWidget.qml" "$ROOT/components" "$ROOT/replicant.js" "$ROOT/docs" "$ROOT/README.md" 2>&1 | sed 's/^/    /'
   failed=$((failed+1))
 fi
 

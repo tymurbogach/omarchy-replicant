@@ -15,11 +15,13 @@ import Quickshell.Io
 // minute and is the thing that has to stay current; a second poller here meant
 // two `status` runs per cycle for a value nothing was reading.
 //
-// `status` returns a CACHED answer, refreshed when this loads and when someone
-// calls `refresh` — not on every call. Refreshing per call would put a
-// second-long `status` process behind every poll of a script's loop, which is
-// the idle cost the bar's --brief tick exists to avoid. A script that needs a
-// current answer calls `refresh` and then `status`, or just runs the CLI.
+// `status` returns a CACHED answer, not a new one on every call. Refreshing per
+// call would put a second-long `status` process behind every poll of a script's
+// loop. At load the cache holds the brief answer (`--brief`: the counters and
+// no rows), because the bar builds the full payload at the same moment, and two
+// full runs at every shell start cost about 1.4 s of CPU each. `refresh` builds
+// the full answer. A script that needs rows calls `refresh` and then `status`,
+// or runs the CLI.
 Item {
   id: root
   visible: false
@@ -35,13 +37,13 @@ Item {
   // adds it to PATH for terminal use; the UI never depends on it.
   readonly property string cli: String(Qt.resolvedUrl("bin/omarchy-replicant")).replace(/^file:\/\//, "")
 
-  function refresh() {
+  function refresh(full) {
     if (probe.running) return
-    probe.command = [root.cli, "status", "--json"]
+    probe.command = full ? [root.cli, "status", "--json"] : [root.cli, "status", "--json", "--brief"]
     probe.running = true
   }
 
-  Component.onCompleted: root.refresh()
+  Component.onCompleted: root.refresh(false)
 
   Process {
     id: probe
@@ -64,6 +66,6 @@ Item {
   IpcHandler {
     target: "omarchy-replicant"
     function status(): string { return JSON.stringify(root.replicantState) }
-    function refresh(): void { root.refresh() }
+    function refresh(): void { root.refresh(true) }
   }
 }

@@ -3,18 +3,14 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
+import "replicant.js" as R
 
 BarWidget {
   id: root
   moduleName: "io.github.tymurbogach.omarchy-replicant"
 
-  // The CLI that ships inside this plugin. Resolved relative to this file, so
-  // it is correct no matter where the plugin was installed — including a
-  // symlinked dev checkout. It is NOT looked up on PATH: `omarchy plugin add`
-  // runs no install hook, so nothing puts omarchy-replicant on PATH, and a
-  // fresh install pointing at ~/.local/bin would leave every button in this
-  // panel silently doing nothing. `omarchy-replicant link` is the opt-in that
-  // adds it to PATH for terminal use; the UI never depends on it.
+  // The CLI inside this plugin, resolved relative to this file and never looked
+  // up on PATH. Service.qml says why.
   readonly property string cli: String(Qt.resolvedUrl("bin/omarchy-replicant")).replace(/^file:\/\//, "")
 
   property var repoState: ({ initialized: false })
@@ -38,8 +34,7 @@ BarWidget {
   // not arbitrary. Every candidate was rendered at the real bar size before
   // choosing: at 13px the outline hexagons lose their interior and read as three
   // rings, while the filled ones keep their shape. Outline detail needs the
-  // panel header's 30px to survive.
-  function mdi(cp) { return String.fromCodePoint(cp) }
+  // panel header's 30px to survive. R.mdi (replicant.js) builds the string.
 
   // What this icon is FOR. It used to read repoState.dirty, which counts what
   // git can see inside the REPO — files core_backup has already copied in. Edit
@@ -59,18 +54,17 @@ BarWidget {
     return n
   }
   readonly property int nIncoming: repoState.incoming || 0
-  function plural(n, one, many) { return n + " " + (n === 1 ? one : (many || one + "s")) }
   readonly property string glyph: {
-    if (!asked) return root.mdi(0xF0450)                                         // refresh
-    if (!repoState.initialized) return root.mdi(0xF0415)                         // plus
-    if ((repoState.ahead || 0) > 0 && (repoState.behind || 0) > 0) return root.mdi(0xF002A)  // alert
+    if (!asked) return R.mdi(0xF0450)                                         // refresh
+    if (!repoState.initialized) return R.mdi(0xF0415)                         // plus
+    if ((repoState.ahead || 0) > 0 && (repoState.behind || 0) > 0) return R.mdi(0xF002A)  // alert
     // Before anything about pushing: an incoming file is the one state where
     // the obvious next action is the wrong one.
-    if (root.nIncoming > 0) return root.mdi(0xF0162)                             // cloud-download
-    if ((repoState.behind || 0) > 0) return root.mdi(0xF0162)                    // cloud-download
-    if (root.nUnsaved > 0) return root.mdi(0xF0193)                              // content-save
-    if ((repoState.ahead || 0) > 0) return root.mdi(0xF0167)                     // cloud-upload
-    return root.mdi(0xF06E1)                                                     // hexagon-multiple
+    if (root.nIncoming > 0) return R.mdi(0xF0162)                             // cloud-download
+    if ((repoState.behind || 0) > 0) return R.mdi(0xF0162)                    // cloud-download
+    if (root.nUnsaved > 0) return R.mdi(0xF0193)                              // content-save
+    if ((repoState.ahead || 0) > 0) return R.mdi(0xF0167)                     // cloud-upload
+    return R.mdi(0xF06E1)                                                     // hexagon-multiple
   }
   readonly property string tooltip: {
     if (!asked) return "Replicant — loading…"
@@ -79,10 +73,10 @@ BarWidget {
     if (repoState.remote) t += " → " + repoState.remote
     else t += " (no remote)"
     t += "\nbranch: " + (repoState.branch || "?")
-    if (root.nIncoming > 0) t += "\n↓ " + root.plural(root.nIncoming, "file") + " to restore from another machine"
-    if ((repoState.behind || 0) > 0) t += "\n↓ " + root.plural(repoState.behind, "commit") + " to pull"
-    if (root.nUnsaved > 0) t += "\n● " + root.plural(root.nUnsaved, "file") + " changed and not saved"
-    if ((repoState.ahead || 0) > 0) t += "\n↑ " + root.plural(repoState.ahead, "commit") + " to push"
+    if (root.nIncoming > 0) t += "\n↓ " + R.plural(root.nIncoming, "file") + " to restore from another machine"
+    if ((repoState.behind || 0) > 0) t += "\n↓ " + R.plural(repoState.behind, "commit") + " to pull"
+    if (root.nUnsaved > 0) t += "\n● " + R.plural(root.nUnsaved, "file") + " changed and not saved"
+    if ((repoState.ahead || 0) > 0) t += "\n↑ " + R.plural(repoState.ahead, "commit") + " to push"
     if (root.nIncoming === 0 && root.nUnsaved === 0
         && (repoState.ahead || 0) === 0 && (repoState.behind || 0) === 0) t += "\n✓ in sync"
     t += "\nClick to open panel · Right-click to refresh"
@@ -216,17 +210,19 @@ BarWidget {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  // Opening the panel is a click on the icon, and that was the only way in —
-  // which made every visual check depend on synthesising a mouse event, and
-  // left a user with no way to bind it to a key. `status`/`refresh` live on the
-  // service's own target (see Service.qml); the panel is this component's, so
-  // its handler is here, where `open`/`close`/`toggle` already exist:
+  // The panel's one IPC target. It is here because this component loads the
+  // panel, and `open`/`close`/`toggle` already exist here. `status`/`refresh`
+  // are on the service's own target (see Service.qml), because two
+  // IpcHandlers may not share one name.
   //
-  //   omarchy shell omarchy-replicant-panel toggle
+  //   omarchy shell replicant toggle
+  //   omarchy shell replicant tab settings
   //
-  // A separate target because two IpcHandlers may not share one name.
+  // This target was `omarchy-replicant-panel`, and the base Panel made a
+  // second one, `replicant`. Two names opened the same panel, and only the
+  // second was documented, so the one handler now has that name.
   IpcHandler {
-    target: "omarchy-replicant-panel"
+    target: "replicant"
     function open(): void { root.open() }
     function close(): void { root.close() }
     function toggle(): void { root.toggle() }

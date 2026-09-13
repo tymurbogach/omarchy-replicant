@@ -4,8 +4,12 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
+import "components"
+import "replicant.js" as R
 
-// The Replicant panel: four tabs over one CLI.
+// The Replicant panel: four tabs over one CLI. Its parts are in components/,
+// one file each, and each one reaches the panel through its `panel` property.
+// The pure logic is in replicant.js, where tests/qml tests it.
 //
 // Layout note: everything below the Overview tab is an ACCORDION. Forty-odd
 // tracked files and twenty settings as one flat list meant a scrollbar the
@@ -21,21 +25,14 @@ import qs.Ui
 Panel {
   id: root
   moduleName: "io.github.tymurbogach.omarchy-replicant"
-  // Opens from a keybinding as well as from the bar icon:
-  //   omarchy shell replicant toggle
-  // Bind it in ~/.config/hypr/bindings.lua if you want the panel on a key. The
-  // base Panel's IpcHandler calls the open/close/toggle defined below, so both
-  // routes end up in exactly the same place.
-  manageIpc: true
-  ipcTarget: "replicant"
+  // The IPC target that opens this panel from a key (`omarchy shell replicant
+  // toggle`) is in BarWidget.qml, which loads the panel. The base Panel can
+  // make a target of its own, and two targets that opened the same panel were
+  // two names for one thing.
+  manageIpc: false
 
-  // The CLI that ships inside this plugin. Resolved relative to this file, so
-  // it is correct no matter where the plugin was installed — including a
-  // symlinked dev checkout. It is NOT looked up on PATH: `omarchy plugin add`
-  // runs no install hook, so nothing puts omarchy-replicant on PATH, and a
-  // fresh install pointing at ~/.local/bin would leave every button in this
-  // panel silently doing nothing. `omarchy-replicant link` is the opt-in that
-  // adds it to PATH for terminal use; the UI never depends on it.
+  // The CLI inside this plugin, resolved relative to this file and never looked
+  // up on PATH. Service.qml says why.
   readonly property string cli: String(Qt.resolvedUrl("bin/omarchy-replicant")).replace(/^file:\/\//, "")
   property var repoState: ({ initialized: false, configs: [], secrets: [], settings: [], categories: [], setting_groups: [], machines: [] })
   // True once a real status response has come back at least once. Gates the
@@ -69,6 +66,7 @@ Panel {
   // ── in-flight state ───────────────────────────────────────────────────────
   readonly property bool busy: saveProc.running || setProc.running || pullProc.running
                             || backupProc.running || fileSaveProc.running || dangerProc.running
+                            || checkProc.running
   property string busyLabel: ""
 
   readonly property color fg: bar ? bar.foreground : Color.foreground
@@ -89,8 +87,7 @@ Panel {
   // crossed-out cloud as "pull"), and every one of these lives above U+FFFF,
   // where a stray re-encoding of this file silently truncates the glyph to a
   // different character. Each was rendered against the shell's own font and
-  // looked at before being used.
-  function mdi(cp) { return String.fromCodePoint(cp) }
+  // looked at before being used. R.mdi (replicant.js) builds the string.
 
   // Paths are shown the way the CLI shows them. A row is about 40 characters
   // wide once the scope button and five actions have taken their share, and
@@ -113,24 +110,24 @@ Panel {
     if (h !== "" && src === h + "/.config/" + String(c.id || "")) return ""
     return root.pretty(src)
   }
-  readonly property string icRefresh: root.mdi(0xF0450)    // refresh
-  readonly property string icPush: root.mdi(0xF0167)    // cloud-upload
-  readonly property string icPull: root.mdi(0xF0162)    // cloud-download
-  readonly property string icCopy: root.mdi(0xF018F)    // content-copy
-  readonly property string icEdit: root.mdi(0xF03EB)    // pencil
-  readonly property string icDiff: root.mdi(0xF08AA)    // file-compare
-  readonly property string icSave: root.mdi(0xF0193)    // content-save
-  readonly property string icDefault: root.mdi(0xF099B)    // restore
-  readonly property string icFromRepo: root.mdi(0xF01DA)    // download
-  readonly property string icShield: root.mdi(0xF0498)    // shield
-  readonly property string icFolder: root.mdi(0xF024B)    // folder
-  readonly property string icPlus: root.mdi(0xF0415)    // plus
-  readonly property string icBranch: root.mdi(0xF062C)    // source-branch
-  readonly property string icClose: root.mdi(0xF0156)    // close
-  readonly property string icDown: root.mdi(0xF0140)    // chevron-down
-  readonly property string icRight: root.mdi(0xF0142)    // chevron-right
-  readonly property string icInfo: root.mdi(0xF02FC)    // information
-  readonly property string icMachine: root.mdi(0xF0176)    // laptop
+  readonly property string icRefresh: R.mdi(0xF0450)    // refresh
+  readonly property string icPush: R.mdi(0xF0167)    // cloud-upload
+  readonly property string icPull: R.mdi(0xF0162)    // cloud-download
+  readonly property string icCopy: R.mdi(0xF018F)    // content-copy
+  readonly property string icEdit: R.mdi(0xF03EB)    // pencil
+  readonly property string icDiff: R.mdi(0xF08AA)    // file-compare
+  readonly property string icSave: R.mdi(0xF0193)    // content-save
+  readonly property string icDefault: R.mdi(0xF099B)    // restore
+  readonly property string icFromRepo: R.mdi(0xF01DA)    // download
+  readonly property string icShield: R.mdi(0xF0498)    // shield
+  readonly property string icFolder: R.mdi(0xF024B)    // folder
+  readonly property string icPlus: R.mdi(0xF0415)    // plus
+  readonly property string icBranch: R.mdi(0xF062C)    // source-branch
+  readonly property string icClose: R.mdi(0xF0156)    // close
+  readonly property string icDown: R.mdi(0xF0140)    // chevron-down
+  readonly property string icRight: R.mdi(0xF0142)    // chevron-right
+  readonly property string icInfo: R.mdi(0xF02FC)    // information
+  readonly property string icMachine: R.mdi(0xF0176)    // laptop
   // The plugin's own mark: identical cells, more than one of them. Chosen over
   // the GitHub logo because GitHub is where the copy happens to live, not what
   // this does. The OUTLINE variant is used here and the filled one in the bar —
@@ -138,59 +135,25 @@ Panel {
   // into rings, so the bar gets the filled one. The scope button below keeps
   // content-duplicate for "Shared", which is a different idea (one copy everyone
   // reads) and sits next to its own text label.
-  readonly property string icReplicant: root.mdi(0xF10F2)   // hexagon-multiple-outline
-  readonly property string icShared: root.mdi(0xF0191)      // content-duplicate
-  readonly property string icProfile: root.mdi(0xF0322)     // laptop
-  readonly property string icOff: root.mdi(0xF0377)         // minus-circle-outline
+  readonly property string icReplicant: R.mdi(0xF10F2)   // hexagon-multiple-outline
+  readonly property string icShared: R.mdi(0xF0191)      // content-duplicate
+  readonly property string icProfile: R.mdi(0xF0322)     // laptop
+  readonly property string icOff: R.mdi(0xF0377)         // minus-circle-outline
   // A list with a minus, NOT a waste basket. Untracking removes an entry from
   // your list and the copy from the repo; the file on the machine is untouched,
   // and a trash can on that button would say the opposite of what it does.
-  readonly property string icUntrack: root.mdi(0xF0410)     // playlist-remove
+  readonly property string icUntrack: R.mdi(0xF0410)     // playlist-remove
 
   // ── derived summaries ─────────────────────────────────────────────────────
-  // One place maps a sync state to how it looks, so a new state cannot be added
-  // to the core and silently render as the fallback in three different rows.
-  function stateGlyph(st) {
-    if (st === "off") return "⊘"
-    if (st === "missing") return "·"
-    // Down, against unsaved's dot and unpushed's up arrow. The three states that
-    // ask for an action say which direction that action moves the file in.
-    if (st === "incoming") return "↓"
-    if (st === "unsaved") return "●"
-    if (st === "unpushed") return "↑"
-    if (st === "default") return "○"
-    return "◆"
-  }
+  // The glyph, the word and the colour role of each sync state are in
+  // replicant.js, where tests/qml tests them. The colours are the panel's own.
   function stateColor(st) {
-    // Its own colour, and deliberately not the accent the other two "do
-    // something" states share: pressing Save on an incoming row is the one
-    // mistake in this panel that destroys somebody else's work, so the badge
-    // must not look like the badge that asks for Save.
-    if (st === "incoming") return root.warnColor
-    if (st === "unsaved") return Color.accent
-    if (st === "unpushed") return Color.accent
-    if (st === "saved") return root.okColor
+    var role = R.stateRole(st)
+    if (role === "warn") return root.warnColor
+    if (role === "accent") return Color.accent
+    if (role === "ok") return root.okColor
     return root.dim
   }
-  function stateWord(st) {
-    // "off", the word the scope button, the legend and the card already use.
-    // This said "not synced": two words for one state, two tabs apart.
-    if (st === "off") return "switched off"
-    if (st === "missing") return "not on this machine"
-    // Short on purpose. These are printed beside the path on a row that also
-    // carries a Save button and sits under a banner that already says "press
-    // Save to GitHub", so a longer sentence bought nothing and cost the path
-    // its last few characters on exactly the rows that had one worth reading.
-    if (st === "incoming") return "newer copy in your repo"
-    if (st === "unsaved") return "not saved yet"
-    if (st === "unpushed") return "not pushed yet"
-    if (st === "default") return "untouched Omarchy default"
-    return "saved on GitHub"
-  }
-
-  // "1 file", "4 files". The panel printed "file(s)" eleven times on one screen
-  // and the number was always right there next to it.
-  function plural(n, one, many) { return n + " " + (n === 1 ? one : (many || one + "s")) }
 
   readonly property string profileName: root.repoState.profile || "this machine"
   readonly property int scopedCount: (root.repoState.configs || []).filter(function(c){ return c.scope === "profile" }).length
@@ -214,84 +177,24 @@ Panel {
   readonly property int nAhead: repoState.ahead || 0
   readonly property int nBehind: repoState.behind || 0
 
-  readonly property string summary: {
-    if (!root.asked) return "checking…"
-    if (!root.ready) return "not set up yet"
-    if (root.nAhead > 0 && root.nBehind > 0) return "diverged"
-    if (root.nBehind > 0) return root.nBehind + " waiting on GitHub"
-    if (root.nIncoming > 0) return "changes to restore"
-    if (root.nDirty > 0 || root.nAhead > 0) return "unsaved changes"
-    return "everything saved"
-  }
-
-  // One sentence telling the user what to do next, or nothing at all when
-  // there is nothing to do. A banner that is always present stops being read.
-  readonly property string advice: {
-    if (!root.asked || !root.ready) return ""
-    if (root.nBehind > 0) return "Another machine saved " + root.plural(root.nBehind, "change") + " — press Pull to bring them here."
-    // Before the unsaved line, and that order is the whole point of the state.
-    // Both mean "this file and its copy differ"; only this one knows which way,
-    // and pressing Save here commits over what the other machine saved.
-    // One line, and it has to fit on one line: the banner elides, and the half
-    // that got cut was the half naming the button.
-    if (root.nIncoming > 0) return root.plural(root.nIncoming, "file") + " came from another machine — press Restore, not Save."
-    if (root.nDirty > 0) return root.plural(root.nDirty, "file") + " changed on this machine — press Save to GitHub."
-    if (root.nAhead > 0) return root.plural(root.nAhead, "commit") + " committed but not pushed — press Save to GitHub."
-    return ""
-  }
+  // What the header and the banner say. The order of the rules is in
+  // replicant.js (summary, advice), where it is tested.
+  readonly property var facts: ({ asked: root.asked, ready: root.ready, ahead: root.nAhead,
+                                  behind: root.nBehind, incoming: root.nIncoming, dirty: root.nDirty })
+  readonly property string summary: R.summary(root.facts)
+  readonly property string advice: R.advice(root.facts)
 
   readonly property var tabs: [
-    { value: "overview", label: "Overview", icon: root.mdi(0xF056E), tooltip: "This machine at a glance  (1)" },
-    { value: "configs",  label: "Configs",  icon: root.mdi(0xF107F), tooltip: "Everything being backed up, by area  (2)" },
-    { value: "settings", label: "Settings", icon: root.mdi(0xF0493), tooltip: "Change a value and it is written and saved  (3)" },
-    { value: "restore",  label: "Restore",  icon: root.mdi(0xF099B), tooltip: "Bring a whole machine back  (4)" }
+    { value: "overview", label: "Overview", icon: R.mdi(0xF056E), tooltip: "This machine at a glance  (1)" },
+    { value: "configs",  label: "Configs",  icon: R.mdi(0xF107F), tooltip: "Everything being backed up, by area  (2)" },
+    { value: "settings", label: "Settings", icon: R.mdi(0xF0493), tooltip: "Change a value and it is written and saved  (3)" },
+    { value: "restore",  label: "Restore",  icon: R.mdi(0xF099B), tooltip: "Bring a whole machine back  (4)" }
   ]
 
   // ── one uniform row shape for configs and secrets ─────────────────────────
-  // Secrets live in their own part of the payload because they carry different
-  // facts (mode, kind, the NAMES of the variables and never their values), but
-  // the panel shows them in the same list as everything else in their area.
-  function secretRows() {
-    var out = []
-    var list = root.repoState.secrets || []
-    for (var i = 0; i < list.length; i++) {
-      var s = list[i]
-      out.push({
-        id: s.id, label: s.id, src: s.src, category: "secrets",
-        sync_state: s.sync_state, exists: s.exists, has_default: false,
-        synced: s.synced, scope: s.synced === false ? "off" : "shared",
-        source: s.source || "manifest", is_dir: false, nfiles: 0,
-        secret: true, kind: s.kind, mode: s.mode,
-        vars: s.vars || [], var_count: s.var_count || 0
-      })
-    }
-    return out
-  }
-
-  function rowsFor(categoryId) {
-    var out = []
-    var list = root.repoState.configs || []
-    var needle = root.fileSearch.toLowerCase()
-    for (var i = 0; i < list.length; i++) {
-      var c = list[i]
-      if ((c.category || "other") !== categoryId) continue
-      out.push({
-        id: c.id, label: c.label, src: c.src, category: c.category,
-        sync_state: c.sync_state, exists: c.exists, has_default: c.has_default,
-        synced: c.synced, scope: c.scope || "shared",
-        source: c.source || "manifest", is_dir: c.is_dir === true, nfiles: c.nfiles || 0,
-        secret: false, kind: "", mode: "", vars: [], var_count: 0
-      })
-    }
-    if (categoryId === "secrets") out = out.concat(root.secretRows())
-    if (needle !== "") {
-      out = out.filter(function(r) {
-        return (String(r.label) + " " + String(r.src)).toLowerCase().indexOf(needle) !== -1
-      })
-    }
-    out.sort(function(a, b) { return String(a.label).localeCompare(String(b.label)) })
-    return out
-  }
+  // The rows of one area, secrets included, filtered by the search and sorted
+  // (replicant.js, rowsFor).
+  function rowsFor(categoryId) { return R.rowsFor(root.repoState, categoryId, root.fileSearch) }
 
   // Categories that actually have something in them, with their counts. An
   // empty card is a card you have to read and then dismiss.
@@ -419,13 +322,6 @@ Panel {
     setProc.running = true
   }
 
-  // Three scopes, cycled in the order a person actually reasons about them:
-  // "everyone gets this" -> "each kind of machine gets its own" -> "nobody".
-  function nextScope(scope, allowProfile) {
-    if (scope === "off") return "shared"
-    if (scope === "shared") return allowProfile ? "profile" : "off"
-    return "off"
-  }
   function scopeLabel(scope) {
     if (scope === "profile") return root.profileName
     if (scope === "off") return "Off"
@@ -472,19 +368,9 @@ Panel {
     backupsProc.command = [root.cli, "backups-json"]
     backupsProc.running = true
   }
-  // Newest per id: undo takes the newest, so a row per id is a row per button.
-  // The rest are counted, never listed — twelve rows of the same file is a wall,
-  // and only one of them is reachable.
-  readonly property var backupRows: {
-    var seen = ({}), out = []
-    for (var i = 0; i < root.backups.length; i++) {
-      var b = root.backups[i]
-      if (seen[b.id]) { out[seen[b.id] - 1].older += 1; continue }
-      seen[b.id] = out.push({ id: b.id, path: b.path, epoch: b.epoch,
-                              state: b.state, older: 0 })
-    }
-    return out
-  }
+  // Newest per id (replicant.js, backupRows): undo takes the newest, so a row
+  // per id is a row per button.
+  readonly property var backupRows: R.backupRows(root.backups)
   function doUndo(id) {
     root.busyLabel = "Undoing " + id + "…"
     undoProc.command = [root.cli, "undo", id, "--apply"]
@@ -494,15 +380,6 @@ Panel {
     root.busyLabel = "Removing backups…"
     undoProc.command = [root.cli, "backups", "--prune", "--apply"]
     undoProc.running = true
-  }
-  // A backup's age in the words a person uses about one. The epoch is in the
-  // filename and says nothing; "3 days ago" is the whole question being asked.
-  function agoText(epoch) {
-    var s = Math.max(0, Math.floor(Date.now() / 1000) - epoch)
-    if (s < 90) return "just now"
-    if (s < 5400) return root.plural(Math.round(s / 60), "minute") + " ago"
-    if (s < 129600) return root.plural(Math.round(s / 3600), "hour") + " ago"
-    return root.plural(Math.round(s / 86400), "day") + " ago"
   }
   function doTrack(path, kind) {
     root.busyLabel = "Tracking " + path + "…"
@@ -572,6 +449,37 @@ Panel {
     else return
     root.lastOutput = root.busyLabel
     dangerProc.running = true
+  }
+
+  // ── install, with the marketplace's facts in front of the consent ─────────
+  // `install-plugin <id> --check` prints what the Omarchy marketplace says about
+  // a plugin: its verification status, the commit that it checked, and whether
+  // the origin has moved since. The confirmation shows that text, because
+  // consent given without it is consent to an unknown commit. A theme has no
+  // catalog entry, so it is asked about straight away.
+  property var pendingInstall: null
+  function askInstall(kind, id, origin) {
+    var msg = "Install the " + kind + " \"" + id + "\" from " + origin + "?\n\nThis fetches whatever is at that address right now — not necessarily what you reviewed when you first installed it."
+    if (kind === "theme") {
+      root.ask("install-theme", id, msg + "\n\nInstalling a theme also makes it the active theme: your desktop changes to it right away.", "Install")
+      return
+    }
+    root.pendingInstall = { id: id, message: msg }
+    root.busyLabel = "Checking " + id + " in the marketplace…"
+    checkProc.command = [root.cli, "install-plugin", id, "--check"]
+    checkProc.running = true
+  }
+  CliProcess {
+    id: checkProc
+    onExited: function(c) {
+      root.busyLabel = ""
+      var p = root.pendingInstall
+      root.pendingInstall = null
+      if (!p) return
+      var facts = (checkProc.stdout.text + "\n" + checkProc.stderr.text).replace(/\x1b\[[0-9;]*m/g, "").trim()
+      if (facts === "") facts = "The marketplace check printed nothing."
+      root.ask("install-plugin", p.id, p.message + "\n\n" + facts, "Install")
+    }
   }
 
   // ── inline diff viewer ────────────────────────────────────────────────────
@@ -907,14 +815,14 @@ Panel {
               // 0 every day of the year is a card nobody looks at any more.
               // Secrets included: the Configs tab lists them as tracked files
               // like any other, and the count left them out.
-              StatCard { columns: root.statColumns; label: "tracked"
+              StatCard { panel: root; columns: root.statColumns; label: "tracked"
                          value: String((root.repoState.configs || []).length + (root.repoState.secrets || []).length) }
-              StatCard { columns: root.statColumns; label: "unsaved";  value: String(root.nDirty); highlight: root.nDirty > 0 }
-              StatCard { columns: root.statColumns; label: "to restore"; value: String(root.nIncoming)
+              StatCard { panel: root; columns: root.statColumns; label: "unsaved";  value: String(root.nDirty); highlight: root.nDirty > 0 }
+              StatCard { panel: root; columns: root.statColumns; label: "to restore"; value: String(root.nIncoming)
                          highlight: root.nIncoming > 0; highlightColor: root.warnColor
                          visible: root.nIncoming > 0 }
-              StatCard { columns: root.statColumns; label: "to pull";  value: String(root.nBehind);      highlight: root.nBehind > 0 }
-              StatCard { columns: root.statColumns; label: "switched off"; value: String(root.countOff) }
+              StatCard { panel: root; columns: root.statColumns; label: "to pull";  value: String(root.nBehind);      highlight: root.nBehind > 0 }
+              StatCard { panel: root; columns: root.statColumns; label: "switched off"; value: String(root.countOff) }
             }
 
             Row {
@@ -958,19 +866,19 @@ Panel {
                 anchors.leftMargin: Style.spacing.rowPaddingX
                 anchors.rightMargin: Style.spacing.rowPaddingX
                 spacing: Style.space(3)
-                FactRow { label: "Remote";      value: root.repoState.remote_name || "—" }
-                FactRow { label: "Branch";      value: (root.repoState.branch || "main") + (root.nAhead || root.nBehind ? "   ↑" + root.nAhead + " ↓" + root.nBehind : "") }
-                FactRow { label: "This machine"; value: root.repoState.machine || "—" }
+                FactRow { panel: root; label: "Remote";      value: root.repoState.remote_name || "—" }
+                FactRow { panel: root; label: "Branch";      value: (root.repoState.branch || "main") + (root.nAhead || root.nBehind ? "   ↑" + root.nAhead + " ↓" + root.nBehind : "") }
+                FactRow { panel: root; label: "This machine"; value: root.repoState.machine || "—" }
                 // No "Last save" row here. It printed the date and subject of the
                 // newest commit — which is, verbatim, the first line of the
                 // Recent saves list three rows further down the same screen,
                 // where it has a column for the date and room for the subject
                 // instead of eliding it.
-                FactRow { label: "Theme";       value: root.settingText("theme.current") }
-                FactRow { label: "Bar position"; value: root.settingText("bar.position") }
-                FactRow { label: "Lock screen"; value: root.settingText("idle.lock") }
-                FactRow { label: "Profile";     value: root.profileName + "  ·  " + root.plural(root.scopedCount, "file") + " kept per profile" }
-                FactRow { label: "Plugin";      value: "omarchy-replicant " + (root.repoState.plugin_version || "?") }
+                FactRow { panel: root; label: "Theme";       value: root.settingText("theme.current") }
+                FactRow { panel: root; label: "Bar position"; value: root.settingText("bar.position") }
+                FactRow { panel: root; label: "Lock screen"; value: root.settingText("idle.lock") }
+                FactRow { panel: root; label: "Profile";     value: root.profileName + "  ·  " + R.plural(root.scopedCount, "file") + " kept per profile" }
+                FactRow { panel: root; label: "Plugin";      value: "omarchy-replicant " + (root.repoState.plugin_version || "?") }
               }
             }
 
@@ -1143,7 +1051,7 @@ Panel {
 
             Repeater {
               model: root.categoryCards
-              delegate: CategoryCard {
+              delegate: CategoryCard { panel: root;
                 required property var modelData
                 card: modelData
                 width: content.width
@@ -1154,7 +1062,7 @@ Panel {
             // already added. This is how you add more — the one card that is
             // about files NOT tracked yet, kept last so it never competes with
             // the areas, and collapsed so it is an offer rather than a chore.
-            SuggestCard { width: content.width }
+            SuggestCard { panel: root; width: content.width }
           }
 
           // ══════════════ Settings ══════════════
@@ -1196,7 +1104,7 @@ Panel {
 
             Repeater {
               model: root.settingGroups
-              delegate: SettingCard {
+              delegate: SettingCard { panel: root;
                 required property var modelData
                 group: modelData
                 width: content.width
@@ -1228,7 +1136,7 @@ Panel {
               color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
             }
 
-            RestoreCard {
+            RestoreCard { panel: root;
               width: parent.width
               title: "Restore from GitHub"
               body: "Brings every config, secret and setting saved in your repo down onto this machine — and then runs whatever Omarchy needs to make it take effect: the theme is re-applied with omarchy theme set, Hyprland is reloaded. Third-party plugins and themes are never reinstalled automatically — pending ones are listed below, one Install button each."
@@ -1245,7 +1153,7 @@ Panel {
                 "Restore")
             }
 
-            RestoreCard {
+            RestoreCard { panel: root;
               width: parent.width
               title: "Reset to Omarchy defaults"
               body: "Throws away your changes to every file Omarchy ships a default for and puts the factory version back, through omarchy refresh config. Your repo is not touched, so you can restore from it afterwards."
@@ -1290,7 +1198,7 @@ Panel {
                   Text {
                     anchors.verticalCenter: parent.verticalCenter
                     width: parent.width - Style.space(18) - areaBtn.width - areaPreview.width - parent.spacing * 3
-                    text: areaRow.modelData.label + "   " + root.plural(areaRow.modelData.count, "file")
+                    text: areaRow.modelData.label + "   " + R.plural(areaRow.modelData.count, "file")
                     color: root.fg; font.family: root.ff; font.pixelSize: Style.font.caption
                     elide: Text.ElideRight
                   }
@@ -1373,14 +1281,9 @@ Panel {
                     foreground: root.fg; fontFamily: root.ff
                     enabled: !root.busy
                     tooltipText: "Fetch " + reinstallRow.modelData.origin + " and install it now"
-                    onClicked: root.ask(
-                      reinstallRow.modelData.kind === "theme" ? "install-theme" : "install-plugin",
-                      reinstallRow.modelData.id,
-                      "Install the " + reinstallRow.modelData.kind + " \"" + reinstallRow.modelData.id + "\" from " + reinstallRow.modelData.origin + "?\n\nThis fetches whatever is at that address right now — not necessarily what you reviewed when you first installed it."
-                        + (reinstallRow.modelData.kind === "theme"
-                           ? "\n\nInstalling a theme also makes it the active theme: your desktop changes to it right away."
-                           : ""),
-                      "Install")
+                    onClicked: root.askInstall(reinstallRow.modelData.kind,
+                                               reinstallRow.modelData.id,
+                                               reinstallRow.modelData.origin)
                   }
                 }
               }
@@ -1424,7 +1327,7 @@ Panel {
                     // from what is there now. "same" is the one you can drop
                     // without thinking; it is also the one that would make Undo
                     // do nothing, which is worth saying before it is pressed.
-                    text: bakRow.modelData.id + "   " + root.agoText(bakRow.modelData.epoch)
+                    text: bakRow.modelData.id + "   " + R.agoText(bakRow.modelData.epoch)
                         + (bakRow.modelData.state === "same" ? "   ·  identical to the file you have"
                           : bakRow.modelData.state === "gone" ? "   ·  the file itself is gone" : "")
                         + (bakRow.modelData.older > 0 ? "   ·  +" + bakRow.modelData.older + " older" : "")
@@ -1443,7 +1346,7 @@ Panel {
                       : "Put this version back, and keep the current one as the new .bak"
                     onClicked: root.ask("undo", bakRow.modelData.id,
                       "Put back the version of " + bakRow.modelData.id + " from "
-                        + root.agoText(bakRow.modelData.epoch) + "?\n\nThe version you have now becomes the new .bak.<epoch>, so this can be undone again.",
+                        + R.agoText(bakRow.modelData.epoch) + "?\n\nThe version you have now becomes the new .bak.<epoch>, so this can be undone again.",
                       "Undo")
                   }
                 }
@@ -1574,964 +1477,4 @@ Panel {
 
   // ══════════════════════════ reusable pieces ══════════════════════════════
 
-  component FactRow: Item {
-    id: fact
-    property string label: ""
-    property string value: ""
-    width: parent ? parent.width : 0
-    implicitHeight: Style.space(18)
-    Row {
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      spacing: Style.space(10)
-      Text {
-        width: Style.space(96)
-        text: fact.label
-        color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
-      }
-      Text {
-        width: parent.width - Style.space(106)
-        text: fact.value
-        color: root.fg; font.family: root.ff; font.pixelSize: Style.font.caption
-        elide: Text.ElideRight
-      }
-    }
-  }
-
-  component StatCard: BorderSurface {
-    id: statCard
-    property string label: ""
-    property string value: ""
-    property bool highlight: false
-    // Which colour the highlight is. "to restore" is not the same kind of
-    // attention as "unsaved" — one asks you to press Save and the other asks
-    // you not to — so it borrows the amber the bar icon and the row badge
-    // already use for it rather than sharing the accent.
-    property color highlightColor: Color.accent
-    // Explicit width: a Row gives its children no width, and a BorderSurface
-    // with no width renders at zero — the cards were simply invisible.
-    // The count is a property because the row grows a fifth card on the days
-    // there is something to restore, and a hardcoded /4 left it overflowing.
-    property int columns: 4
-    width: (parent.width - Style.space(8 * (statCard.columns - 1))) / statCard.columns
-    implicitHeight: Style.space(46)
-    radius: Style.cornerRadius
-    color: Style.controlFill(false, false, root.fg, Color.accent)
-    borderSpec: Border.controlSpec(statCard.highlight ? "focus" : "normal", root.fg, statCard.highlightColor)
-    Column {
-      anchors.centerIn: parent
-      spacing: 0
-      Text {
-        anchors.horizontalCenter: parent.horizontalCenter
-        text: statCard.value
-        color: statCard.highlight ? statCard.highlightColor : root.fg
-        font.family: root.ff; font.pixelSize: Style.font.title; font.bold: true
-      }
-      Text {
-        anchors.horizontalCenter: parent.horizontalCenter
-        text: statCard.label
-        color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
-      }
-    }
-  }
-
-  // An accordion header. Fixed height on purpose: it holds a Row anchored to
-  // its vertical centre, and deriving the height from that Row at the same time
-  // is a parent-height <-> child-position feedback loop (Qt logs "polish()
-  // loop" and the row collapses to nothing).
-  component CardHeader: Item {
-    id: ch
-    property string icon: ""
-    property string title: ""
-    property string subtitle: ""
-    property string statusText: ""
-    property bool statusHighlight: false
-    property string countText: ""
-    property bool expanded: false
-    signal toggled()
-
-    implicitHeight: Style.space(46)
-
-    MouseArea {
-      id: hitbox
-      anchors.fill: parent
-      hoverEnabled: true
-      onClicked: ch.toggled()
-    }
-
-    Row {
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.spacing.rowPaddingX
-      anchors.rightMargin: Style.spacing.rowPaddingX
-      spacing: Style.space(10)
-
-      Text {
-        anchors.verticalCenter: parent.verticalCenter
-        width: Style.space(14)
-        text: ch.expanded ? root.icDown : root.icRight
-        color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
-      }
-      Text {
-        anchors.verticalCenter: parent.verticalCenter
-        width: Style.space(20)
-        text: ch.icon
-        color: hitbox.containsMouse || ch.expanded ? Color.accent : root.fg
-        font.family: root.ff; font.pixelSize: Style.font.iconLarge
-      }
-      Column {
-        anchors.verticalCenter: parent.verticalCenter
-        width: parent.width - Style.space(34) - statusCol.width - parent.spacing * 3
-        spacing: Style.spacing.xs
-        Text {
-          width: parent.width
-          text: ch.title
-          color: root.fg; font.family: root.ff; font.pixelSize: Style.font.subtitle; font.bold: true
-          elide: Text.ElideRight
-        }
-        Text {
-          width: parent.width
-          text: ch.subtitle
-          color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
-          elide: Text.ElideRight
-        }
-      }
-      Column {
-        id: statusCol
-        anchors.verticalCenter: parent.verticalCenter
-        width: Style.space(84)
-        spacing: Style.spacing.xs
-        Text {
-          width: parent.width
-          horizontalAlignment: Text.AlignRight
-          text: ch.countText
-          color: root.fg; font.family: root.ff; font.pixelSize: Style.font.subtitle
-        }
-        Text {
-          width: parent.width
-          horizontalAlignment: Text.AlignRight
-          text: ch.statusText
-          color: ch.statusHighlight ? Color.accent : root.dim
-          font.family: root.ff; font.pixelSize: Style.font.caption
-        }
-      }
-    }
-  }
-
-  component CategoryCard: BorderSurface {
-    id: cc
-    property var card: ({})
-    readonly property bool expanded: root.isOpen(cc.card.id)
-
-    // Height derives from the column, so the column is anchored to the TOP and
-    // never centred — centring inside a parent sized by that same child is the
-    // feedback loop described on CardHeader.
-    implicitHeight: ccCol.implicitHeight
-    radius: Style.cornerRadius
-    color: cc.card.changed > 0 ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.07)
-                               : Style.controlFill(false, false, root.fg, Color.accent)
-    borderSpec: Border.controlSpec(cc.expanded ? "focus" : "normal", root.fg, Color.accent)
-
-    Column {
-      id: ccCol
-      anchors.top: parent.top
-      anchors.left: parent.left
-      anchors.right: parent.right
-      spacing: 0
-
-      CardHeader {
-        width: parent.width
-        icon: cc.card.icon
-        title: cc.card.label
-        subtitle: cc.card.description
-        countText: String(cc.card.count)
-        statusText: cc.card.incoming > 0 ? cc.card.incoming + " to restore"
-                  : cc.card.changed > 0 ? cc.card.changed + " changed"
-                  : cc.card.off > 0 ? cc.card.off + " off" : "in sync"
-        statusHighlight: cc.card.changed > 0 || cc.card.incoming > 0
-        expanded: cc.expanded
-        onToggled: root.toggleCard(cc.card.id)
-      }
-
-      Column {
-        width: parent.width
-        visible: cc.expanded
-        spacing: Style.space(2)
-
-        PanelSeparator { width: parent.width - Style.spacing.rowPaddingX * 2; x: Style.spacing.rowPaddingX }
-
-        // Shortcuts is the one area where the files are not the point: what you
-        // want to see is the keyboard. The file row is still there below.
-        Column {
-          width: parent.width
-          visible: cc.card.id === "shortcuts"
-          spacing: Style.space(2)
-          ShortcutsView { width: parent.width }
-        }
-
-        Repeater {
-          model: cc.expanded ? cc.card.rows : []
-          delegate: FileRow {
-            required property var modelData
-            config: modelData
-            width: ccCol.width
-          }
-        }
-
-        // The selling point, said out loud where it matters: not "we copied
-        // your files back" but "here is the Omarchy command that puts this
-        // back properly".
-        Item {
-          width: parent.width
-          implicitHeight: Style.space(28)
-          Row {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.leftMargin: Style.spacing.rowPaddingX
-            anchors.rightMargin: Style.spacing.rowPaddingX
-            spacing: Style.space(6)
-            Text {
-              anchors.verticalCenter: parent.verticalCenter
-              text: root.icInfo
-              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
-            }
-            Text {
-              anchors.verticalCenter: parent.verticalCenter
-              width: parent.width - Style.space(20)
-              text: cc.card.method
-              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
-              elide: Text.ElideRight
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // ── "what else could I be backing up?" ────────────────────────────────────
-  // Auto-discovery is deliberately NOT how the manifest works: the guarantee
-  // that only what a human chose gets tracked is the point of the whole tool.
-  // So this proposes and the user disposes. Every row states why it is here,
-  // and nothing is added until a button is pressed.
-  component SuggestCard: BorderSurface {
-    id: sc
-    readonly property bool expanded: root.isOpen("__suggest")
-    readonly property var items: root.suggestions || []
-
-    visible: sc.items.length > 0
-    implicitHeight: scCol.implicitHeight
-    radius: Style.cornerRadius
-    color: Style.controlFill(false, false, root.fg, Color.accent)
-    borderSpec: Border.controlSpec(sc.expanded ? "focus" : "normal", root.fg, Color.accent)
-
-    Column {
-      id: scCol
-      anchors.top: parent.top
-      anchors.left: parent.left
-      anchors.right: parent.right
-      spacing: 0
-
-      CardHeader {
-        width: parent.width
-        icon: root.icPlus
-        title: "Add more files"
-        // "(a)" is the key that jumps here, and this is the one place a person
-        // reading the list would look for it. It goes last, so it is the first
-        // thing an elided subtitle loses: 58 characters were cut on a capture,
-        // and test-usability.sh holds every literal subtitle to 57.
-        subtitle: "Config on this machine not backed up yet  (a)"
-        countText: String(sc.items.length)
-        statusText: "not tracked"
-        statusHighlight: false
-        expanded: sc.expanded
-        onToggled: root.toggleCard("__suggest")
-      }
-
-      Column {
-        width: parent.width
-        visible: sc.expanded
-        spacing: Style.space(2)
-
-        PanelSeparator { width: parent.width - Style.spacing.rowPaddingX * 2; x: Style.spacing.rowPaddingX }
-
-        Repeater {
-          model: sc.expanded ? sc.items : []
-          delegate: SuggestRow {
-            required property var modelData
-            item: modelData
-            width: scCol.width
-          }
-        }
-      }
-    }
-  }
-
-  component SuggestRow: Item {
-    id: srow
-    property var item: ({})
-    readonly property bool isSecret: srow.item.kind === "secret"
-
-    // Fixed height, like every other row here: a row whose height comes from
-    // its own centred content is the parent-height/child-position loop.
-    implicitHeight: Style.space(50)
-
-    Row {
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.spacing.rowPaddingX
-      anchors.rightMargin: Style.spacing.rowPaddingX
-      spacing: Style.space(8)
-
-      Column {
-        width: parent.width - trackBtn.width - parent.spacing
-        anchors.verticalCenter: parent.verticalCenter
-        spacing: Style.spacing.xs
-        Text {
-          width: parent.width
-          text: srow.item.pretty || ""
-          color: root.fg
-          font.family: root.ff; font.pixelSize: Style.font.subtitle
-          elide: Text.ElideMiddle
-        }
-        Text {
-          width: parent.width
-          text: srow.item.reason || ""
-          // A file that holds a credential is not a normal suggestion: tracked
-          // as ordinary config it would sit world-readable in a git checkout.
-          color: srow.isSecret ? Color.urgent : root.dim
-          font.family: root.ff; font.pixelSize: Style.font.caption
-          elide: Text.ElideRight
-        }
-      }
-
-      Button {
-        id: trackBtn
-        anchors.verticalCenter: parent.verticalCenter
-        width: Style.space(96)
-        enabled: !root.busy
-        bordered: true
-        text: srow.isSecret ? "Track (600)" : "Track"
-        iconText: root.icPlus
-        foreground: root.fg
-        fontFamily: root.ff
-        tooltipText: srow.isSecret
-                     ? "Add it to your list as a secret: stored at mode 600, and its contents are never rendered"
-                     : "Add it to your list. It is saved with your next Save to GitHub."
-        onClicked: root.doTrack(srow.item.path, srow.item.kind)
-      }
-    }
-  }
-
-  component ShortcutsView: Column {
-    id: sv
-    spacing: Style.space(2)
-
-    Item {
-      width: parent.width
-      implicitHeight: Style.space(26)
-      Row {
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.verticalCenter: parent.verticalCenter
-        anchors.leftMargin: Style.spacing.rowPaddingX
-        anchors.rightMargin: Style.spacing.rowPaddingX
-        spacing: Style.space(8)
-        Text {
-          anchors.verticalCenter: parent.verticalCenter
-          width: parent.width - allBtn.width - Style.space(8)
-          text: root.shortcutsLoaded
-                ? (root.shortcuts.own_count + " of your own · " + root.shortcuts.active_count + " bound in total")
-                : "reading your keybindings…"
-          color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
-          elide: Text.ElideRight
-        }
-        Button {
-          id: allBtn
-          anchors.verticalCenter: parent.verticalCenter
-          text: root.showAllShortcuts ? "Show mine" : "Show all"
-          bordered: false; foreground: root.dim; fontFamily: root.ff
-          tooltipText: "Omarchy's defaults are not backed up — they come with the distro. Only your overrides are."
-          onClicked: root.showAllShortcuts = !root.showAllShortcuts
-        }
-      }
-    }
-
-    Text {
-      width: parent.width - Style.spacing.rowPaddingX * 2
-      x: Style.spacing.rowPaddingX
-      visible: root.shortcutsLoaded && !root.showAllShortcuts && root.shortcuts.own_count === 0
-      text: "You have not overridden any binding — this machine runs Omarchy's defaults. Edit hypr/bindings.lua below to add one."
-      color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
-    }
-
-    Repeater {
-      model: root.shortcutsLoaded
-             ? (root.showAllShortcuts ? root.shortcuts.active : root.shortcuts.own)
-             : []
-      delegate: Item {
-        id: keyRow
-        required property var modelData
-        width: sv.width
-        implicitHeight: Style.space(20)
-        Row {
-          anchors.left: parent.left
-          anchors.right: parent.right
-          anchors.verticalCenter: parent.verticalCenter
-          anchors.leftMargin: Style.spacing.rowPaddingX + Style.space(6)
-          anchors.rightMargin: Style.spacing.rowPaddingX
-          spacing: Style.space(10)
-          Text {
-            width: Style.space(150)
-            text: keyRow.modelData.key
-            color: root.fg; font.family: root.mono; font.pixelSize: Style.font.caption
-            elide: Text.ElideRight
-          }
-          Text {
-            width: parent.width - Style.space(160)
-            text: keyRow.modelData.kind === "unbind"
-                  ? "(unbound)"
-                  : (keyRow.modelData.description && keyRow.modelData.description !== ""
-                     ? keyRow.modelData.description
-                     : (keyRow.modelData.command || ""))
-            color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
-            elide: Text.ElideRight
-          }
-        }
-      }
-    }
-
-    PanelSeparator { width: parent.width - Style.spacing.rowPaddingX * 2; x: Style.spacing.rowPaddingX }
-  }
-
-  component SettingCard: BorderSurface {
-    id: sc
-    property var group: ({})
-    readonly property bool expanded: root.isOpen(sc.group.id)
-
-    implicitHeight: scCol.implicitHeight
-    radius: Style.cornerRadius
-    color: Style.controlFill(false, false, root.fg, Color.accent)
-    borderSpec: Border.controlSpec(sc.expanded ? "focus" : "normal", root.fg, Color.accent)
-
-    Column {
-      id: scCol
-      anchors.top: parent.top
-      anchors.left: parent.left
-      anchors.right: parent.right
-      spacing: 0
-
-      CardHeader {
-        width: parent.width
-        icon: sc.group.icon
-        title: sc.group.name
-        subtitle: sc.group.description
-        countText: String((sc.group.items || []).length)
-        // Not "changed": one tab to the left that word counts files waiting to
-        // be saved, and here it counts values that differ from what Omarchy
-        // ships — two different questions under one word, two tabs apart.
-        // "customised" is the answer to this one, and it pairs with the text
-        // it alternates with.
-        statusText: sc.group.changed > 0 ? sc.group.changed + " customised" : "as Omarchy ships"
-        statusHighlight: sc.group.changed > 0
-        expanded: sc.expanded
-        onToggled: root.toggleCard(sc.group.id)
-      }
-
-      Column {
-        width: parent.width
-        visible: sc.expanded
-        spacing: Style.space(2)
-        PanelSeparator { width: parent.width - Style.spacing.rowPaddingX * 2; x: Style.spacing.rowPaddingX }
-        Repeater {
-          model: sc.expanded ? (sc.group.items || []) : []
-          delegate: SettingRow {
-            required property var modelData
-            setting: modelData
-            width: scCol.width
-          }
-        }
-        Item { width: 1; height: Style.space(4) }
-      }
-    }
-  }
-
-  component RestoreCard: BorderSurface {
-    id: card
-    property string title: ""
-    property string body: ""
-    property string actionText: ""
-    property bool actionAccent: false
-    signal preview()
-    signal act()
-
-    implicitHeight: cardCol.implicitHeight + Style.spacing.controlPaddingY * 2
-    radius: Style.cornerRadius
-    color: Style.controlFill(false, false, root.fg, Color.accent)
-    borderSpec: Border.controlSpec("normal", root.fg, Color.accent)
-
-    Column {
-      id: cardCol
-      // Anchored to the top, never verticalCenter: this card's height is
-      // derived from this column, and centring the column inside a parent whose
-      // height depends on it is a parent-height <-> child-position feedback
-      // loop (Qt logs "polish() loop" and the card collapses to nothing).
-      anchors.top: parent.top
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.topMargin: Style.spacing.controlPaddingY
-      anchors.leftMargin: Style.spacing.rowPaddingX
-      anchors.rightMargin: Style.spacing.rowPaddingX
-      spacing: Style.space(6)
-
-      Text {
-        width: parent.width
-        text: card.title
-        color: root.fg; font.family: root.ff; font.pixelSize: Style.font.subtitle; font.bold: true
-      }
-      Text {
-        width: parent.width
-        text: card.body
-        color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
-      }
-      Row {
-        spacing: Style.space(8)
-        Button {
-          text: "Preview"; iconText: root.icDiff; bordered: false
-          foreground: root.fg; fontFamily: root.ff
-          enabled: !root.busy
-          tooltipText: "Shows what would change and writes nothing"
-          onClicked: card.preview()
-        }
-        Button {
-          text: card.actionText; iconText: root.icDefault; bordered: true
-          foreground: root.fg; accent: card.actionAccent ? Color.accent : Color.urgent; fontFamily: root.ff
-          enabled: !root.busy
-          onClicked: card.act()
-        }
-      }
-    }
-  }
-
-  component SettingRow: Item {
-    id: srow
-    property var setting: ({})
-    readonly property bool isNumber: setting.type === "number" || setting.type === "toml-int" || setting.type === "lua-int"
-    readonly property bool isFloat:  setting.type === "toml-float"
-    readonly property bool isBool:   setting.type === "bool" || setting.type === "lua-bool"
-    readonly property bool isChoice: setting.type === "enum" || setting.type === "lua-enum"
-                                  || setting.type === "line-enum" || setting.type === "theme"
-                                  || setting.type === "ini-enum"
-    readonly property bool isLongList: srow.isChoice && (setting.options || []).length > 8
-    readonly property bool usable: setting.available === true && !root.busy
-
-    // Whether the exact value is worth repeating under the label. It is there
-    // because the stepper rounds — 150 seconds is edited as 3 minutes, and the
-    // row must never leave you guessing which number is real — but on the rows
-    // where the control already shows the value exactly, repeating it cost the
-    // hint its last words: seven of eight rows ended in "…". So it is printed
-    // only when the control cannot say it: a rounded number, a value with a
-    // name of its own ("never" for 0), or a choice, whose dropdown elides.
-    readonly property string controlText: {
-      var du = String(srow.setting.display_unit || "")
-      return String(srow.setting.display_value) + (du !== "" ? " " + du : "")
-    }
-    readonly property bool showValue: srow.isChoice
-                                      // A dropdown 160 wide shows about
-                                      // seventeen characters; past that it
-                                      // elides and the row has to say the value
-                                      // in full underneath. "top" does not.
-                                      ? String(srow.setting.value_text || "").length > 17
-                                    : srow.isBool ? false
-                                    : String(srow.setting.value_text || "") !== srow.controlText
-
-    // What goes under the label, composed once so the height can be decided
-    // from it. See showValue for when the value is part of it.
-    readonly property string subtitleText: srow.setting.available !== true
-        ? "not present in this machine's config"
-        : (srow.showValue ? String(srow.setting.value_text) : "")
-          + (srow.setting.implicit === true
-             ? (srow.showValue ? "  (inherited)" : "inherited") : "")
-          + ((srow.showValue || srow.setting.implicit === true) ? "  ·  " : "")
-          + String(srow.setting.hint || "")
-
-    // Two lines when one cannot hold it. Some hints carry a consequence worth
-    // reading — "setting it stops the bar scaling with the font" — and cutting
-    // them to fit would have deleted the reason the control exists. A character
-    // count, NOT the text's own implicitHeight: this row's children are
-    // verticalCenter-anchored to it, so a height derived from them is the
-    // parent-height <-> child-position loop that renders the row at nothing.
-    // 44 is what fits on one line at the panel's width, measured on a capture.
-    readonly property string noticeText: String(srow.setting.notice || "")
-    readonly property int subtitleLines: srow.subtitleText.length > 44 ? 2 : 1
-    // The notice is counted too, and it was not. A row carrying one rendered
-    // four lines of text in the two-line height and the notice was cut in half
-    // — "Overridden: Omarchy Sleepwalker is blocki…", losing the clause that
-    // said what the consequence was. Same character count, same reason: this
-    // row's children are verticalCenter-anchored to it, so a height derived
-    // from their own implicitHeight is the polish() loop that renders nothing.
-    readonly property int noticeLines: srow.noticeText === "" ? 0
-                                     : (srow.noticeText.length > 44 ? 2 : 1)
-    implicitHeight: Style.space(34 + 16 * srow.subtitleLines + 16 * srow.noticeLines)
-    opacity: srow.setting.available === true ? 1.0 : 0.45
-
-    Row {
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.spacing.rowPaddingX
-      anchors.rightMargin: Style.spacing.rowPaddingX
-      spacing: Style.space(8)
-
-      Column {
-        width: parent.width - controlSlot.width - revertRow.width - parent.spacing * 2
-        anchors.verticalCenter: parent.verticalCenter
-        spacing: Style.spacing.xs
-        Text {
-          width: parent.width
-          text: srow.setting.label
-          color: root.fg; font.family: root.ff; font.pixelSize: Style.font.subtitle
-          elide: Text.ElideRight
-        }
-        Text {
-          width: parent.width
-          text: srow.subtitleText
-          color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
-          maximumLineCount: 2
-          elide: Text.ElideRight
-        }
-        // Only ever present when the value genuinely cannot do what it says —
-        // see the single rule in build_settings_json. Not a warning strip that
-        // is always on; a row that says nothing is a row that is fine.
-        Text {
-          width: parent.width
-          visible: srow.noticeText !== ""
-          text: srow.noticeText
-          color: Color.accent; font.family: root.ff; font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
-          maximumLineCount: 2
-          elide: Text.ElideRight
-        }
-      }
-
-      // One control per type. Every control is instantiated on every row, so
-      // each binding has to stay type-safe even on rows it is not used for —
-      // an enum's string value assigned to NumberField.value is a runtime error.
-      Item {
-        id: controlSlot
-        anchors.verticalCenter: parent.verticalCenter
-        width: Style.space(160)
-        height: Style.space(32)
-
-        // Numbers are edited in the unit a person uses: idle timers in minutes,
-        // never in seconds. The registry's `scale` does the conversion, and the
-        // CLI still speaks the stored unit.
-        Row {
-          visible: srow.isNumber
-          anchors.right: parent.right
-          anchors.verticalCenter: parent.verticalCenter
-          spacing: Style.space(5)
-          NumberField {
-            anchors.verticalCenter: parent.verticalCenter
-            enabled: srow.usable
-            foreground: root.fg
-            fontFamily: root.ff
-            fieldWidth: Style.space(96)
-            from: srow.isNumber && typeof srow.setting.display_min === "number" ? srow.setting.display_min : 0
-            to: srow.isNumber && typeof srow.setting.display_max === "number" ? srow.setting.display_max : 999999
-            stepSize: srow.isNumber && typeof srow.setting.display_step === "number" ? srow.setting.display_step : 1
-            value: srow.isNumber && typeof srow.setting.display_value === "number" ? srow.setting.display_value : 0
-            onModified: function(v) {
-              if (!srow.usable) return
-              var scale = typeof srow.setting.scale === "number" && srow.setting.scale > 0 ? srow.setting.scale : 1
-              root.queueSetting(srow.setting.id, Math.round(v * scale))
-            }
-          }
-          Text {
-            anchors.verticalCenter: parent.verticalCenter
-            width: Style.space(26)
-            text: srow.setting.display_unit || ""
-            color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
-          }
-        }
-
-        // Floats get a slider: a stepper over 0.5–2.0 in 0.05 steps would be
-        // thirty clicks from one end to the other.
-        Row {
-          visible: srow.isFloat
-          anchors.right: parent.right
-          anchors.verticalCenter: parent.verticalCenter
-          spacing: Style.space(6)
-          Text {
-            anchors.verticalCenter: parent.verticalCenter
-            width: Style.space(30)
-            text: srow.isFloat && typeof srow.setting.value === "number" ? srow.setting.value.toFixed(2) : "—"
-            color: root.fg; font.family: root.mono; font.pixelSize: Style.font.caption
-          }
-          PanelSlider {
-            anchors.verticalCenter: parent.verticalCenter
-            width: Style.space(112)
-            bar: root.bar
-            minimum: srow.isFloat && typeof srow.setting.min === "number" ? srow.setting.min : 0
-            maximum: srow.isFloat && typeof srow.setting.max === "number" ? srow.setting.max : 1
-            step: 0.05
-            value: srow.isFloat && typeof srow.setting.value === "number" ? srow.setting.value : 0
-            onReleased: function(v) { if (srow.usable) root.queueSetting(srow.setting.id, Math.round(v * 100) / 100) }
-          }
-        }
-
-        ToggleSwitch {
-          visible: srow.isBool
-          enabled: srow.usable
-          anchors.right: parent.right
-          anchors.verticalCenter: parent.verticalCenter
-          checked: srow.setting.value === true || srow.setting.value === "true"
-          foreground: root.fg
-          accent: Color.accent
-          onToggled: if (srow.usable) root.doSetSetting(srow.setting.id,
-                        (srow.setting.value === true || srow.setting.value === "true") ? "false" : "true")
-        }
-
-        Dropdown {
-          visible: srow.isChoice && !srow.isLongList
-          enabled: srow.usable
-          anchors.right: parent.right
-          anchors.verticalCenter: parent.verticalCenter
-          width: parent.width
-          showLabel: false
-          value: srow.isChoice && typeof srow.setting.value === "string" ? srow.setting.value : ""
-          options: srow.isChoice ? (srow.setting.options || []) : []
-          fontFamily: root.ff
-          onChanged: function(v) { if (srow.usable && v !== srow.setting.value) root.doSetSetting(srow.setting.id, v) }
-        }
-
-        // ~30 themes; a plain dropdown makes you hunt for the one you want.
-        SearchableDropdown {
-          visible: srow.isChoice && srow.isLongList
-          enabled: srow.usable
-          anchors.right: parent.right
-          anchors.verticalCenter: parent.verticalCenter
-          width: parent.width
-          showLabel: false
-          placeholderText: "Search…"
-          value: srow.isChoice && typeof srow.setting.value === "string" ? srow.setting.value : ""
-          options: srow.isChoice ? (srow.setting.options || []) : []
-          fontFamily: root.ff
-          onChanged: function(v) { if (srow.usable && v !== srow.setting.value) root.doSetSetting(srow.setting.id, v) }
-        }
-      }
-
-      // Two ways back for one value, without touching the rest of the file it
-      // lives in. Shown only when they would actually change something.
-      Row {
-        id: revertRow
-        anchors.verticalCenter: parent.verticalCenter
-        spacing: 0
-        Button {
-          iconText: root.icDefault; bordered: false; foreground: root.dim; fontFamily: root.ff
-          enabled: srow.setting.can_revert_default === true && !root.busy
-          opacity: srow.setting.can_revert_default === true ? 1.0 : 0.25
-          tooltipText: srow.setting.can_revert_default === true
-                       ? "Back to Omarchy's default: " + srow.setting.default_text
-                       : "Already the Omarchy default"
-          onClicked: root.doRevert(srow.setting.id, "default")
-        }
-        Button {
-          iconText: root.icFromRepo; bordered: false; foreground: root.dim; fontFamily: root.ff
-          enabled: srow.setting.can_revert_repo === true && !root.busy
-          opacity: srow.setting.can_revert_repo === true ? 1.0 : 0.25
-          tooltipText: srow.setting.can_revert_repo === true
-                       ? "Back to what your repo has: " + srow.setting.repo_text
-                       : "Already matches your repo"
-          onClicked: root.doRevert(srow.setting.id, "repo")
-        }
-      }
-    }
-  }
-
-  component FileRow: Item {
-    id: frow
-    property var config: ({})
-    readonly property string syncState: frow.config.sync_state || "saved"
-    readonly property bool isDefault: frow.syncState === "default"
-    // "Needs the Save button" — unsaved, or committed here but never pushed.
-    // Deliberately NOT incoming: that row's difference belongs to another
-    // machine, and the button it wants is the one next to this one.
-    readonly property bool isModified: frow.syncState === "unsaved" || frow.syncState === "unpushed"
-    readonly property bool isIncoming: frow.syncState === "incoming"
-    // Anything with a button worth pressing reads bold, whichever button it is.
-    readonly property bool needsAction: frow.isModified || frow.isIncoming
-    readonly property string scope: frow.config.scope || "shared"
-    readonly property bool isOff: frow.config.synced === false
-    readonly property bool missing: frow.config.exists === false
-    readonly property bool isSecret: frow.config.secret === true
-    // "saved" and "default" are the states you do not have to act on, and the
-    // one-line legend above the list is enough for them.
-    readonly property bool needsWords: frow.syncState === "unsaved"
-                                    || frow.syncState === "incoming"
-                                    || frow.syncState === "unpushed"
-                                    || frow.syncState === "off"
-                                    || frow.syncState === "missing"
-
-    implicitHeight: Style.space(50)
-
-    Row {
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.spacing.rowPaddingX
-      anchors.rightMargin: Style.spacing.rowPaddingX
-      spacing: Style.space(8)
-
-      Text {
-        anchors.verticalCenter: parent.verticalCenter
-        width: Style.space(14)
-        text: root.stateGlyph(frow.syncState)
-        color: root.stateColor(frow.syncState)
-        font.family: root.ff; font.pixelSize: Style.font.body
-        horizontalAlignment: Text.AlignHCenter
-      }
-
-      Column {
-        width: parent.width - Style.space(14) - syncSwitch.width - actions.width - parent.spacing * 3
-        anchors.verticalCenter: parent.verticalCenter
-        spacing: Style.spacing.xs
-        Text {
-          width: parent.width
-          text: frow.config.label
-          color: frow.missing || frow.isOff ? root.dim : root.fg
-          font.family: root.ff; font.pixelSize: Style.font.subtitle; font.bold: frow.needsAction
-          elide: Text.ElideMiddle
-        }
-        // Two texts, not one string. Appended to the end of the path the state
-        // words were the first thing elided — on exactly the rows whose whole
-        // point is that something needs doing, they were the half that got cut.
-        // (The same bug was already fixed for a directory's file count by
-        // moving it in front; this is that fix applied to the other half.)
-        // So the words come first and are never elided; the path takes whatever
-        // room is left, and it is the part that can afford to lose its head —
-        // the title right above it is the same path without ~/.config/.
-        Row {
-          width: parent.width
-          spacing: Style.space(6)
-          Text {
-            id: stateWords
-            // A row that needs attention says so in words instead of relying on
-            // the reader having learnt the badge. Only those rows: the forty
-            // that are simply saved would be forty repetitions of "saved on
-            // GitHub", which is how a legend becomes wallpaper.
-            visible: frow.needsWords
-            text: root.stateWord(frow.syncState)
-            color: root.stateColor(frow.syncState)
-            font.family: root.ff; font.pixelSize: Style.font.caption
-          }
-          Text {
-            width: parent.width - (stateWords.visible ? stateWords.width + parent.spacing : 0)
-            // Secrets describe themselves by what they ARE, never by what they
-            // contain: a kind, a mode, and for env files the names of the
-            // variables. No value ever reaches the screen.
-            // The count goes FIRST for a directory — behind the path it was the
-            // first thing elided, on the one row whose whole point is the count.
-            text: frow.config.is_dir === true
-                ? (frow.config.nfiles + " files"
-                   + (root.whereText(frow.config) !== "" ? "  ·  " + root.whereText(frow.config) : ""))
-              : frow.isSecret
-                ? (frow.config.kind + "  ·  mode " + (frow.config.mode || "?")
-                   + (frow.config.var_count > 0 ? "  ·  " + frow.config.var_count + " variables" : ""))
-                : root.whereText(frow.config)
-            color: frow.isSecret && frow.config.kind === "private key" && frow.config.mode !== "600" ? Color.urgent : root.dim
-            font.family: root.ff; font.pixelSize: Style.font.caption
-            elide: Text.ElideRight
-          }
-        }
-      }
-
-      // The per-file scope control. Some files are about the machine, not about
-      // the user — hypr/monitors.lua describes the screens physically plugged
-      // into THIS box — and copying them between a desktop and a laptop is
-      // actively wrong. Rather than the old on/off switch, which forced you to
-      // choose between "wrong on one machine" and "no backup at all", this
-      // cycles the three answers: shared, per profile, or off.
-      Button {
-        id: syncSwitch
-        anchors.verticalCenter: parent.verticalCenter
-        width: Style.space(96)
-        enabled: !root.busy
-        bordered: true
-        text: root.scopeLabel(frow.scope)
-        iconText: root.scopeIcon(frow.scope)
-        foreground: frow.scope === "off" ? root.dim
-                  : frow.scope === "profile" ? Color.accent : root.fg
-        fontFamily: root.ff
-        tooltipText: root.scopeHint(frow.scope, !frow.isSecret)
-        onClicked: root.doScope(frow.config.id, root.nextScope(frow.scope, !frow.isSecret))
-      }
-
-      Row {
-        id: actions
-        anchors.verticalCenter: parent.verticalCenter
-        spacing: 0
-        Button {
-          iconText: root.icEdit; bordered: false; foreground: root.fg; fontFamily: root.ff
-          enabled: !frow.missing
-          tooltipText: "Open in your editor"
-          onClicked: root.doEdit(frow.config.id)
-        }
-        Button {
-          iconText: root.icDiff; bordered: false; foreground: root.fg; fontFamily: root.ff
-          enabled: !frow.missing
-          tooltipText: frow.isSecret ? "Say whether it changed (contents are never shown)" : "Show what changed"
-          onClicked: root.doDiff(frow.config.id)
-        }
-        Button {
-          iconText: root.icSave; bordered: false
-          foreground: frow.isModified ? Color.accent : root.dim; fontFamily: root.ff
-          enabled: !frow.missing && frow.isModified && !root.busy
-          tooltipText: frow.isModified ? "Commit and push just this file"
-                     : frow.isIncoming ? "Your repo has a newer copy from another machine — restore it instead"
-                     : "Already saved"
-          onClicked: root.doSaveFile(frow.config.id)
-        }
-        Button {
-          iconText: root.icFromRepo; bordered: false
-          foreground: frow.isIncoming ? root.warnColor : root.dim; fontFamily: root.ff
-          enabled: !root.busy && frow.syncState !== "off"
-          tooltipText: frow.isIncoming ? "Bring down the newer copy another machine saved (keeps a .bak copy)"
-                                       : "Put back the copy saved in your repo (keeps a .bak copy)"
-          onClicked: root.ask("restore-file", frow.config.id,
-                              "Replace " + frow.config.label + " with the copy saved in your repo?\n\nYour current version is kept as .bak.<epoch>.",
-                              "Restore")
-        }
-        Button {
-          iconText: root.icDefault; bordered: false; foreground: root.dim; fontFamily: root.ff
-          // Only offered where there is a factory version to go back to.
-          enabled: !frow.missing && frow.config.has_default === true && !frow.isDefault && !root.busy
-          opacity: frow.config.has_default === true ? 1.0 : 0.25
-          tooltipText: frow.config.has_default === true
-                       ? "Put Omarchy's default back (keeps a .bak copy)"
-                       : "Omarchy ships no default for this file"
-          onClicked: root.ask("reset-file", frow.config.id,
-                              "Replace " + frow.config.label + " with Omarchy's default?\n\nYour current version is kept as .bak.<epoch>.",
-                              "Reset")
-        }
-        // Only on rows that came from the user's own list. A file the plugin
-        // ships with is switched OFF instead, which keeps both the row and the
-        // copy in the repo — untracking a shipped entry would make a file the
-        // next version tracks again vanish from the panel with no way back.
-        Button {
-          visible: frow.config.source === "user"
-          iconText: root.icUntrack; bordered: false; foreground: root.dim; fontFamily: root.ff
-          enabled: !root.busy
-          tooltipText: "Stop tracking this — it leaves your list and the copy in the repo goes with it"
-          onClicked: root.ask("untrack", frow.config.id,
-                              "Stop tracking " + frow.config.label + "?\n\nThe file on this machine is untouched. The copy in your repo is removed, and git keeps its history.",
-                              "Untrack")
-        }
-      }
-    }
-  }
 }

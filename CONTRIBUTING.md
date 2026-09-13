@@ -22,6 +22,7 @@ and a half minutes. Each suite prints how many checks it ran, and the last line 
 | `tests/test-cli.sh` | The commands, their options, purge, backups, locks, `--help` |
 | `tests/test-journey.sh` | Two machines and one repo, from the first save to a pull |
 | `tests/test-usability.sh` | What the panel shows: its commands, keys, labels and words |
+| `tests/qml/tst_replicant.qml` | The panel's pure logic in `replicant.js`, with `qmltestrunner` (Qt 6) |
 
 While you work, run the suite that covers the change. Keep the full run for the commit.
 
@@ -90,6 +91,10 @@ bwrap --dev-bind / / --tmpfs /etc/systemd/system \
 
 - Verify every visual change to `Panel.qml` or `BarWidget.qml` with a real screenshot (`grim`) after
   you reload the plugin (hard rule 4). A process that does not crash is not enough.
+- A part in `components/` reaches the panel only through its `panel` property. Where `Panel.qml`
+  creates one, pass `panel: root`. Inside another part, pass `panel: <its id>.panel`, because a bare
+  `panel: panel` binds the property to itself.
+- Put logic that needs no QML in `replicant.js`, and test it in `tests/qml`.
 - Before `omarchy restart shell`, clear the compiled QML: `rm -rf ~/.cache/quickshell/qmlcache`.
   Quickshell does not reliably invalidate it, and the shell then runs the old code with no error.
 - To prove which code runs, add a temporary `Component.onCompleted: console.log("...")` and look for

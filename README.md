@@ -140,6 +140,7 @@ Panel, **Restore**, *Preview* shows what would change, and touches nothing.
 - **Scopes and profiles**: the scope button on every row of **Configs**, or `scope` and `profile`.
 - **Your own files**: **Add more files** in the panel, or `track` and `untrack`.
 - **A key for the panel**: bind `omarchy shell replicant toggle` in `~/.config/hypr/bindings.lua`.
+  `omarchy shell replicant tab settings` opens the panel on one tab.
 - **The command line**: the panel does not need it. To put `omarchy-replicant` on your `PATH`, run
   `$P/bin/omarchy-replicant link`. `unlink` takes it off again.
 

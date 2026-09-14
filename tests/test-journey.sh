@@ -341,7 +341,7 @@ check_true "the other machine's version is still in the repo" \
 check "…and the desktop's own file was saved as normal" "saved" \
   "$(state_of desktop hypr/input.lua)"
 
-# The escape hatch, which CLAUDE.md and getting-started.md both promise and
+# The escape hatch, which docs/SPEC.md and getting-started.md both promise and
 # nothing tested: `save-file <id>` names one file, so it overrules the hold-back
 # and saves THIS machine's version. If it did not, the documentation would be
 # telling people the only way out of an incoming file is to accept it.

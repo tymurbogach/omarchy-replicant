@@ -1,8 +1,7 @@
 # How Replicant works
 
 This document describes the data model of the plugin and the rules that the code follows.
-`CONTRIBUTING.md` describes how to change the code safely. `CLAUDE.md` holds the rules for an AI
-assistant, and it imports both files.
+`CONTRIBUTING.md` describes how to change the code safely, and it holds the hard rules.
 
 ## The code
 
@@ -224,7 +223,7 @@ commits arrive knows which one is right, so that moment writes it down.
 - The hook is rewritten whenever it differs from the plugin's version. It fails closed: a missing
   scanner blocks the commit.
 - A secret is never rendered. `core_diff` says only whether a secret differs, and the JSON carries a
-  kind, a mode and variable names, never values. See hard rule 11 in `CLAUDE.md`.
+  kind, a mode and variable names, never values. See hard rule 11 in `CONTRIBUTING.md`.
 - A tracked secret that only root can read does not end the backup. The backup names it with the
   `sudo install` command that copies it.
 - `suggest_kind` marks a file that holds a credential (`gh/hosts.yml`, `.netrc`, `*token*`), so it is

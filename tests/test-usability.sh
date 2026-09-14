@@ -61,7 +61,7 @@ section "every word on screen is English"
 # The Language rule, which has no exception for a label: a string in a second
 # language is the one a later grep misses.
 foreign=$(grep -rnP '[áéíóúñÁÉÍÓÚÑ¿¡]' "${QML[@]}" "$ROOT"/replicant.js "$ROOT"/bin "$ROOT"/README.md \
-            "$ROOT"/CLAUDE.md "$ROOT"/docs 2>/dev/null || true)
+            "$ROOT"/CONTRIBUTING.md "$ROOT"/docs 2>/dev/null || true)
 check "lines with letters English does not use" "" "$foreign"
 
 section "one word for one state"

@@ -105,7 +105,7 @@ qml_problem=0
 # 1. `state` is a built-in property of every Item; a bare `state.` inside a
 #    nested item resolves to that empty string, not to our data.
 if grep -nE '(^|[^.a-zA-Z])state\.' "${QML_FILES[@]}" | grep -v '^\S*:[0-9]*:\s*//'; then
-  printf '  \033[31m✗\033[0m an unqualified `state.` — see CLAUDE.md\n'; qml_problem=1
+  printf '  \033[31m✗\033[0m an unqualified `state.` — see CONTRIBUTING.md\n'; qml_problem=1
 fi
 # 2. Style.spacing.rowPaddingY does not exist; it evaluates to NaN and the
 #    delegate silently renders at zero height.
@@ -132,7 +132,7 @@ done
 #    a different symbol (a plus-minus sign shipped as "reset" once). Hold them as
 #    code points and let mdi() build the string.
 if grep -nP '[\x{f0000}-\x{ffffd}]' "${QML_FILES[@]}"; then
-  printf '  \033[31m✗\033[0m a pasted Nerd Font glyph in QML — use R.mdi(0xF….) — see CLAUDE.md\n'; qml_problem=1
+  printf '  \033[31m✗\033[0m a pasted Nerd Font glyph in QML — use R.mdi(0xF….) — see CONTRIBUTING.md\n'; qml_problem=1
 fi
 # 7. A sync_state the QML tests for that the core never emits. Renaming a state
 #    in replicant-core.sh left `sync_state === "modified"` in Panel.qml, which
@@ -152,7 +152,7 @@ if (( qml_problem == 0 )); then printf '  \033[32m✓\033[0m none present\n'; el
 # The docs are in Simplified Technical English, which uses no dashes. A new em
 # dash fails here, so that the rewrite does not come undone one line at a time.
 banner "no em dashes in the docs"
-if grep -n '—' "$ROOT/README.md" "$ROOT/CONTRIBUTING.md" "$ROOT/CLAUDE.md" "$ROOT"/docs/*.md; then
+if grep -n '—' "$ROOT/README.md" "$ROOT/CONTRIBUTING.md" "$ROOT"/docs/*.md; then
   printf '  \033[31m✗\033[0m an em dash in the docs: use a period, a comma or parentheses\n'; failed=$((failed+1))
 else
   printf '  \033[32m✓\033[0m none present\n'
@@ -179,7 +179,7 @@ if bash "$ROOT/bin/scan-secrets.sh" "$ROOT/bin" "$ROOT/tests" "$ROOT/Panel.qml" 
         "$ROOT/BarWidget.qml" "$ROOT/components" "$ROOT/replicant.js" "$ROOT/docs" "$ROOT/README.md" >/dev/null 2>&1; then
   printf '  \033[32m✓\033[0m no credential-shaped strings in the source\n'
 else
-  printf '  \033[31m✗\033[0m a credential-shaped string is in the source — split it, see CLAUDE.md\n'
+  printf '  \033[31m✗\033[0m a credential-shaped string is in the source — split it, see CONTRIBUTING.md\n'
   bash "$ROOT/bin/scan-secrets.sh" "$ROOT/bin" "$ROOT/tests" "$ROOT/Panel.qml" \
        "$ROOT/BarWidget.qml" "$ROOT/components" "$ROOT/replicant.js" "$ROOT/docs" "$ROOT/README.md" 2>&1 | sed 's/^/    /'
   failed=$((failed+1))

@@ -319,13 +319,14 @@ core_status() {
     return 0
   fi
   if (( json )); then
-    local configs_json secrets_json settings_json categories_json groups_json machines_json pending_reinstalls_json
+    local configs_json secrets_json settings_json categories_json groups_json machines_json pending_reinstalls_json plugins_json
     configs_json=$(build_configs_json)
     secrets_json=$(build_secrets_json)
     settings_json=$(build_settings_json)
     categories_json=$(build_categories_json)
     groups_json=$(build_setting_groups_json)
     pending_reinstalls_json=$(build_pending_reinstalls_json)
+    plugins_json=$(build_plugins_json)
     # Every machine that has ever saved into this repo, newest first. With one
     # machine it is a footnote; with two it is the answer to "did the desktop
     # actually push?", which is the whole reason the repo exists.
@@ -371,7 +372,7 @@ core_status() {
       --argjson settings "$settings_json" --argjson categories "$categories_json" \
       --argjson setting_groups "$groups_json" --argjson machines "$machines_json" \
       --arg profile "$(current_profile)" --argjson profiles "$profiles_json" \
-      --argjson pending_reinstalls "$pending_reinstalls_json" \
+      --argjson pending_reinstalls "$pending_reinstalls_json" --argjson plugins "$plugins_json" \
       '{initialized:true, branch:$branch, remote:$remote, remote_name:$remote_name,
         repo_dir:$repo_dir, machine:$machine, plugin_version:$plugin_version, home:$home,
         profile:$profile, profiles:$profiles,
@@ -380,7 +381,7 @@ core_status() {
         unsaved:$unsaved, incoming:$incoming,
         configs:$configs, secrets:$secrets, settings:$settings,
         categories:$categories, setting_groups:$setting_groups, machines:$machines,
-        pending_reinstalls:$pending_reinstalls}'
+        pending_reinstalls:$pending_reinstalls, plugins:$plugins}'
   else
     echo "branch: $branch"
     echo "remote: ${remote:-<none>}"

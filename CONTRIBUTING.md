@@ -173,6 +173,9 @@ bwrap --dev-bind / / --tmpfs /etc/systemd/system \
 
 - Verify every visual change to `Panel.qml` or `BarWidget.qml` with a real screenshot (`grim`) after
   you reload the plugin (hard rule 4). A process that does not crash is not enough.
+- If the session is locked or the display is off, render the panel offscreen instead:
+  `tests/panel-shot.sh /tmp/p.png configs appearance`. It uses Omarchy's own components and this
+  machine's status. It shows the layout, but it does not replace the check after a reload.
 - A part in `components/` reaches the panel only through its `panel` property. Where `Panel.qml`
   creates one, pass `panel: root`. Inside another part, pass `panel: <its id>.panel`, because a bare
   `panel: panel` binds the property to itself.

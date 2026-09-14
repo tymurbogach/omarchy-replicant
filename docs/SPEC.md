@@ -23,7 +23,7 @@ This document describes the data model of the plugin and the rules that the code
 | `categories.sh` | The areas that the panel files every entry under |
 | `scopes.sh` | Profiles, and whether each file is shared, kept per profile, or off |
 | `track.sh` | Writing the user's list: `track` and `untrack` |
-| `suggest.sh` | Proposing files that nothing tracks yet |
+| `suggest.sh` | Proposing files that nothing tracks yet, and the file picker (`browse-json`) |
 | `incoming.sh` | What another machine changed, and what differs on this one |
 | `backups.sh` | The `.bak.<epoch>` safety net, `undo`, and the backups that setting edits make |
 | `tree.sh` | Writing files and directory trees, with a backup of what they replace |
@@ -34,6 +34,8 @@ This document describes the data model of the plugin and the rules that the code
 | `status.sh` | The JSON that the panel and the bar read, the diff and the log |
 | `restore.sh` | The restore plan for each area, and how each area is put back |
 | `plugins.sh` | Plugins and themes: origins, inventories, and installs on request |
+| `history.sh` | Copies that left the repo, and bringing them back from git history |
+| `update.sh` | The plugin's own updates: what its origin has, and how to install it |
 
 Rules for the code:
 
@@ -44,6 +46,11 @@ Rules for the code:
   and a plain `declare` there makes a local of that function.
 - Every variable in a function is `local`. Bash scopes dynamically, so a leaked name changes the
   caller. A test compares every global name before and after a backup.
+- `Panel.qml` holds the state, the processes and the actions. Each tab is a part in `components/`
+  (`OverviewTab`, `ConfigsTab`, `SettingsTab`, `RestoreTab`), and so is each piece of a tab.
+- A scope change in the panel shows at once (`setScope`). The panel runs the commands one at a
+  time in their own queue, and the status that follows skips the fetch. A full status that is
+  built after the queue is empty replaces what the panel assumed.
 
 ## One rule above the others
 
@@ -213,8 +220,37 @@ commits arrive knows which one is right, so that moment writes it down.
 - `set` and `revert` commit through `savegame -m`, which commits every pending file together with the
   setting. That is intended. `scope`, `track` and `untrack` commit only their own paths.
 - A lock (`flock` on `~/.local/share/omarchy-replicant/.replicant.lock`) serialises every command
-  that writes. `undo`, `backups` and `purge` take it only when they apply, because a dry run must
-  not create the lock file. `REPLICANT_LOCK_WAIT` sets the wait for the tests.
+  that writes. `undo`, `backups`, `purge` and `recover` take it only when they apply, because a
+  dry run must not create the lock file. `REPLICANT_LOCK_WAIT` sets the wait for the tests.
+- `commit_repo_shape` stages only the paths that exist on disk or in the index. `git add` stages
+  nothing when one of its paths matches nothing, so an untrack was never committed.
+
+## A deleted copy comes back from history
+
+- `forget <id>` is for a file that is gone from this machine. One of the user's entries is
+  untracked. A shipped entry keeps its place in `MANIFEST`, and only its copy leaves the repo, so it
+  shows again if the file comes back on any machine.
+- `forget` refuses a file that still exists, because the next save would copy it in again.
+  `untrack` and `scope <id> off` are the tools for that case.
+- `deleted` lists the copies that a commit deleted and that `HEAD` does not hold, grouped by commit.
+  It reads `config/`, `secrets/` and this profile's tree only. Git sees a move between scopes as a
+  rename, so a move is not a deletion here.
+- `recover <sha>` undoes the deletions of one commit. The copies come back from `<sha>^`, and so do
+  the lines that the commit removed from `.replicant-track`. Then each entry is restored onto the
+  machine with a backup. It is a dry run by default.
+
+## The plugin updates itself through Omarchy
+
+- `update-check` fetches `origin HEAD` into the plugin's own checkout, as `omarchy plugin update`
+  does. The stamp is `FETCH_HEAD` in that checkout, so the check writes no file of its own.
+- The panel asks at most every six hours (`REPLICANT_UPDATE_MAX_AGE`). **Check for updates** and
+  `update-check --fetch` always ask.
+- Only a fast-forward is an update. A checkout with commits of its own holds somebody's work.
+- `update` runs `omarchy plugin update <id> --yes`, which validates the new version and rolls back
+  one that fails. `update` refuses a copy that is not the installed plugin, such as a development
+  checkout that the shell loads through a symlink.
+- `update --restart` removes Quickshell's compiled QML cache and restarts the shell in its own
+  session. Quickshell does not reliably notice that the cache is stale.
 
 ## Secrets
 
@@ -250,6 +286,10 @@ backups and the optional link. `purge` names every trace (hard rule 8):
 - The `.bak.<epoch>` copies beside the files that it overwrote. For a directory entry, a copy is a
   whole tree.
 - `~/.local/bin/omarchy-replicant`, if `link` made it.
+
+Two more places are touched, and neither holds anything of the plugin's. `update-check` writes
+`FETCH_HEAD` inside the plugin's own checkout. `update --restart` removes
+`~/.cache/quickshell/qmlcache`, which Quickshell builds again.
 
 ## suggest proposes, and a blocklist would not work
 

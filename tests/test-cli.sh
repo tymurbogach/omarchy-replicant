@@ -730,6 +730,18 @@ printf 'API_TOKEN=%s\n' "${P_GH}abcdefghijklmnopqrstuvwxyz0123456789" > "$d/conf
 check_false "…but a real one in the same place is"           bash "$SCAN" "$d/config"
 rm -rf "$d"
 
+section "untrack commits the list and the copy together"
+# commit_repo_shape named the profile path of a shared file, which never exists.
+# git add refused the whole list, so an untrack was never committed at all.
+printf 'mine\n' > "$HOME/.config/mine2.conf"
+run track "$HOME/.config/mine2.conf" >/dev/null 2>&1
+run savegame -m "save mine2" --no-push >/dev/null 2>&1
+check_true "the copy is saved first" test -f "$REPO/config/mine2.conf"
+run untrack mine2.conf >/dev/null 2>&1
+check "untrack leaves nothing pending" "0" \
+  "$(git -C "$REPO" status --porcelain -- .replicant-track config/mine2.conf | grep -c . || true)"
+check "…because it made its own commit" "untrack: mine2.conf" "$(git -C "$REPO" log -1 --format=%s)"
+
 section "the documented IPC surface is the one that exists"
 # Service.qml's comment gave `omarchy ipc call <target> <method>`. There is no
 # `omarchy ipc` command: anyone following it got "Unknown Omarchy command".

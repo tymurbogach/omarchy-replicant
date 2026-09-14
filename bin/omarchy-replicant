@@ -750,12 +750,24 @@ cmd_settings() {
 # Both the scope list and the profile map are part of the repo's shape, so a
 # change to either is committed like any other decision — otherwise the second
 # machine never learns about it, which is the whole point of keeping them here.
+#
+# Only the paths that exist, on disk or in the index, reach git. `git add` stops
+# at the first path that matches nothing and stages none of the others. Untrack
+# names both places a copy can live, and one of them never exists, so an untrack
+# was never committed: the list and the removed copy stayed pending until the
+# next save swept them into a commit about something else.
 commit_repo_shape() {
   local msg="$1"; shift
   [[ -d "$REPO_DIR/.git" ]] || return 0
-  git_repo add -- "$@" >/dev/null 2>&1 || true
-  if ! git_repo diff --cached --quiet -- "$@" 2>/dev/null; then
-    git_repo commit -q -m "$msg" -- "$@" >/dev/null 2>&1 || true
+  local -a paths=()
+  local p
+  for p in "$@"; do
+    if [[ -e "$REPO_DIR/${p%/}" || -n "$(git_repo ls-files -- "$p" 2>/dev/null)" ]]; then paths+=("$p"); fi
+  done
+  (( ${#paths[@]} )) || return 0
+  git_repo add -A -- "${paths[@]}" >/dev/null 2>&1 || true
+  if ! git_repo diff --cached --quiet -- "${paths[@]}" 2>/dev/null; then
+    git_repo commit -q -m "$msg" -- "${paths[@]}" >/dev/null 2>&1 || true
     git_repo push -q 2>/dev/null || warn "committed locally; push failed (offline?)"
   fi
 }

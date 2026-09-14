@@ -178,6 +178,18 @@ suite: test-cli.sh
 from: write_track_file ${keep[@]+"${keep[@]}"}
 to: :
 why: recovering an untrack tracks the file again
+---
+file: bin/lib/update.sh
+suite: test-cli.sh
+from: (( now - $(stat -c %Y "$stamp" 2>/dev/null || echo 0) >= UPDATE_MAX_AGE ))
+to: true
+why: update-check asks the origin at most every UPDATE_MAX_AGE
+---
+file: bin/lib/update.sh
+suite: test-cli.sh
+from: [[ -n "$id" && "$PLUGIN_DIR" == "$HOME/.config/omarchy/plugins/$id" ]]
+to: true
+why: only the installed copy updates through omarchy plugin update
 DATA
 )
 

@@ -868,6 +868,51 @@ cmd_recover() {
   commit_repo_shape "$subject (from ${sha:0:7})" .replicant-track "${RECOVERED[@]}"
 }
 
+# ── the plugin itself ────────────────────────────────────────────────────────
+cmd_update_check() { ensure_core; bash "$CORE" update-check "$@"; }
+
+# cmd_update [--yes] [--restart]: install the newer version with Omarchy's own
+# command. That command fast-forwards the checkout, validates the plugin, and
+# rolls back when validation fails. This one adds the confirmation and, with
+# --restart, the shell restart that loads the new code.
+cmd_update() {
+  local yes=0 restart=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --yes|-y) yes=1 ;;
+      --restart) restart=1 ;;
+      *) fail "unknown option: $arg" ;;
+    esac
+  done
+  load_core
+  local j cur lat
+  j=$(core_update_check --fetch --json)
+  cur=$(jq -r '.current' <<<"$j"); lat=$(jq -r '.latest' <<<"$j")
+  [[ "$(jq -r '.checkout' <<<"$j")" == true ]] || fail "this copy of the plugin is not a git checkout, so it cannot update itself"
+  [[ "$(jq -r '.installed' <<<"$j")" == true ]] || fail "this copy runs from $PLUGIN_DIR, which is not the installed plugin. Update it with git pull"
+  if [[ "$(jq -r '.available' <<<"$j")" != true ]]; then ok "Replicant $cur is up to date"; return 0; fi
+  [[ "$(jq -r '.dirty' <<<"$j")" != true ]] || fail "the installed plugin has local changes in $PLUGIN_DIR, and omarchy plugin update cannot fast-forward over them"
+  echo "Replicant $cur -> ${lat:-newer}:" >&2
+  jq -r '.commits[] | "  " + .sha + "  " + .subject' <<<"$j" >&2
+  if (( ! yes )); then
+    read -rp "Update now? [y/N] " resp </dev/tty 2>&1 || resp=""
+    [[ $resp == [yY] ]] || fail "update cancelled"
+  fi
+  command -v omarchy >/dev/null 2>&1 || fail "omarchy not found"
+  omarchy plugin update "$PLUGIN_ID" --yes >&2 || fail "omarchy plugin update failed. Nothing was changed"
+  ok "updated to ${lat:-the newest version}"
+  if (( restart )); then
+    # Quickshell does not reliably notice that its compiled QML is stale
+    # (CONTRIBUTING.md), and a restart on the old cache runs the old panel.
+    rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/quickshell/qmlcache"
+    # Its own session: the shell that runs this command is the one that stops.
+    setsid -f omarchy restart shell </dev/null >/dev/null 2>&1 || warn "could not restart the shell: run omarchy restart shell"
+    info "the shell restarts to load it"
+  else
+    info "restart the shell to load it: omarchy restart shell"
+  fi
+}
+
 cmd_suggest() {
   local as_json=0
   while (( $# )); do case "$1" in --json) as_json=1; shift;; *) shift;; esac; done
@@ -1462,6 +1507,10 @@ Third-party code               (no dry run, no backup; fetches the moment you ru
 Second machine
   clone <url>                 Point this machine at the repo you already have
 
+The plugin itself
+  update-check [--fetch]      Whether a newer Replicant is at its origin    (--json)
+  update [--yes] [--restart]  Install it with omarchy plugin update
+
 Housekeeping
   backups [--prune] [--apply] Every .bak.<epoch> this plugin left, and when
   undo <id> [--apply]         Put the newest .bak.<epoch> back for one file
@@ -1581,6 +1630,13 @@ Dry-run by default, like everything here that writes.
   the repo, the entries that commit untracked are tracked again, and each file
   is put back on this machine with a .bak.<epoch> of what it replaces.
   A dry run by default."
+  [update-check]="update-check [--fetch] [--json]
+  Whether the plugin's origin has a newer version, and what it changes. It
+  asks the origin at most every 6 hours, unless --fetch is given."
+  [update]="update [--yes] [--restart]
+  Install the newer version with 'omarchy plugin update', which validates it
+  and rolls back a version that fails. Asks first, unless --yes is given.
+  --restart restarts the shell afterwards, so that the new code loads."
   [suggest]="suggest [--json]
   Config on this machine that nothing is backing up yet, credentials first.
   It only proposes; nothing is tracked until you say so."
@@ -1687,6 +1743,8 @@ main() {
     forget) shift; cmd_forget "$@";;
     deleted) shift; cmd_deleted "$@";;
     recover) shift; cmd_recover "$@";;
+    update-check) shift; cmd_update_check "$@";;
+    update) shift; cmd_update "$@";;
     suggest) shift; cmd_suggest "$@";;
     profile) shift; cmd_profile "$@";;
     revert) shift; cmd_revert "$@";;

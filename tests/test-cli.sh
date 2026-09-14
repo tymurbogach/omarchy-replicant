@@ -780,6 +780,51 @@ run recover "$usha" --apply >/dev/null 2>&1
 check_contains "recovering an untrack tracks the file again" "mine2.conf" "$(cat "$REPO/.replicant-track")"
 check "…and puts it back on the machine" "mine" "$(cat "$HOME/.config/mine2.conf" 2>/dev/null)"
 
+section "the plugin updates itself only through omarchy plugin update"
+# A copy of the plugin, cloned from a bare origin, stands in for the installed
+# checkout. Then the origin gets a newer version.
+porigin="$TMP/plugin-origin.git"; git init -q --bare "$porigin"
+pwork="$TMP/plugin-work"; mkdir -p "$pwork"
+cp -r "$HERE/../bin" "$HERE/../manifest.json" "$pwork/"
+git -C "$pwork" init -q -b main && git -C "$pwork" add -A && git -C "$pwork" commit -qm v1
+git -C "$pwork" remote add origin "$porigin" && git -C "$pwork" push -q origin main 2>/dev/null
+git -C "$porigin" symbolic-ref HEAD refs/heads/main
+pid=$(jq -r '.id' "$pwork/manifest.json")
+pinst="$HOME/.config/omarchy/plugins/$pid"
+git clone -q "$porigin" "$pinst" 2>/dev/null
+uc=$("$pinst/bin/omarchy-replicant" update-check --json 2>/dev/null)
+check "an up-to-date checkout has no update" "false" "$(jq -r '.available' <<<"$uc")"
+check "…and knows it is the installed copy" "true" "$(jq -r '.installed' <<<"$uc")"
+jq '.version = "99.0.0"' "$pwork/manifest.json" > "$pwork/m.json" && mv "$pwork/m.json" "$pwork/manifest.json"
+git -C "$pwork" commit -qam "Release 99.0.0" && git -C "$pwork" push -q origin main 2>/dev/null
+uc=$("$pinst/bin/omarchy-replicant" update-check --json --fetch 2>/dev/null)
+check "a newer origin is an update" "true" "$(jq -r '.available' <<<"$uc")"
+check "…named by its version" "99.0.0" "$(jq -r '.latest' <<<"$uc")"
+check "…with what it changes" "Release 99.0.0" "$(jq -r '.commits[0].subject' <<<"$uc")"
+check_contains "the text form says how to update" "omarchy-replicant update" \
+  "$("$pinst/bin/omarchy-replicant" update-check 2>&1)"
+stamp="$pinst/.git/FETCH_HEAD"
+touch -d '1 hour ago' "$stamp"; m1=$(stat -c %Y "$stamp")
+"$pinst/bin/omarchy-replicant" update-check --json >/dev/null 2>&1
+check "the origin is asked at most every 6 hours" "$m1" "$(stat -c %Y "$stamp")"
+REPLICANT_UPDATE_MAX_AGE=0 "$pinst/bin/omarchy-replicant" update-check --json >/dev/null 2>&1
+check_false "…and again once that is up" test "$m1" = "$(stat -c %Y "$stamp")"
+check_false "a copy that is not the installed one refuses to update" "$pwork/bin/omarchy-replicant" update --yes
+check_contains "…and says to use git" "git pull" "$("$pwork/bin/omarchy-replicant" update --yes 2>&1)"
+: > "$STUB_LOG"
+check_false "a failing omarchy plugin update fails the update" "$pinst/bin/omarchy-replicant" update --yes
+check_contains "…and Omarchy's command is the one that ran" "omarchy plugin update $pid --yes" "$(cat "$STUB_LOG")"
+okbin="$TMP/okbin"; mkdir -p "$okbin"
+printf '#!/bin/sh\necho "omarchy $*" >> "%s"\nexit 0\n' "$TMP/ok.log" > "$okbin/omarchy"; chmod +x "$okbin/omarchy"
+mkdir -p "$HOME/.cache/quickshell/qmlcache"; touch "$HOME/.cache/quickshell/qmlcache/stale"
+# XDG_CACHE_HOME is pinned to the fake $HOME: the real one would clear the
+# compiled QML of the shell that is running on this machine.
+PATH="$okbin:$PATH" XDG_CACHE_HOME="$HOME/.cache" "$pinst/bin/omarchy-replicant" update --yes --restart >/dev/null 2>&1
+for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q 'restart shell' "$TMP/ok.log" 2>/dev/null && break; sleep 0.2; done
+check_contains "update runs Omarchy's update" "omarchy plugin update $pid --yes" "$(cat "$TMP/ok.log" 2>/dev/null)"
+check_contains "…--restart then restarts the shell" "omarchy restart shell" "$(cat "$TMP/ok.log" 2>/dev/null)"
+check_false "…after it cleared the stale compiled QML" test -e "$HOME/.cache/quickshell/qmlcache/stale"
+
 section "the documented IPC surface is the one that exists"
 # Service.qml's comment gave `omarchy ipc call <target> <method>`. There is no
 # `omarchy ipc` command: anyone following it got "Unknown Omarchy command".

@@ -18,6 +18,9 @@ Item {
                                 || setting.type === "ini-enum"
   readonly property bool isLongList: srow.isChoice && (setting.options || []).length > 8
   readonly property bool usable: setting.available === true && !panel.busy
+  // Customised means "not what Omarchy ships". The badge in front of the label
+  // says it the way a file row does: a dot for yours, a ring for Omarchy's.
+  readonly property bool customised: srow.setting.can_revert_default === true
 
   // Whether the exact value is worth repeating under the label. It is there
   // because the stepper rounds — 150 seconds is edited as 3 minutes, and the
@@ -55,9 +58,10 @@ Item {
   // count, NOT the text's own implicitHeight: this row's children are
   // verticalCenter-anchored to it, so a height derived from them is the
   // parent-height <-> child-position loop that renders the row at nothing.
-  // 44 is what fits on one line at the panel's width, measured on a capture.
+  // 40 is what fits on one line at the panel's width, now that a badge
+  // column sits in front of the label.
   readonly property string noticeText: String(srow.setting.notice || "")
-  readonly property int subtitleLines: srow.subtitleText.length > 44 ? 2 : 1
+  readonly property int subtitleLines: srow.subtitleText.length > 40 ? 2 : 1
   // The notice is counted too, and it was not. A row carrying one rendered
   // four lines of text in the two-line height and the notice was cut in half
   // — "Overridden: Omarchy Sleepwalker is blocki…", losing the clause that
@@ -65,7 +69,7 @@ Item {
   // row's children are verticalCenter-anchored to it, so a height derived
   // from their own implicitHeight is the polish() loop that renders nothing.
   readonly property int noticeLines: srow.noticeText === "" ? 0
-                                   : (srow.noticeText.length > 44 ? 2 : 1)
+                                   : (srow.noticeText.length > 40 ? 2 : 1)
   implicitHeight: Style.space(34 + 16 * srow.subtitleLines + 16 * srow.noticeLines)
   opacity: srow.setting.available === true ? 1.0 : 0.45
 
@@ -77,14 +81,24 @@ Item {
     anchors.rightMargin: Style.spacing.rowPaddingX
     spacing: Style.space(8)
 
+    Text {
+      anchors.verticalCenter: parent.verticalCenter
+      width: Style.space(14)
+      text: srow.setting.available !== true ? "·" : srow.customised ? "●" : "○"
+      color: srow.customised ? Color.accent : panel.dim
+      font.family: panel.ff; font.pixelSize: Style.font.body
+      horizontalAlignment: Text.AlignHCenter
+    }
+
     Column {
-      width: parent.width - controlSlot.width - revertRow.width - parent.spacing * 2
+      width: parent.width - Style.space(14) - controlSlot.width - revertSlot.width - parent.spacing * 3
       anchors.verticalCenter: parent.verticalCenter
       spacing: Style.spacing.xs
       Text {
         width: parent.width
         text: srow.setting.label
         color: panel.fg; font.family: panel.ff; font.pixelSize: Style.font.subtitle
+        font.bold: srow.customised
         elide: Text.ElideRight
       }
       Text {
@@ -216,29 +230,32 @@ Item {
       }
     }
 
-    // Two ways back for one value, without touching the rest of the file it
-    // lives in. Shown only when they would actually change something.
-    Row {
-      id: revertRow
+    // Two ways back for one value, without touching the rest of its file.
+    // Drawn only when they would change something, in a slot of fixed width so
+    // that every control stays in one column.
+    Item {
+      id: revertSlot
       anchors.verticalCenter: parent.verticalCenter
-      spacing: 0
-      Button {
-        iconText: panel.icDefault; bordered: false; foreground: panel.dim; fontFamily: panel.ff
-        enabled: srow.setting.can_revert_default === true && !panel.busy
-        opacity: srow.setting.can_revert_default === true ? 1.0 : 0.25
-        tooltipText: srow.setting.can_revert_default === true
-                     ? "Back to Omarchy's default: " + srow.setting.default_text
-                     : "Already the Omarchy default"
-        onClicked: panel.doRevert(srow.setting.id, "default")
-      }
-      Button {
-        iconText: panel.icFromRepo; bordered: false; foreground: panel.dim; fontFamily: panel.ff
-        enabled: srow.setting.can_revert_repo === true && !panel.busy
-        opacity: srow.setting.can_revert_repo === true ? 1.0 : 0.25
-        tooltipText: srow.setting.can_revert_repo === true
-                     ? "Back to what your repo has: " + srow.setting.repo_text
-                     : "Already matches your repo"
-        onClicked: panel.doRevert(srow.setting.id, "repo")
+      width: Style.space(64)
+      height: Style.space(30)
+      Row {
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: 0
+        Button {
+          visible: srow.setting.can_revert_default === true
+          iconText: panel.icDefault; bordered: false; foreground: panel.dim; fontFamily: panel.ff
+          enabled: !panel.busy
+          tooltipText: "Back to Omarchy's default: " + srow.setting.default_text
+          onClicked: panel.doRevert(srow.setting.id, "default")
+        }
+        Button {
+          visible: srow.setting.can_revert_repo === true
+          iconText: panel.icFromRepo; bordered: false; foreground: panel.dim; fontFamily: panel.ff
+          enabled: !panel.busy
+          tooltipText: "Back to what your repo has: " + srow.setting.repo_text
+          onClicked: panel.doRevert(srow.setting.id, "repo")
+        }
       }
     }
   }

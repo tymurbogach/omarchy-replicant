@@ -7,14 +7,10 @@ import qs.Ui
 import "components"
 import "replicant.js" as R
 
-// The Replicant panel: four tabs over one CLI. Its parts are in components/,
-// one file each, and each one reaches the panel through its `panel` property.
-// The pure logic is in replicant.js, where tests/qml tests it.
-//
-// Layout note: everything below the Overview tab is an ACCORDION. Forty-odd
-// tracked files and twenty settings as one flat list meant a scrollbar the
-// length of your arm and no sense of where anything was. Collapsed cards, one
-// per area, fit the whole picture on one screen; you open the one you came for.
+// The Replicant panel: four tabs over one CLI. This file holds the state, the
+// processes and the actions. What is drawn is in components/, one part each,
+// and each part reaches the panel through its `panel` property. The pure logic
+// is in replicant.js, where tests/qml tests it.
 //
 // Naming note: the status payload lives in `repoState`, NOT `state`. Every QML
 // Item already has a built-in `state` string, so inside any nested item a bare
@@ -41,14 +37,20 @@ Panel {
   property bool asked: false
 
   property string lastOutput: ""
+  property bool lastOk: true
+  property string lastTitle: "Output"
   property string activeTab: "overview"
   property string fileSearch: ""
+  property string stateFilter: "all"
   property string settingSearch: ""
+  property string settingFilter: "all"
   property var recent: []
+  property int logCount: 6
   property var shortcuts: ({ own: [], active: [], own_count: 0, active_count: 0 })
   property bool shortcutsLoaded: false
   property bool showAllShortcuts: false
 
+  // ── what is open ──────────────────────────────────────────────────────────
   // Which accordion cards are open. A plain object, reassigned wholesale on
   // every change — mutating it in place does not re-evaluate the bindings that
   // read it.
@@ -60,13 +62,46 @@ Panel {
     next[id] = !next[id]
     root.openCards = next
     if (id === "shortcuts" && next[id] && !root.shortcutsLoaded) root.loadShortcuts()
+    if (id === "__suggest" && next[id] && root.addMode === "browse" && !root.browseData.dir) root.browseTo(root.repoState.home || "~")
   }
-  function closeAllCards() { root.openCards = ({}) }
+  function closeAllCards() { root.openCards = ({}); root.openRow = ""; root.openCommits = ({}) }
+
+  // One file row is open at a time. Two open rows are two sets of buttons
+  // that look alike, one above the other.
+  property string openRow: ""
+  function isRowOpen(id) { return root.openRow === id }
+  function toggleRow(id) { root.openRow = root.openRow === id ? "" : id }
+
+  property var openCommits: ({})
+  function isCommitOpen(sha) { return root.openCommits[sha] === true }
+  function toggleCommit(sha) {
+    var next = {}
+    for (var k in root.openCommits) next[k] = root.openCommits[k]
+    next[sha] = !next[sha]
+    root.openCommits = next
+  }
+  function showOlder() { root.logCount = Math.min(40, root.logCount + 8); root.loadLog() }
+
+  // The key catcher takes every key before the item that has focus, so while
+  // a text field has focus it must stand aside, or typing an "s" saves.
+  property Item focusedField: null
+  function noteFocus(field, focused) {
+    if (focused) root.focusedField = field
+    else if (root.focusedField === field) root.focusedField = null
+  }
+  function releaseFocus() { root.focusedField = null; keyCatcher.forceActiveFocus() }
 
   // ── in-flight state ───────────────────────────────────────────────────────
+  // A scope change is not here on purpose: it shows at once and runs in its
+  // own queue (setScope), so it never greys out the rest of the panel.
   readonly property bool busy: saveProc.running || setProc.running || pullProc.running
                             || backupProc.running || fileSaveProc.running || dangerProc.running
-                            || checkProc.running
+                            || checkProc.running || undoProc.running || trackProc.running
+                            || updateProc.running
+  readonly property bool saving: saveProc.running
+  readonly property bool pulling: pullProc.running
+  readonly property bool checking: doctorProc.running
+  readonly property bool updateChecking: updateCheckProc.running
   property string busyLabel: ""
 
   readonly property color fg: bar ? bar.foreground : Color.foreground
@@ -88,63 +123,64 @@ Panel {
   // where a stray re-encoding of this file silently truncates the glyph to a
   // different character. Each was rendered against the shell's own font and
   // looked at before being used. R.mdi (replicant.js) builds the string.
+  readonly property string icRefresh: R.mdi(0xF0450)    // refresh
+  readonly property string icPush: R.mdi(0xF0167)       // cloud-upload
+  readonly property string icPull: R.mdi(0xF0162)       // cloud-download
+  readonly property string icCopy: R.mdi(0xF018F)       // content-copy
+  readonly property string icEdit: R.mdi(0xF03EB)       // pencil
+  readonly property string icDiff: R.mdi(0xF08AA)       // file-compare
+  readonly property string icSave: R.mdi(0xF0193)       // content-save
+  readonly property string icDefault: R.mdi(0xF099B)    // restore
+  readonly property string icFromRepo: R.mdi(0xF01DA)   // download
+  readonly property string icShield: R.mdi(0xF0498)     // shield
+  readonly property string icFolder: R.mdi(0xF024B)     // folder
+  readonly property string icFolderOpen: R.mdi(0xF0770) // folder-open
+  readonly property string icFile: R.mdi(0xF0224)       // file
+  readonly property string icPlus: R.mdi(0xF0415)       // plus
+  readonly property string icBranch: R.mdi(0xF062C)     // source-branch
+  readonly property string icClose: R.mdi(0xF0156)      // close
+  readonly property string icDown: R.mdi(0xF0140)       // chevron-down
+  readonly property string icRight: R.mdi(0xF0142)      // chevron-right
+  readonly property string icUp: R.mdi(0xF005D)         // arrow-up
+  readonly property string icInfo: R.mdi(0xF02FC)       // information
+  readonly property string icMachine: R.mdi(0xF0176)    // laptop
+  readonly property string icUpdate: R.mdi(0xF06B0)     // update
+  readonly property string icCheck: R.mdi(0xF05E0)      // check-circle
+  readonly property string icAlert: R.mdi(0xF0028)      // alert-circle
+  readonly property string icGithub: R.mdi(0xF02A4)     // github
+  readonly property string icRecover: R.mdi(0xF0819)    // delete-restore
+  readonly property string icHistory: R.mdi(0xF02DA)    // history
+  readonly property string icEye: R.mdi(0xF0208)        // eye
+  readonly property string icKey: R.mdi(0xF0306)        // key
+  readonly property string icLink: R.mdi(0xF0339)       // link-variant
+  readonly property string icTheme: R.mdi(0xF03D8)      // palette
+  readonly property string icPlugin: R.mdi(0xF0431)     // puzzle
+  // The plugin's own mark: identical cells, more than one of them. The OUTLINE
+  // variant is used here and the filled one in the bar: at 30px the outline
+  // reads as three distinct hexagons, at 13px it collapses into rings.
+  readonly property string icReplicant: R.mdi(0xF10F2)  // hexagon-multiple-outline
+  readonly property string icShared: R.mdi(0xF0191)     // content-duplicate
+  readonly property string icProfile: R.mdi(0xF0322)   // laptop
+  readonly property string icOff: R.mdi(0xF0377)       // minus-circle-outline
+  // A list with a minus, NOT a waste basket. Untracking removes an entry from
+  // your list and the copy from the repo; the file on the machine is untouched,
+  // and a trash can on that button would say the opposite of what it does.
+  readonly property string icUntrack: R.mdi(0xF0410)    // playlist-remove
 
-  // Paths are shown the way the CLI shows them. A row is about 40 characters
-  // wide once the scope button and five actions have taken their share, and
-  // "/home/<user>" is a third of that spent saying nothing.
-  function pretty(p) {
-    var h = root.repoState.home || ""
-    if (h !== "" && String(p).indexOf(h) === 0) return "~" + String(p).slice(h.length)
-    return String(p)
-  }
+  // Paths are shown the way the CLI shows them. "/home/<user>" is a third of a
+  // row spent saying nothing.
+  function pretty(p) { return R.prettyPath(p, root.repoState.home || "") }
   // Where a file lives, but only when that is not already on screen. A row's
-  // title IS its path under ~/.config with the prefix taken off, so printing
-  // "~/.config/alacritty/alacritty.toml" under a title that reads
-  // "alacritty/alacritty.toml" spends the row's scarcest resource — width —
-  // saying nothing, and it was the width the rows that DO surprise you needed:
-  // a dotfile in $HOME, a script in ~/.local/bin, a drop-in under /etc. Those
-  // now print whole instead of every row printing "~/.confi…".
+  // title IS its path under ~/.config, so printing it again under the title
+  // spent the row's width saying nothing. The rows that do surprise you (a
+  // dotfile in $HOME, a script in ~/.local/bin, a drop-in under /etc) print
+  // whole.
   function whereText(c) {
     var src = String(c.src || "")
     var h = root.repoState.home || ""
     if (h !== "" && src === h + "/.config/" + String(c.id || "")) return ""
     return root.pretty(src)
   }
-  readonly property string icRefresh: R.mdi(0xF0450)    // refresh
-  readonly property string icPush: R.mdi(0xF0167)    // cloud-upload
-  readonly property string icPull: R.mdi(0xF0162)    // cloud-download
-  readonly property string icCopy: R.mdi(0xF018F)    // content-copy
-  readonly property string icEdit: R.mdi(0xF03EB)    // pencil
-  readonly property string icDiff: R.mdi(0xF08AA)    // file-compare
-  readonly property string icSave: R.mdi(0xF0193)    // content-save
-  readonly property string icDefault: R.mdi(0xF099B)    // restore
-  readonly property string icFromRepo: R.mdi(0xF01DA)    // download
-  readonly property string icShield: R.mdi(0xF0498)    // shield
-  readonly property string icFolder: R.mdi(0xF024B)    // folder
-  readonly property string icPlus: R.mdi(0xF0415)    // plus
-  readonly property string icBranch: R.mdi(0xF062C)    // source-branch
-  readonly property string icClose: R.mdi(0xF0156)    // close
-  readonly property string icDown: R.mdi(0xF0140)    // chevron-down
-  readonly property string icRight: R.mdi(0xF0142)    // chevron-right
-  readonly property string icInfo: R.mdi(0xF02FC)    // information
-  readonly property string icMachine: R.mdi(0xF0176)    // laptop
-  // The plugin's own mark: identical cells, more than one of them. Chosen over
-  // the GitHub logo because GitHub is where the copy happens to live, not what
-  // this does. The OUTLINE variant is used here and the filled one in the bar —
-  // at 30px the outline reads as three distinct hexagons, at 13px it collapses
-  // into rings, so the bar gets the filled one. The scope button below keeps
-  // content-duplicate for "Shared", which is a different idea (one copy everyone
-  // reads) and sits next to its own text label.
-  readonly property string icReplicant: R.mdi(0xF10F2)   // hexagon-multiple-outline
-  readonly property string icShared: R.mdi(0xF0191)      // content-duplicate
-  readonly property string icProfile: R.mdi(0xF0322)     // laptop
-  readonly property string icOff: R.mdi(0xF0377)         // minus-circle-outline
-  // A list with a minus, NOT a waste basket. Untracking removes an entry from
-  // your list and the copy from the repo; the file on the machine is untouched,
-  // and a trash can on that button would say the opposite of what it does.
-  readonly property string icUntrack: R.mdi(0xF0410)     // playlist-remove
-
-  // ── derived summaries ─────────────────────────────────────────────────────
   // The glyph, the word and the colour role of each sync state are in
   // replicant.js, where tests/qml tests them. The colours are the panel's own.
   function stateColor(st) {
@@ -155,34 +191,93 @@ Panel {
     return root.dim
   }
 
+  // ── derived summaries ─────────────────────────────────────────────────────
   readonly property string profileName: root.repoState.profile || "this machine"
-  readonly property int scopedCount: (root.repoState.configs || []).filter(function(c){ return c.scope === "profile" }).length
+  // Every row, secrets included, in the one shape the Configs tab draws.
+  readonly property var everyRow: (root.repoState.configs || []).concat(R.secretRows(root.repoState))
+  function idsWhere(pred) { return root.everyRow.filter(pred).map(function(r) { return r.id }) }
+  readonly property int nTracked: root.everyRow.length
   // Counted from the rows themselves, not from repoState.dirty. The badges and
-  // the header have to answer to one source or they contradict each other — the
-  // git count only ever saw files already copied into the repo, so the header
-  // could read EVERYTHING SAVED while rows below it showed unsaved changes.
-  readonly property int nDirty: (root.repoState.configs || []).filter(function(c){
-    return c.sync_state === "unsaved"
-  }).length + (root.repoState.secrets || []).filter(function(s){
-    return s.sync_state === "unsaved"
-  }).length
-  // Files a pull brought a newer copy of. Counted the same way and from the same
-  // rows, because this is the one state where pressing the OTHER button — Save —
-  // commits over what another machine did.
-  readonly property int nIncoming: (root.repoState.configs || []).filter(function(c){
-    return c.sync_state === "incoming"
-  }).length + (root.repoState.secrets || []).filter(function(s){
-    return s.sync_state === "incoming"
-  }).length
+  // the header have to answer to one source or they contradict each other.
+  readonly property int nDirty: root.everyRow.filter(function(r) { return r.sync_state === "unsaved" }).length
+  // Files a pull brought a newer copy of: the one state where pressing the
+  // OTHER button, Save, commits over what another machine did.
+  readonly property int nIncoming: root.everyRow.filter(function(r) { return r.sync_state === "incoming" }).length
+  readonly property int nOff: root.everyRow.filter(function(r) { return r.sync_state === "off" }).length
+  readonly property int nMissing: root.everyRow.filter(function(r) { return r.sync_state === "missing" }).length
+  readonly property int nChanged: root.everyRow.filter(function(r) { return R.needsAttention(r.sync_state) }).length
   readonly property int nAhead: repoState.ahead || 0
   readonly property int nBehind: repoState.behind || 0
 
-  // What the header and the banner say. The order of the rules is in
-  // replicant.js (summary, advice), where it is tested.
+  // What the header, the banner and the status card say. The order of the
+  // rules is in replicant.js (summary, advice, headline), where it is tested.
   readonly property var facts: ({ asked: root.asked, ready: root.ready, ahead: root.nAhead,
-                                  behind: root.nBehind, incoming: root.nIncoming, dirty: root.nDirty })
+                                  behind: root.nBehind, incoming: root.nIncoming, dirty: root.nDirty,
+                                  tracked: root.nTracked,
+                                  lastSave: root.recent.length > 0 && root.recent[0].epoch ? R.agoText(root.recent[0].epoch) : "" })
   readonly property string summary: R.summary(root.facts)
   readonly property string advice: R.advice(root.facts)
+  readonly property var head: R.headline(root.facts)
+
+  readonly property string versionText: {
+    var v = root.repoState.plugin_version || root.updateInfo.current || ""
+    return v !== "" ? "v" + v : ""
+  }
+  readonly property string metaText: root.ready
+      ? root.summary + "  ·  " + (root.repoState.machine || "") + "  ·  " + root.profileName + " profile"
+      : root.summary
+
+  // The counts under the status card. Only the ones with something to say,
+  // each with the names behind it, and each one a click away from them.
+  readonly property var chips: {
+    var out = []
+    var nConfigs = (root.repoState.configs || []).length
+    out.push({ id: "tracked", text: root.nTracked + " tracked", tone: "normal",
+               tooltip: "Everything Replicant backs up: " + R.plural(nConfigs, "config") + " and "
+                        + R.plural(root.nTracked - nConfigs, "secret") + ".\nClick to see them." })
+    if (root.nDirty > 0)
+      out.push({ id: "unsaved", text: "● " + root.nDirty + " unsaved", tone: "accent",
+                 tooltip: "Changed on this machine and not in your repo yet:\n"
+                          + R.nameList(root.idsWhere(function(r) { return r.sync_state === "unsaved" }))
+                          + "\nClick to see them." })
+    if (root.nIncoming > 0)
+      out.push({ id: "incoming", text: "↓ " + root.nIncoming + " to restore", tone: "warn",
+                 tooltip: "Another machine saved a newer copy of:\n"
+                          + R.nameList(root.idsWhere(function(r) { return r.sync_state === "incoming" }))
+                          + "\nRestore puts it here. Click to see them." })
+    if (root.nBehind > 0)
+      out.push({ id: "pull", text: "↓ " + root.nBehind + " on GitHub", tone: "warn",
+                 tooltip: R.plural(root.nBehind, "commit") + " that another machine pushed and this one does not have.\nClick to pull them." })
+    if (root.nAhead > 0)
+      out.push({ id: "push", text: "↑ " + root.nAhead + " to push", tone: "accent",
+                 tooltip: R.plural(root.nAhead, "commit") + " made here and not pushed yet.\nClick to push them." })
+    if (root.nMissing > 0)
+      out.push({ id: "missing", text: "· " + root.nMissing + " gone", tone: "dim",
+                 tooltip: "Tracked, and gone from this machine:\n"
+                          + R.nameList(root.idsWhere(function(r) { return r.sync_state === "missing" }))
+                          + "\nClick to restore or forget them." })
+    if (root.nOff > 0)
+      out.push({ id: "off", text: "⊘ " + root.nOff + " off", tone: "dim",
+                 tooltip: "Switched off: never saved from here, never restored onto here:\n"
+                          + R.nameList(root.idsWhere(function(r) { return r.sync_state === "off" }))
+                          + "\nClick to see them." })
+    if (root.suggestions.length > 0)
+      out.push({ id: "add", text: "+ " + root.suggestions.length + " to add", tone: "normal",
+                 tooltip: "Config on this machine that nothing backs up yet.\nClick to see it." })
+    return out
+  }
+  function chipClicked(id) {
+    if (id === "pull") { root.doPull(); return }
+    if (id === "push") { root.doSavegame(); return }
+    root.activeTab = "configs"
+    if (id === "add") {
+      root.stateFilter = "all"
+      root.addMode = "suggest"
+      if (!root.isOpen("__suggest")) root.toggleCard("__suggest")
+      return
+    }
+    root.stateFilter = id === "off" ? "off" : id === "tracked" ? "all" : "changed"
+  }
 
   readonly property var tabs: [
     { value: "overview", label: "Overview", icon: R.mdi(0xF056E), tooltip: "This machine at a glance  (1)" },
@@ -191,10 +286,17 @@ Panel {
     { value: "restore",  label: "Restore",  icon: R.mdi(0xF099B), tooltip: "Bring a whole machine back  (4)" }
   ]
 
-  // ── one uniform row shape for configs and secrets ─────────────────────────
-  // The rows of one area, secrets included, filtered by the search and sorted
-  // (replicant.js, rowsFor).
-  function rowsFor(categoryId) { return R.rowsFor(root.repoState, categoryId, root.fileSearch) }
+  // ── the Configs tab ───────────────────────────────────────────────────────
+  // The rows of one area, secrets included, filtered by the search and the
+  // state filter and sorted (replicant.js, rowsFor).
+  function rowsFor(categoryId) { return R.rowsFor(root.repoState, categoryId, root.fileSearch, root.stateFilter) }
+  readonly property bool filtering: root.fileSearch !== "" || root.stateFilter !== "all"
+  readonly property var filterOptions: [
+    { value: "all", label: "All  " + root.nTracked, tooltip: "Every tracked file" },
+    { value: "changed", label: "Changed  " + root.nChanged,
+      tooltip: "Unsaved, to restore, to push, or gone from this machine: the rows with a button to press" },
+    { value: "off", label: "Off  " + root.nOff, tooltip: "Switched off: never saved from here, never restored onto here" }
+  ]
 
   // Categories that actually have something in them, with their counts. An
   // empty card is a card you have to read and then dismiss.
@@ -205,8 +307,6 @@ Panel {
       var rows = root.rowsFor(cats[i].id)
       if (rows.length === 0) continue
       // Counted from the same states the badges render, not a separate word.
-      // This once tested for "modified", a state that no longer exists, so every
-      // card cheerfully said "in sync" while its own rows showed unsaved changes.
       var changed = 0, off = 0, incoming = 0
       for (var j = 0; j < rows.length; j++) {
         if (rows[j].sync_state === "unsaved" || rows[j].sync_state === "unpushed") changed++
@@ -222,18 +322,40 @@ Panel {
     return out
   }
 
+  // ── the Restore tab ───────────────────────────────────────────────────────
+  // Every area with what a restore of it would write, unfiltered: the search
+  // on the Configs tab must not change what "restore this area" means.
+  readonly property var areaSummaries: {
+    var cats = root.repoState.categories || []
+    var out = []
+    for (var i = 0; i < cats.length; i++) {
+      var rows = R.rowsFor(root.repoState, cats[i].id, "", "all")
+      if (rows.length === 0) continue
+      out.push({ id: cats[i].id, icon: cats[i].icon, label: cats[i].label, method: cats[i].method,
+                 count: rows.length, differ: rows.filter(R.wouldRestore).length })
+    }
+    return out
+  }
+  readonly property int restoreDiffers: root.areaSummaries.reduce(function(n, a) { return n + a.differ }, 0)
+  // What reset-all would touch: a file Omarchy ships a default for, here, not
+  // at that default, and where `omarchy refresh config` can reach it.
+  readonly property int resetDiffers: (root.repoState.configs || []).filter(function(c) {
+    return c.has_default === true && c.exists === true && c.is_default !== true
+           && c.is_dir !== true && String(c.config_rel || "") !== ""
+  }).length
   // Third-party themes/plugins the inventory knows about but this machine
-  // does not have. `restore` reports these, it never installs them — see
-  // restore_themes/restore_plugins in the CLI. One row, one Install button,
-  // so fetching someone else's current code is always a decision made here,
-  // not a side effect of restoring your own settings.
+  // does not have. `restore` reports these, it never installs them: one row,
+  // one Install button, so fetching someone else's current code is always a
+  // decision made here, not a side effect of restoring your own settings.
   readonly property var pendingReinstalls: root.repoState.pending_reinstalls || []
 
-  readonly property int statColumns: root.nIncoming > 0 ? 5 : 4
-  readonly property int countChanged: root.nDirty
-  readonly property int countOff: (root.repoState.configs || []).filter(function(c){ return c.synced === false }).length
-
   // ── settings, grouped in registry order ───────────────────────────────────
+  readonly property int nCustomised: (root.repoState.settings || []).filter(function(s) { return s.can_revert_default === true }).length
+  readonly property bool settingFiltering: root.settingSearch !== "" || root.settingFilter !== "all"
+  readonly property var settingFilterOptions: [
+    { value: "all", label: "All  " + (root.repoState.settings || []).length, tooltip: "Every setting" },
+    { value: "customised", label: "Customised  " + root.nCustomised, tooltip: "The values that differ from what Omarchy ships" }
+  ]
   readonly property var settingGroups: {
     var meta = root.repoState.setting_groups || []
     var list = root.repoState.settings || []
@@ -246,6 +368,7 @@ Panel {
           return (String(s.label) + " " + String(s.id) + " " + String(s.hint)).toLowerCase().indexOf(needle) !== -1
         })
       }
+      if (root.settingFilter === "customised") items = items.filter(function(s) { return s.can_revert_default === true })
       if (items.length === 0) continue
       var changed = items.filter(function(s) { return s.can_revert_default }).length
       out.push({ id: "set:" + meta[g].name, name: meta[g].name, icon: meta[g].icon,
@@ -254,42 +377,38 @@ Panel {
     return out
   }
 
-  // A handful of values worth seeing without opening a tab.
-  function settingText(id) {
-    var list = root.repoState.settings || []
-    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i].value_text || "—"
-    return "—"
-  }
-
   // ── actions ───────────────────────────────────────────────────────────────
-  function refresh() { if (hostWidget) hostWidget.refresh(true); logProc.running = true }
+  function refresh() { if (hostWidget) hostWidget.refresh(true); root.loadLog() }
   function shellQuote(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'" }
+  function clean(s) { return String(s || "").replace(/\x1b\[[0-9;]*m/g, "").replace(/\n{3,}/g, "\n\n").trim() }
 
   // --auto is not a convenience here, it is the difference between the button
   // working and not. Bare `savegame` commits the inventory, pushes that, and
   // deliberately leaves config and secrets copied-in-but-uncommitted so a human
   // can write one commit per change explaining why — and this panel has nowhere
-  // to type that why. Pressing Save tracked a secret, copied it in, and left it
-  // uncommitted, with every badge as red as before.
+  // to type that why.
   function doSavegame() { root.busyLabel = "Saving to GitHub…"; saveProc.command = [root.cli, "savegame", "--auto"]; saveProc.running = true }
-  function doPull()     { root.busyLabel = "Pulling…";          pullProc.command = [root.cli, "pull"]; pullProc.running = true }
-  function doBackup()   { root.busyLabel = "Copying files…";    backupProc.command = [root.cli, "backup"]; backupProc.running = true }
-  function doDoctor()   { root.busyLabel = "Checking…";         root.lastOutput = "Running health check…"; doctorProc.command = [root.cli, "doctor"]; doctorProc.running = true }
+  function doPull()     { root.busyLabel = "Pulling from GitHub…"; pullProc.command = [root.cli, "pull"]; pullProc.running = true }
+  function doBackup()   { root.busyLabel = "Copying files into the repo…"; backupProc.command = [root.cli, "backup"]; backupProc.running = true }
+  function doDoctor()   { root.busyLabel = "Running the health check…"; doctorProc.command = [root.cli, "doctor"]; doctorProc.running = true }
 
   function loadShortcuts() { shortcutsProc.command = [root.cli, "shortcuts", "--json"]; shortcutsProc.running = true }
+  function loadLog() {
+    if (logProc.running) return
+    logProc.command = [root.cli, "log", "--json", "-n", String(root.logCount)]
+    logProc.running = true
+  }
 
   // Open the editor. Deliberately NOT through
   // omarchy-launch-floating-terminal-with-presentation: that wraps the command
-  // in the Omarchy logo plus a "press a key to close" prompt, so reading one
-  // file cost two extra interactions. The CLI detaches the editor itself.
-  // The panel closes so the editor is not opened behind it, and comes back the
-  // moment the editor is closed — same tab, same open cards, because close()
-  // keeps both. Only some editors can be waited on, so the CLI says whether it
-  // actually waited; reopening the panel over a floating terminal editor would
-  // be worse than leaving it shut.
+  // in the Omarchy logo plus a "press a key to close" prompt. The panel closes
+  // so the editor is not opened behind it, and comes back the moment the
+  // editor is closed, same tab and same open cards. Only some editors can be
+  // waited on, so the CLI says whether it actually waited.
   function doEdit(id) {
     editProc.command = [root.cli, "edit", id, "--wait"]
     editProc.running = true
+    root.lastOk = true
     root.lastOutput = "Opening " + id + " in your editor…"
     root.close()
   }
@@ -297,9 +416,7 @@ Panel {
   // Diffs are read, not interacted with, so they belong in the panel next to
   // the file they describe rather than in a terminal that has to be dismissed.
   function doDiff(id) {
-    root.diffTitle = id
-    root.diffText = "Loading…"
-    root.diffOpen = true
+    root.openViewer(id, "Loading…", "diff")
     diffProc.command = [root.cli, "diff", id]
     diffProc.running = true
   }
@@ -322,46 +439,119 @@ Panel {
     setProc.running = true
   }
 
-  function scopeLabel(scope) {
-    if (scope === "profile") return root.profileName
-    if (scope === "off") return "Off"
-    return "Shared"
+  function askRestoreFile(row) {
+    root.ask("restore-file", row.id,
+             (row.exists === false ? "Put " + row.label + " back on this machine from your repo?"
+                                   : "Replace " + row.label + " with the copy saved in your repo?")
+             + "\n\nWhatever is there now is kept as .bak.<epoch>.",
+             "Restore")
   }
-  function scopeIcon(scope) {
-    if (scope === "profile") return root.icProfile
-    if (scope === "off") return root.icOff
-    return root.icShared
-  }
-  function scopeHint(scope, allowProfile) {
-    if (scope === "shared" && !allowProfile)
-      return "One copy, shared by every machine on this repo. Click for: off"
+
+  // ── scopes ────────────────────────────────────────────────────────────────
+  function scopeHint(scope) {
     if (scope === "profile")
       return "Kept per profile: this machine saves and restores the '" + root.profileName
-           + "' copy, and never overwrites another profile's. Click for: off"
+           + "' copy, and never overwrites another profile's."
     if (scope === "off")
-      return "Not saved from here and not restored onto here. Whatever the repo "
-           + "already holds is left alone. Click for: shared"
-    return "One copy, shared by every machine on this repo. Click for: per profile"
+      return "Switched off: not saved from here and not restored onto here. The repo keeps what it already has."
+    return "Shared: one copy in your repo, saved and restored by every machine."
   }
-  // ── the user's own list ───────────────────────────────────────────────────
+
+  // A scope change shows at once. It used to disable the whole panel while
+  // the command committed and pushed, and then wait for a full status with a
+  // fetch: six seconds between the click and the button saying what was
+  // clicked. Now the row shows the new scope straight away, the changes run
+  // one after another in their own queue, and the status that follows skips
+  // the fetch. The CLI's lock keeps them in order with everything else.
+  property var scopeOverrides: ({})
+  property var scopeQueue: []
+  property bool scopeAwaitingStatus: false
+  function setScope(id, scope) {
+    var next = {}
+    for (var k in root.scopeOverrides) next[k] = root.scopeOverrides[k]
+    next[id] = scope
+    root.scopeOverrides = next
+    var q = root.scopeQueue.filter(function(j) { return j.id !== id })
+    q.push({ id: id, scope: scope })
+    root.scopeQueue = q
+    if (!scopeProc.running) root.runNextScope()
+  }
+  function runNextScope() {
+    if (root.scopeQueue.length === 0) {
+      root.scopeAwaitingStatus = true
+      if (hostWidget) hostWidget.refresh(false)
+      return
+    }
+    var job = root.scopeQueue[0]
+    root.scopeQueue = root.scopeQueue.slice(1)
+    scopeProc.jobId = job.id
+    scopeProc.command = [root.cli, "scope", job.id, job.scope]
+    scopeProc.running = true
+  }
+  function dropScopeOverride(id) {
+    var next = {}
+    for (var k in root.scopeOverrides) if (k !== id) next[k] = root.scopeOverrides[k]
+    root.scopeOverrides = next
+  }
+  // A full status built after the last change finished is the truth. A brief
+  // one carries no rows, so it cannot confirm anything.
+  onRepoStateChanged: {
+    if (root.scopeAwaitingStatus && !scopeProc.running && root.scopeQueue.length === 0
+        && root.repoState && root.repoState.brief !== true) {
+      root.scopeOverrides = ({})
+      root.scopeAwaitingStatus = false
+    }
+  }
+
+  // ── adding files ──────────────────────────────────────────────────────────
   // The shipped manifest is what every Omarchy user plausibly has. Everything
-  // else is the user's, and adding to it has to be one click or the list stays
-  // whatever the plugin decided. `suggest` does the finding; the panel only
-  // ever proposes, and nothing is tracked until the button is pressed.
+  // else is the user's. `suggest` proposes and the picker lets a person choose
+  // anything, and nothing is tracked until a Track button is pressed.
   property var suggestions: []
   property bool suggestLoaded: false
   function loadSuggestions() {
     suggestProc.command = [root.cli, "suggest", "--json"]
     suggestProc.running = true
   }
+  property string addMode: "suggest"
+  function setAddMode(m) {
+    root.addMode = m
+    if (m === "browse" && !root.browseData.dir) root.browseTo(root.repoState.home || "~")
+  }
+  property var browseData: ({})
+  property bool browseLoading: browseProc.running
+  property string browsePending: ""
+  function browseTo(dir) {
+    if (browseProc.running) { root.browsePending = dir; return }
+    browseProc.command = [root.cli, "browse-json", dir]
+    browseProc.running = true
+  }
+  function browseUp() { if (root.browseData.parent) root.browseTo(root.browseData.parent) }
+  // A path typed in. One that is not absolute starts at the folder shown.
+  function trackTyped(text, secret) {
+    var t = String(text || "").trim()
+    if (t === "") return false
+    if (t.charAt(0) !== "/" && t.charAt(0) !== "~") t = (root.browseData.dir || root.repoState.home || "") + "/" + t
+    root.doTrack(t, secret ? "secret" : "config")
+    return true
+  }
+  function doTrack(path, kind) {
+    root.busyLabel = "Tracking " + root.pretty(path) + "…"
+    var cmd = [root.cli, "track", path]
+    if (kind === "secret") cmd.push("--secret")
+    trackProc.command = cmd
+    trackProc.running = true
+  }
+  function doUntrack(id) {
+    root.busyLabel = "Untracking " + id + "…"
+    trackProc.command = [root.cli, "untrack", id]
+    trackProc.running = true
+  }
 
   // ── the safety net, made visible ──────────────────────────────────────────
   // Every write this plugin makes to the machine keeps what it overwrote as
-  // <file>.bak.<epoch>. For four releases the only code that could find one was
-  // `purge`, which removes the whole plugin — eleven of them were sitting on
-  // the machine this was built on, unnamed and unreachable. A backup you cannot
-  // find is not a backup, and "I restored and it was wrong" is the exact moment
-  // somebody opens this tab.
+  // <file>.bak.<epoch>. A backup you cannot find is not a backup, and "I
+  // restored and it was wrong" is the exact moment somebody opens this tab.
   property var backups: []
   property bool backupsLoaded: false
   function loadBackups() {
@@ -381,23 +571,21 @@ Panel {
     undoProc.command = [root.cli, "backups", "--prune", "--apply"]
     undoProc.running = true
   }
-  function doTrack(path, kind) {
-    root.busyLabel = "Tracking " + path + "…"
-    var cmd = [root.cli, "track", path]
-    if (kind === "secret") cmd.push("--secret")
-    trackProc.command = cmd
-    trackProc.running = true
-  }
-  function doUntrack(id) {
-    root.busyLabel = "Untracking " + id + "…"
-    trackProc.command = [root.cli, "untrack", id]
-    trackProc.running = true
-  }
 
-  function doScope(id, scope) {
-    root.busyLabel = "Setting " + id + " to " + scope + "…"
-    fileSaveProc.command = [root.cli, "scope", id, scope]
-    fileSaveProc.running = true
+  // Copies that left the repo, by the commit that removed them. Git history
+  // kept them, and one button undoes one commit's deletions.
+  property var deletedList: []
+  function loadDeleted() {
+    if (deletedProc.running) return
+    deletedProc.command = [root.cli, "deleted", "--json"]
+    deletedProc.running = true
+  }
+  function askRecover(item) {
+    var names = (item.files || []).map(function(f) { return R.repoPathLabel(f).label })
+    root.ask("recover", item.sha,
+             "Bring back what " + item.short + " deleted?\n\n" + R.nameList(names, 10)
+             + "\n\nThe copies return to your repo, an entry that was untracked is tracked again, and each file is put back on this machine. Whatever is there now is kept as .bak.<epoch>.",
+             "Bring back")
   }
 
   // Controls that emit a burst of values (holding a stepper, dragging a
@@ -413,6 +601,41 @@ Panel {
     id: settingDebounce
     interval: 900
     onTriggered: if (root.pendingSettingId !== "") { root.doSetSetting(root.pendingSettingId, root.pendingSettingValue); root.pendingSettingId = "" }
+  }
+
+  // ── the plugin's own updates ──────────────────────────────────────────────
+  // The check asks the plugin's origin at most every six hours on its own, and
+  // always when "Check for updates" is pressed. An update goes through
+  // `omarchy plugin update`, which validates the new version and rolls back one
+  // that fails, and then the shell restarts to load it.
+  property var updateInfo: ({})
+  property bool updateCheckForced: false
+  property bool updateCheckedOnce: false
+  readonly property bool updateAvailable: root.updateInfo.available === true && root.updateInfo.installed === true
+  readonly property string updateTooltip: {
+    var u = root.updateInfo
+    if (u.available !== true) return "Ask GitHub whether a newer Replicant exists"
+    var lines = (u.commits || []).slice(0, 8).map(function(c) { return "  " + c.sha + "  " + c.subject })
+    return "Replicant " + u.latest + " is available. This machine has " + u.current + ".\n"
+         + lines.join("\n") + ((u.commits || []).length > 8 ? "\n  +" + (u.commits.length - 8) + " more" : "")
+         + (u.installed === true ? "" : "\nThis copy is a development checkout: update it with git pull.")
+  }
+  function checkUpdates(force) {
+    if (updateCheckProc.running) return
+    root.updateCheckForced = force === true
+    root.updateCheckedOnce = true
+    updateCheckProc.command = force === true ? [root.cli, "update-check", "--json", "--fetch"]
+                                             : [root.cli, "update-check", "--json"]
+    updateCheckProc.running = true
+  }
+  function askUpdate() {
+    var u = root.updateInfo
+    var lines = (u.commits || []).slice(0, 10).map(function(c) { return "  " + c.sha + "  " + c.subject })
+    root.ask("update", "",
+             "Update Replicant from " + u.current + " to " + u.latest + "?\n\n" + lines.join("\n")
+             + ((u.commits || []).length > 10 ? "\n  +" + (u.commits.length - 10) + " more" : "")
+             + "\n\nOmarchy's plugin update installs and checks it, and the shell restarts to load it. Your data repo is not touched.",
+             "Update")
   }
 
   // ── confirmations ─────────────────────────────────────────────────────────
@@ -437,17 +660,17 @@ Panel {
     else if (a === "restore-file") { root.busyLabel = "Restoring " + arg + "…"; dangerProc.command = [root.cli, "restore-file", arg] }
     else if (a === "reset-all")    { root.busyLabel = "Resetting everything…"; dangerProc.command = [root.cli, "reset-all", "--apply", "--yes"] }
     else if (a === "restore-all")  { root.busyLabel = "Restoring everything…"; dangerProc.command = [root.cli, "restore", "--apply", "--all", "--yes"] }
-    // --only with --yes, and no --all: passing --all alongside --only used to be
-    // required because --yes was only honoured through it, which read like a
-    // contradiction. It is not needed any more.
     else if (a === "restore-cat")  { root.busyLabel = "Restoring " + arg + "…"; dangerProc.command = [root.cli, "restore", "--apply", "--yes", "--only", arg] }
+    else if (a === "recover")      { root.busyLabel = "Bringing back " + arg.slice(0, 7) + "…"; dangerProc.command = [root.cli, "recover", arg, "--apply"] }
     else if (a === "install-theme")  { root.busyLabel = "Installing " + arg + "…"; dangerProc.command = [root.cli, "install-theme", arg] }
     else if (a === "install-plugin") { root.busyLabel = "Installing " + arg + "…"; dangerProc.command = [root.cli, "install-plugin", arg] }
     else if (a === "untrack")      { root.doUntrack(arg); return }
+    else if (a === "forget")       { root.busyLabel = "Forgetting " + arg + "…"; trackProc.command = [root.cli, "forget", arg]; trackProc.running = true; return }
     else if (a === "undo")          { root.doUndo(arg); return }
     else if (a === "prune-backups") { root.doPruneBackups(); return }
+    else if (a === "update")        { root.busyLabel = "Updating Replicant…"; updateProc.command = [root.cli, "update", "--yes", "--restart"]; updateProc.running = true; return }
     else return
-    root.lastOutput = root.busyLabel
+    dangerProc.label = a === "recover" ? "Bring back" : a.indexOf("install") === 0 ? "Install" : a.indexOf("reset") === 0 ? "Reset" : "Restore"
     dangerProc.running = true
   }
 
@@ -469,23 +692,26 @@ Panel {
     checkProc.command = [root.cli, "install-plugin", id, "--check"]
     checkProc.running = true
   }
-  CliProcess {
-    id: checkProc
-    onExited: function(c) {
-      root.busyLabel = ""
-      var p = root.pendingInstall
-      root.pendingInstall = null
-      if (!p) return
-      var facts = (checkProc.stdout.text + "\n" + checkProc.stderr.text).replace(/\x1b\[[0-9;]*m/g, "").trim()
-      if (facts === "") facts = "The marketplace check printed nothing."
-      root.ask("install-plugin", p.id, p.message + "\n\n" + facts, "Install")
-    }
-  }
 
-  // ── inline diff viewer ────────────────────────────────────────────────────
-  property bool diffOpen: false
-  property string diffTitle: ""
-  property string diffText: ""
+  // ── the reader ────────────────────────────────────────────────────────────
+  property bool viewerOpen: false
+  property string viewerTitle: ""
+  property string viewerText: ""
+  property string viewerKind: "output"
+  function openViewer(title, text, kind) {
+    root.viewerTitle = title
+    root.viewerText = text
+    root.viewerKind = kind || "output"
+    root.viewerOpen = true
+  }
+  function closeViewer() { root.viewerOpen = false }
+  // A dry run, read in full in the reader. It writes nothing.
+  function runPreview(title, args) {
+    if (previewProc.running) return
+    root.openViewer(title, "Working out what would change…", "output")
+    previewProc.command = [root.cli].concat(args)
+    previewProc.running = true
+  }
 
   // ── processes ─────────────────────────────────────────────────────────────
   // Every write refreshes status on exit, so the badges can never drift from
@@ -495,27 +721,80 @@ Panel {
     stderr: StdioCollector { waitForEnd: true }
   }
 
+  // The one line of the result bar (replicant.js, resultLine).
+  readonly property string resultLine: R.resultLine(root.lastOutput, root.lastOk)
+
   function finish(label, code, out, err) {
     root.busyLabel = ""
-    var text = (String(out || "") + "\n" + String(err || "")).replace(/\x1b\[[0-9;]*m/g, "").replace(/\n{3,}/g, "\n\n").trim()
+    var text = root.clean(String(out || "") + "\n" + String(err || ""))
+    root.lastOk = code === 0
+    root.lastTitle = label
     if (code !== 0) text = label + " failed (exit " + code + ")\n" + text
-    root.lastOutput = text.length > 1400 ? "…" + text.slice(-1400) : text
+    else if (text === "") text = label + ": done."
+    root.lastOutput = text.length > 20000 ? "…" + text.slice(-20000) : text
     root.refresh()
-    // Anything that writes to the machine leaves a new .bak behind it, so the
-    // list of them is stale the moment any of these finishes. It is one cheap
-    // call and it is the difference between an "If a restore went wrong"
-    // section that is about the restore you just did and one that is not.
+    // Anything that writes to the machine leaves a new .bak behind it, and
+    // anything that commits can delete a copy: both lists are stale now.
     root.loadBackups()
+    root.loadDeleted()
   }
 
   CliProcess { id: saveProc;     onExited: function(c){ root.finish("Save", c, saveProc.stdout.text, saveProc.stderr.text) } }
   CliProcess { id: pullProc;     onExited: function(c){ root.finish("Pull", c, pullProc.stdout.text, pullProc.stderr.text) } }
   CliProcess { id: backupProc;   onExited: function(c){ root.finish("Copy", c, backupProc.stdout.text, backupProc.stderr.text) } }
-  CliProcess { id: setProc;      onExited: function(c){ root.finish("Set", c, setProc.stdout.text, setProc.stderr.text) } }
+  CliProcess { id: setProc;      onExited: function(c){ root.finish("Setting", c, setProc.stdout.text, setProc.stderr.text) } }
   CliProcess { id: fileSaveProc; onExited: function(c){ root.finish("Save file", c, fileSaveProc.stdout.text, fileSaveProc.stderr.text) } }
-  CliProcess { id: dangerProc;   onExited: function(c){ root.finish("Restore", c, dangerProc.stdout.text, dangerProc.stderr.text) } }
+  CliProcess {
+    id: dangerProc
+    property string label: "Restore"
+    onExited: function(c){ root.finish(dangerProc.label, c, dangerProc.stdout.text, dangerProc.stderr.text) }
+  }
   CliProcess { id: undoProc;     onExited: function(c){ root.finish("Undo", c, undoProc.stdout.text, undoProc.stderr.text) } }
-  CliProcess { id: doctorProc;   onExited: function(c){ root.busyLabel = ""; root.lastOutput = (doctorProc.stdout.text + "\n" + doctorProc.stderr.text).replace(/\x1b\[[0-9;]*m/g, "").trim() } }
+  CliProcess { id: updateProc;   onExited: function(c){ root.finish("Update", c, updateProc.stdout.text, updateProc.stderr.text) } }
+  CliProcess {
+    id: doctorProc
+    onExited: function(c) {
+      root.busyLabel = ""
+      var text = root.clean(doctorProc.stdout.text + "\n" + doctorProc.stderr.text)
+      root.lastTitle = "Health check"
+      root.lastOk = text.indexOf("No problems found.") !== -1
+      root.lastOutput = text
+      root.openViewer("Health check", text, "output")
+    }
+  }
+  CliProcess {
+    id: previewProc
+    onExited: function(c) {
+      var text = root.clean(previewProc.stderr.text + "\n" + previewProc.stdout.text)
+      root.viewerText = text !== "" ? text : "Nothing would change."
+    }
+  }
+  CliProcess {
+    id: scopeProc
+    property string jobId: ""
+    onExited: function(c) {
+      if (c !== 0) {
+        root.lastOk = false
+        root.lastTitle = "Sync"
+        root.lastOutput = root.clean("Sync of " + scopeProc.jobId + " failed (exit " + c + ")\n"
+                                     + scopeProc.stdout.text + "\n" + scopeProc.stderr.text)
+        root.dropScopeOverride(scopeProc.jobId)
+      }
+      root.runNextScope()
+    }
+  }
+  CliProcess {
+    id: checkProc
+    onExited: function(c) {
+      root.busyLabel = ""
+      var p = root.pendingInstall
+      root.pendingInstall = null
+      if (!p) return
+      var facts = root.clean(checkProc.stdout.text + "\n" + checkProc.stderr.text)
+      if (facts === "") facts = "The marketplace check printed nothing."
+      root.ask("install-plugin", p.id, p.message + "\n\n" + facts, "Install")
+    }
+  }
   Process {
     id: editProc
     stdout: StdioCollector {
@@ -529,12 +808,16 @@ Panel {
     }
   }
 
-  // Tracking changes the list the rows come from, so the suggestions have to be
-  // re-read alongside the status — otherwise a file you just tracked stays in
-  // the "not tracked yet" list until the panel is reopened.
+  // Tracking changes the list the rows come from, so the suggestions and the
+  // picker are read again with the status. Otherwise a file you just tracked
+  // stays in "not tracked yet" until the panel is reopened.
   CliProcess {
     id: trackProc
-    onExited: function(c){ root.finish("Track", c, trackProc.stdout.text, trackProc.stderr.text); root.loadSuggestions() }
+    onExited: function(c) {
+      root.finish("Track", c, trackProc.stdout.text, trackProc.stderr.text)
+      root.loadSuggestions()
+      if (root.browseData.dir) root.browseTo(root.browseData.dir)
+    }
   }
 
   Process {
@@ -549,12 +832,53 @@ Panel {
   }
 
   Process {
+    id: deletedProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: { try { root.deletedList = JSON.parse(text || "[]") } catch (e) { root.deletedList = [] } }
+    }
+  }
+
+  Process {
     id: suggestProc
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
         try { root.suggestions = JSON.parse(text || "[]") } catch (e) { root.suggestions = [] }
         root.suggestLoaded = true
+      }
+    }
+  }
+
+  Process {
+    id: browseProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: { try { root.browseData = JSON.parse(text || "{}") } catch (e) { root.browseData = ({ error: "could not be read", entries: [] }) } }
+    }
+    onExited: function(c) {
+      if (root.browsePending !== "") {
+        var d = root.browsePending
+        root.browsePending = ""
+        root.browseTo(d)
+      }
+    }
+  }
+
+  Process {
+    id: updateCheckProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try { root.updateInfo = JSON.parse(text || "{}") } catch (e) { root.updateInfo = ({}) }
+        if (!root.updateCheckForced) return
+        var u = root.updateInfo
+        root.lastTitle = "Check for updates"
+        root.lastOk = u.fetch_failed !== true
+        root.lastOutput = u.fetch_failed === true ? "Could not reach " + (u.origin || "GitHub") + ". Try again later."
+                        : u.checkout !== true ? "This copy of Replicant is not a git checkout, so it cannot update itself."
+                        : u.available === true ? "Replicant " + u.latest + " is available. Press Update in the header."
+                        : "Replicant " + u.current + " is up to date."
       }
     }
   }
@@ -573,14 +897,13 @@ Panel {
     id: diffProc
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.diffText = text && text.trim() !== "" ? text : "No differences."
+      onStreamFinished: root.viewerText = text && text.trim() !== "" ? text : "No differences."
     }
-    stderr: StdioCollector { waitForEnd: true; onStreamFinished: if (text && text.trim() !== "") root.diffText = text }
+    stderr: StdioCollector { waitForEnd: true; onStreamFinished: if (text && text.trim() !== "") root.viewerText = text }
   }
 
   Process {
     id: logProc
-    command: [root.cli, "log", "--json", "-n", "6"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: { try { root.recent = JSON.parse(text || "[]") } catch (e) { root.recent = [] } }
@@ -593,6 +916,8 @@ Panel {
   function runVisible(cmd) { root.run("omarchy-launch-floating-terminal-with-presentation " + root.shellQuote(cmd)) }
   function doCreate() { root.runVisible(root.cli + " create --push"); root.close() }
   function doClone()  { root.runVisible(root.cli + " clone"); root.close() }
+  function openUrl(url) { root.run("xdg-open " + root.shellQuote(url)); root.close() }
+  function openRepoFolder() { root.openUrl(root.repoState.repo_dir || "") }
 
   // ── panel plumbing ────────────────────────────────────────────────────────
   implicitWidth: hostButton.implicitWidth
@@ -608,8 +933,10 @@ Panel {
     if (!root.shortcutsLoaded) root.loadShortcuts()
     if (!root.suggestLoaded) root.loadSuggestions()
     root.loadBackups()
+    root.loadDeleted()
+    if (!root.updateCheckedOnce) root.checkUpdates(false)
   }
-  function close() { root.opened = false; root.diffOpen = false; confirmDialog.opened = false }
+  function close() { root.opened = false; root.viewerOpen = false; confirmDialog.opened = false; root.focusedField = null }
   function toggle() { root.opened ? root.close() : root.open() }
   // Open straight onto one tab. The keys 1-4 already do this for someone
   // looking at the panel; this is the same jump for a keybinding or a script,
@@ -620,6 +947,7 @@ Panel {
     root.activeTab = name
     return true
   }
+  onActiveTabChanged: body.contentY = 0
 
   KeyboardPanel {
     id: panel
@@ -628,23 +956,23 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(560))
+    contentWidth: panel.fittedContentWidth(Style.space(580))
     contentHeight: panel.fittedContentHeight(
       header.implicitHeight + Style.space(10) + body.implicitHeight
-        + (footer.visible ? footer.implicitHeight + Style.space(10) : 0),
-      Style.space(880))
+        + (footer.visible ? footer.implicitHeight + Style.space(6) : 0),
+      Style.space(900))
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: searchField.activeFocus
+      blocked: root.focusedField !== null
       onCloseRequested: {
-        if (root.diffOpen) root.diffOpen = false
+        if (root.viewerOpen) root.closeViewer()
         else if (confirmDialog.opened) confirmDialog.opened = false
         else root.close()
       }
       onTextKey: function(t) {
-        if (root.diffOpen || confirmDialog.opened) return
+        if (root.viewerOpen || confirmDialog.opened) return
         if (t === "1") root.activeTab = "overview"
         else if (t === "2") root.activeTab = "configs"
         else if (t === "3") root.activeTab = "settings"
@@ -656,17 +984,16 @@ Panel {
         else if (t === "p" && root.ready && !root.busy) root.doPull()
         else if (t === "c") root.closeAllCards()
         // Straight to "what else could I be backing up?". The card lives at the
-        // bottom of a long list on purpose — it must not compete with the areas —
-        // which makes it the one thing in the panel that is a scroll away.
+        // bottom of a long list on purpose, which makes it the one thing in the
+        // panel that is a scroll away.
         else if (t === "a") {
           root.activeTab = "configs"
           if (!root.isOpen("__suggest")) root.toggleCard("__suggest")
         }
-        // "/" filters where you already are. It used to always jump to Configs,
-        // which was right when that was the only list with a filter.
+        // "/" filters where you already are.
         else if (t === "/") {
-          if (root.activeTab === "settings") settingSearchField.forceActiveFocus()
-          else { root.activeTab = "configs"; searchField.forceActiveFocus() }
+          if (root.activeTab === "settings") settingsTab.focusSearch()
+          else { root.activeTab = "configs"; configsTab.focusSearch() }
         }
       }
 
@@ -678,35 +1005,13 @@ Panel {
         anchors.right: parent.right
         spacing: Style.space(8)
 
-        PanelHero {
-          width: parent.width
-          title: root.repoState.remote_name ? root.repoState.remote_name : "Omarchy Replicant"
-          meta: root.ready
-                ? (root.summary + "  ·  " + (root.repoState.machine || ""))
-                : root.summary
-          foreground: root.fg
-          fontFamily: root.ff
-          iconComponent: Component {
-            Text { text: root.icReplicant; color: root.fg; font.family: root.ff; font.pixelSize: Style.font.display }
-          }
-          trailingControl: Component {
-            Button {
-              iconText: root.icRefresh
-              iconSpinning: root.busy
-              bordered: false
-              foreground: root.busy ? Color.accent : root.dim
-              fontFamily: root.ff
-              tooltipText: root.busy ? root.busyLabel : "Re-check this machine against the repo  (r)"
-              onClicked: root.refresh()
-            }
-          }
-        }
+        PanelHeader { panel: root; width: parent.width }
 
-        // One actionable sentence, and only when there is something to act on.
-        // A banner that is always present stops being read.
+        // One actionable sentence, and only when there is something to act on
+        // and the Overview's status card is not already saying it.
         BorderSurface {
           width: parent.width
-          visible: root.advice !== ""
+          visible: root.advice !== "" && root.activeTab !== "overview"
           implicitHeight: Style.space(30)
           radius: Style.cornerRadius
           color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.10)
@@ -747,7 +1052,7 @@ Panel {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: footer.visible ? footer.top : parent.bottom
-        anchors.bottomMargin: footer.visible ? Style.space(10) : 0
+        anchors.bottomMargin: footer.visible ? Style.space(6) : 0
         implicitHeight: content.implicitHeight
         contentHeight: content.implicitHeight
         contentWidth: width
@@ -802,665 +1107,24 @@ Panel {
             }
           }
 
-          // ══════════════ Overview ══════════════
-          Column {
-            width: parent.width
-            spacing: Style.space(10)
-            visible: root.ready && root.activeTab === "overview"
-
-            Row {
-              width: parent.width
-              spacing: Style.space(8)
-              // Five only when the fifth has something to say. A card that reads
-              // 0 every day of the year is a card nobody looks at any more.
-              // Secrets included: the Configs tab lists them as tracked files
-              // like any other, and the count left them out.
-              StatCard { panel: root; columns: root.statColumns; label: "tracked"
-                         value: String((root.repoState.configs || []).length + (root.repoState.secrets || []).length) }
-              StatCard { panel: root; columns: root.statColumns; label: "unsaved";  value: String(root.nDirty); highlight: root.nDirty > 0 }
-              StatCard { panel: root; columns: root.statColumns; label: "to restore"; value: String(root.nIncoming)
-                         highlight: root.nIncoming > 0; highlightColor: root.warnColor
-                         visible: root.nIncoming > 0 }
-              StatCard { panel: root; columns: root.statColumns; label: "to pull";  value: String(root.nBehind);      highlight: root.nBehind > 0 }
-              StatCard { panel: root; columns: root.statColumns; label: "switched off"; value: String(root.countOff) }
-            }
-
-            Row {
-              width: parent.width
-              spacing: Style.space(8)
-              Button {
-                text: "Save to GitHub"; iconText: root.icPush; bordered: true
-                foreground: root.fg; accent: Color.accent; fontFamily: root.ff
-                iconSpinning: saveProc.running
-                enabled: root.ready && !root.busy
-                tooltipText: "Copy this machine into the repo, commit and push  (s)"
-                onClicked: root.doSavegame()
-              }
-              Button {
-                text: "Pull"; iconText: root.icPull; bordered: root.nBehind > 0
-                foreground: root.nBehind > 0 ? Color.accent : root.fg; accent: Color.accent; fontFamily: root.ff
-                iconSpinning: pullProc.running
-                enabled: root.ready && !root.busy
-                tooltipText: "Bring down what another machine saved  (p)"
-                onClicked: root.doPull()
-              }
-              // Two verbs here, the two a person comes for. The copy-only action
-              // sat beside them as a third choice of equal weight; it is a tool,
-              // and it now lives with the other tools at the foot of this tab.
-            }
-
-            // The facts you would otherwise go and look up, in the units a
-            // person thinks in: "10 min", not "600".
-            BorderSurface {
-              width: parent.width
-              implicitHeight: factsCol.implicitHeight + Style.spacing.controlPaddingY * 2
-              radius: Style.cornerRadius
-              color: Style.controlFill(false, false, root.fg, Color.accent)
-              borderSpec: Border.controlSpec("normal", root.fg, Color.accent)
-              Column {
-                id: factsCol
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.topMargin: Style.spacing.controlPaddingY
-                anchors.leftMargin: Style.spacing.rowPaddingX
-                anchors.rightMargin: Style.spacing.rowPaddingX
-                spacing: Style.space(3)
-                FactRow { panel: root; label: "Remote";      value: root.repoState.remote_name || "—" }
-                FactRow { panel: root; label: "Branch";      value: (root.repoState.branch || "main") + (root.nAhead || root.nBehind ? "   ↑" + root.nAhead + " ↓" + root.nBehind : "") }
-                FactRow { panel: root; label: "This machine"; value: root.repoState.machine || "—" }
-                // No "Last save" row here. It printed the date and subject of the
-                // newest commit — which is, verbatim, the first line of the
-                // Recent saves list three rows further down the same screen,
-                // where it has a column for the date and room for the subject
-                // instead of eliding it.
-                FactRow { panel: root; label: "Theme";       value: root.settingText("theme.current") }
-                FactRow { panel: root; label: "Bar position"; value: root.settingText("bar.position") }
-                FactRow { panel: root; label: "Lock screen"; value: root.settingText("idle.lock") }
-                FactRow { panel: root; label: "Profile";     value: root.profileName + "  ·  " + R.plural(root.scopedCount, "file") + " kept per profile" }
-                FactRow { panel: root; label: "Plugin";      value: "omarchy-replicant " + (root.repoState.plugin_version || "?") }
-              }
-            }
-
-            // Shown from the first machine onward, because the profile it is in
-            // decides what it saves — that matters before the second one exists,
-            // not after.
-            Column {
-              width: parent.width
-              spacing: Style.space(4)
-              visible: root.ready
-              PanelSectionHeader { width: parent.width; text: "Machines & profiles"; foreground: root.fg; fontFamily: root.ff }
-              Repeater {
-                model: root.repoState.machines || []
-                delegate: Item {
-                  id: machineRow
-                  required property var modelData
-                  width: content.width
-                  implicitHeight: Style.space(20)
-                  Row {
-                    anchors.left: parent.left
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: Style.space(8)
-                    Text {
-                      text: root.icMachine
-                      color: machineRow.modelData.current ? Color.accent : root.dim
-                      font.family: root.ff; font.pixelSize: Style.font.caption
-                    }
-                    Text {
-                      text: machineRow.modelData.name + (machineRow.modelData.current ? "  (this one)" : "")
-                      color: root.fg; font.family: root.ff; font.pixelSize: Style.font.caption
-                    }
-                    Text {
-                      // A machine with no explicit assignment guessed from its
-                      // own chassis; say so rather than showing an empty column.
-                      // The word "profile" is not decoration: without it the row
-                      // read "omarchy (this one) laptop", which looks like two
-                      // machines on a line whose whole subject is one.
-                      text: machineRow.modelData.profile
-                          ? "profile " + machineRow.modelData.profile
-                          : (machineRow.modelData.current ? "profile " + root.profileName + " (guessed)" : "no profile")
-                      color: Color.accent; font.family: root.ff; font.pixelSize: Style.font.caption
-                    }
-                    Text {
-                      text: machineRow.modelData.last_save ? "last saved " + machineRow.modelData.last_save : "no saves yet"
-                      color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
-                    }
-                  }
-                }
-              }
-            }
-
-            PanelSeparator { width: parent.width }
-            PanelSectionHeader { width: parent.width; text: "Recent saves"; foreground: root.fg; fontFamily: root.ff }
-            Text {
-              width: parent.width
-              visible: root.recent.length === 0
-              text: "Nothing saved yet."
-              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
-            }
-            Column {
-              width: parent.width
-              spacing: Style.space(2)
-              Repeater {
-                model: root.recent
-                delegate: Item {
-                  id: recentRow
-                  required property var modelData
-                  width: content.width
-                  implicitHeight: Style.space(20)
-                  Row {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: Style.space(10)
-                    Text {
-                      width: Style.space(92)
-                      text: recentRow.modelData.date
-                      color: root.dim; font.family: root.mono; font.pixelSize: Style.font.caption
-                    }
-                    Text {
-                      width: parent.width - Style.space(102)
-                      // A run of identical saves is collapsed by core_log; the
-                      // count is what says the four inventory commits are still
-                      // accounted for and not quietly dropped.
-                      text: recentRow.modelData.subject
-                          + ((recentRow.modelData.count || 1) > 1 ? "   ×" + recentRow.modelData.count : "")
-                      color: root.fg; font.family: root.ff; font.pixelSize: Style.font.caption
-                      elide: Text.ElideRight
-                    }
-                  }
-                }
-              }
-            }
-
-            PanelSeparator { width: parent.width }
-            Row {
-              spacing: Style.space(8)
-              Button {
-                text: "Health check"; iconText: root.icShield; bordered: false
-                foreground: root.fg; fontFamily: root.ff
-                enabled: !doctorProc.running
-                tooltipText: "Verify login, that the repo is private, hooks and permissions"
-                onClicked: root.doDoctor()
-              }
-              Button {
-                text: "Open repo folder"; iconText: root.icFolder; bordered: false
-                foreground: root.fg; fontFamily: root.ff
-                tooltipText: root.repoState.repo_dir || ""
-                onClicked: { root.run("xdg-open " + root.shellQuote(root.repoState.repo_dir || "")); root.close() }
-              }
-              Button {
-                text: "Copy without saving"; iconText: root.icCopy; bordered: false
-                foreground: root.fg; fontFamily: root.ff
-                enabled: !root.busy
-                tooltipText: "Copy this machine into the local repo; nothing is committed or pushed"
-                onClicked: root.doBackup()
-              }
-            }
-          }
-
-          // ══════════════ Configs ══════════════
-          Column {
-            width: parent.width
-            spacing: Style.space(8)
-            visible: root.ready && root.activeTab === "configs"
-
-            Row {
-              width: parent.width
-              spacing: Style.space(8)
-              TextField {
-                id: searchField
-                width: parent.width - collapseBtn.width - Style.space(8)
-                placeholderText: "Filter by name or path…   (/)"
-                foreground: root.fg
-                accent: Color.accent
-                font.family: root.ff
-                onTextChanged: root.fileSearch = text
-                Keys.onEscapePressed: { text = ""; keyCatcher.forceActiveFocus() }
-              }
-              Button {
-                id: collapseBtn
-                text: "Collapse all"; bordered: false
-                foreground: root.dim; fontFamily: root.ff
-                tooltipText: "Close every open area  (c)"
-                onClicked: root.closeAllCards()
-              }
-            }
-
-            // One line, not three paragraphs. This tab used to open with six
-            // lines of grey text before a single file appeared — an
-            // introduction, a badge legend and a scope legend — and every one
-            // of them is read once and then skipped forever. The badge is the
-            // only thing here with no other explanation; the scope button
-            // states its own label and carries a tooltip spelling out all
-            // three, so its legend was saying a second time what the control
-            // already says.
-            Text {
-              width: parent.width
-              text: "● unsaved    ↓ to restore    ↑ to push    ◆ saved    ○ default    ⊘ off    · not here"
-              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
-
-            Text {
-              width: parent.width
-              visible: root.categoryCards.length === 0
-              text: "Nothing matches that filter."
-              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
-            }
-
-            Repeater {
-              model: root.categoryCards
-              delegate: CategoryCard { panel: root;
-                required property var modelData
-                card: modelData
-                width: content.width
-              }
-            }
-
-            // The list above is what the plugin ships with plus what you have
-            // already added. This is how you add more — the one card that is
-            // about files NOT tracked yet, kept last so it never competes with
-            // the areas, and collapsed so it is an offer rather than a chore.
-            SuggestCard { panel: root; width: content.width }
-          }
-
-          // ══════════════ Settings ══════════════
-          Column {
-            width: parent.width
-            spacing: Style.space(8)
-            visible: root.ready && root.activeTab === "settings"
-
-            Text {
-              width: parent.width
-              // Three sentences became one. What the two revert buttons do is
-              // already on their own tooltips, where somebody wondering about
-              // a button actually looks.
-              text: "Changing a value writes it to the real config file, applies it, and commits it."
-              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
-            }
-
-            Row {
-              width: parent.width
-              spacing: Style.space(8)
-              TextField {
-                id: settingSearchField
-                width: parent.width - settingsCollapseBtn.width - Style.space(8)
-                placeholderText: "Filter settings…   (/)"
-                foreground: root.fg
-                accent: Color.accent
-                font.family: root.ff
-                onTextChanged: root.settingSearch = text
-                Keys.onEscapePressed: { text = ""; keyCatcher.forceActiveFocus() }
-              }
-              Button {
-                id: settingsCollapseBtn
-                text: "Collapse all"; bordered: false
-                foreground: root.dim; fontFamily: root.ff
-                tooltipText: "Close every open group  (c)"
-                onClicked: root.closeAllCards()
-              }
-            }
-
-            Repeater {
-              model: root.settingGroups
-              delegate: SettingCard { panel: root;
-                required property var modelData
-                group: modelData
-                width: content.width
-              }
-            }
-
-            Text {
-              width: parent.width
-              visible: root.settingGroups.length === 0
-              text: "Nothing matches that filter."
-              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
-            }
-          }
-
-          // ══════════════ Restore ══════════════
-          Column {
-            width: parent.width
-            spacing: Style.space(10)
-            visible: root.ready && root.activeTab === "restore"
-
-            Text {
-              width: parent.width
-              text: "Two different ways back"
-              color: root.fg; font.family: root.ff; font.pixelSize: Style.font.title; font.bold: true
-            }
-            Text {
-              width: parent.width
-              text: "Both preview first, and both keep a .bak.<epoch> copy of every file they overwrite."
-              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
-            }
-
-            RestoreCard { panel: root;
-              width: parent.width
-              title: "Restore from GitHub"
-              body: "Brings every config, secret and setting saved in your repo down onto this machine — and then runs whatever Omarchy needs to make it take effect: the theme is re-applied with omarchy theme set, Hyprland is reloaded. Third-party plugins and themes are never reinstalled automatically — pending ones are listed below, one Install button each."
-              actionText: "Restore everything"
-              actionAccent: true
-              onPreview: {
-                root.busyLabel = "Previewing…"
-                root.lastOutput = "Working out what would change…"
-                dangerProc.command = [root.cli, "restore", "--dry-run"]
-                dangerProc.running = true
-              }
-              onAct: root.ask("restore-all", "",
-                "Restore EVERYTHING from your GitHub repo onto this machine?\n\nEvery file it overwrites is backed up as .bak.<epoch> first.",
-                "Restore")
-            }
-
-            RestoreCard { panel: root;
-              width: parent.width
-              title: "Reset to Omarchy defaults"
-              body: "Throws away your changes to every file Omarchy ships a default for and puts the factory version back, through omarchy refresh config. Your repo is not touched, so you can restore from it afterwards."
-              actionText: "Reset to factory"
-              actionAccent: false
-              onPreview: {
-                root.busyLabel = "Previewing…"
-                root.lastOutput = "Working out what would be reset…"
-                dangerProc.command = [root.cli, "reset-all", "--dry-run"]
-                dangerProc.running = true
-              }
-              onAct: root.ask("reset-all", "",
-                "Reset every customised file back to the Omarchy default?\n\nYour repo keeps its copy, and each file is backed up as .bak.<epoch> first.",
-                "Reset")
-            }
-
-            PanelSeparator { width: parent.width }
-            PanelSectionHeader { width: parent.width; text: "Or just one area"; foreground: root.fg; fontFamily: root.ff }
-            Text {
-              width: parent.width
-              text: "Restores one area from your repo and applies it the way Omarchy expects."
-              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
-            }
-            Repeater {
-              model: root.categoryCards
-              delegate: Item {
-                id: areaRow
-                required property var modelData
-                width: content.width
-                implicitHeight: Style.space(30)
-                Row {
-                  anchors.left: parent.left
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  spacing: Style.space(8)
-                  Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: Style.space(18)
-                    text: areaRow.modelData.icon
-                    color: root.dim; font.family: root.ff; font.pixelSize: Style.font.body
-                  }
-                  Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width - Style.space(18) - areaBtn.width - areaPreview.width - parent.spacing * 3
-                    text: areaRow.modelData.label + "   " + R.plural(areaRow.modelData.count, "file")
-                    color: root.fg; font.family: root.ff; font.pixelSize: Style.font.caption
-                    elide: Text.ElideRight
-                  }
-                  // Both whole-machine cards above offer Preview before they
-                  // offer the button that writes. These rows write to the same
-                  // files with the same force and offered only the button —
-                  // "look first" was available for the biggest action in the
-                  // panel and not for the ones anybody actually presses.
-                  Button {
-                    id: areaPreview
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "Preview"; iconText: root.icDiff; bordered: false
-                    foreground: root.dim; fontFamily: root.ff
-                    enabled: !root.busy
-                    tooltipText: "Show what restoring " + areaRow.modelData.label + " would change — writes nothing"
-                    onClicked: {
-                      root.busyLabel = "Previewing…"
-                      root.lastOutput = "Working out what would change in " + areaRow.modelData.label + "…"
-                      dangerProc.command = [root.cli, "restore", "--dry-run", "--only", areaRow.modelData.id]
-                      dangerProc.running = true
-                    }
-                  }
-                  Button {
-                    id: areaBtn
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "Restore"; iconText: root.icFromRepo; bordered: false
-                    foreground: root.fg; fontFamily: root.ff
-                    enabled: !root.busy
-                    tooltipText: areaRow.modelData.method
-                    onClicked: root.ask("restore-cat", areaRow.modelData.id,
-                      "Restore " + areaRow.modelData.label + " from your repo?\n\n" + areaRow.modelData.method + "\n\nEvery file it overwrites is backed up as .bak.<epoch> first.",
-                      "Restore")
-                  }
-                }
-              }
-            }
-
-            PanelSeparator { width: parent.width; visible: root.pendingReinstalls.length > 0 }
-            PanelSectionHeader {
-              width: parent.width
-              text: "Third-party plugins & themes"
-              foreground: root.fg; fontFamily: root.ff
-              visible: root.pendingReinstalls.length > 0
-            }
-            Text {
-              width: parent.width
-              visible: root.pendingReinstalls.length > 0
-              text: "Recorded in your inventory but not installed here. These come from someone else's repo, so restoring never fetches them on its own — Install brings in whatever is at that address right now."
-              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
-            }
-            Repeater {
-              model: root.pendingReinstalls
-              delegate: Item {
-                id: reinstallRow
-                required property var modelData
-                width: content.width
-                implicitHeight: Style.space(30)
-                Row {
-                  anchors.left: parent.left
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  spacing: Style.space(8)
-                  Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: Style.space(18)
-                    text: root.icFolder
-                    color: root.dim; font.family: root.ff; font.pixelSize: Style.font.body
-                  }
-                  Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width - Style.space(18) - reinstallBtn.width - parent.spacing * 2
-                    text: reinstallRow.modelData.id + "   " + reinstallRow.modelData.origin
-                    color: root.fg; font.family: root.ff; font.pixelSize: Style.font.caption
-                    elide: Text.ElideRight
-                  }
-                  Button {
-                    id: reinstallBtn
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "Install"; iconText: root.icFromRepo; bordered: false
-                    foreground: root.fg; fontFamily: root.ff
-                    enabled: !root.busy
-                    tooltipText: "Fetch " + reinstallRow.modelData.origin + " and install it now"
-                    onClicked: root.askInstall(reinstallRow.modelData.kind,
-                                               reinstallRow.modelData.id,
-                                               reinstallRow.modelData.origin)
-                  }
-                }
-              }
-            }
-
-            // ── the safety net ────────────────────────────────────────────
-            // Everything above this line promises "a .bak.<epoch> is kept".
-            // Until 0.7.3 that promise had no way of being collected on: the
-            // only code that could find a .bak was purge, which removes the
-            // plugin. This is the bottom of the Restore tab because that is
-            // where somebody is standing when they need it.
-            PanelSeparator { width: parent.width; visible: root.backupRows.length > 0 }
-            PanelSectionHeader {
-              width: parent.width
-              text: "If a restore went wrong"
-              foreground: root.fg; fontFamily: root.ff
-              visible: root.backupRows.length > 0
-            }
-            Text {
-              width: parent.width
-              visible: root.backupRows.length > 0
-              text: "Every write kept the version it replaced. Undo swaps the newest one back — and keeps what it replaces, so this is reversible too."
-              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
-            }
-            Repeater {
-              model: root.backupRows
-              delegate: Item {
-                id: bakRow
-                required property var modelData
-                width: content.width
-                implicitHeight: Style.space(30)
-                Row {
-                  anchors.left: parent.left
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  spacing: Style.space(8)
-                  Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width - undoBtn.width - parent.spacing
-                    // The id, when it was made, and whether it is any different
-                    // from what is there now. "same" is the one you can drop
-                    // without thinking; it is also the one that would make Undo
-                    // do nothing, which is worth saying before it is pressed.
-                    text: bakRow.modelData.id + "   " + R.agoText(bakRow.modelData.epoch)
-                        + (bakRow.modelData.state === "same" ? "   ·  identical to the file you have"
-                          : bakRow.modelData.state === "gone" ? "   ·  the file itself is gone" : "")
-                        + (bakRow.modelData.older > 0 ? "   ·  +" + bakRow.modelData.older + " older" : "")
-                    color: root.fg; font.family: root.ff; font.pixelSize: Style.font.caption
-                    elide: Text.ElideRight
-                  }
-                  Button {
-                    id: undoBtn
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "Undo"; iconText: root.icDefault; bordered: false
-                    foreground: bakRow.modelData.state === "same" ? root.dim : root.fg
-                    fontFamily: root.ff
-                    enabled: !root.busy && bakRow.modelData.state !== "same"
-                    tooltipText: bakRow.modelData.state === "same"
-                      ? "This backup is identical to the file you have — undoing it would change nothing"
-                      : "Put this version back, and keep the current one as the new .bak"
-                    onClicked: root.ask("undo", bakRow.modelData.id,
-                      "Put back the version of " + bakRow.modelData.id + " from "
-                        + R.agoText(bakRow.modelData.epoch) + "?\n\nThe version you have now becomes the new .bak.<epoch>, so this can be undone again.",
-                      "Undo")
-                  }
-                }
-              }
-            }
-            Row {
-              width: parent.width
-              visible: root.backupRows.length > 0
-              spacing: Style.space(8)
-              Button {
-                text: "Remove all backups"; iconText: root.icUntrack; bordered: false
-                foreground: root.dim; fontFamily: root.ff
-                enabled: !root.busy
-                tooltipText: "Delete every .bak.<epoch> beside your configs. Your repo is not touched."
-                onClicked: root.ask("prune-backups", "",
-                  "Delete every .bak.<epoch> next to your configs?\n\nThis is the only copy of what those files looked like before each restore. Your repo is not touched.",
-                  "Remove")
-              }
-            }
-          }
+          OverviewTab { id: overviewTab; panel: root; width: content.width; visible: root.ready && root.activeTab === "overview" }
+          ConfigsTab { id: configsTab; panel: root; width: content.width; visible: root.ready && root.activeTab === "configs" }
+          SettingsTab { id: settingsTab; panel: root; width: content.width; visible: root.ready && root.activeTab === "settings" }
+          RestoreTab { id: restoreTab; panel: root; width: content.width; visible: root.ready && root.activeTab === "restore" }
         }
       }
 
       // ─────────────────────────────── footer (fixed) ────────────────────────
-      Column {
+      ResultBar {
         id: footer
+        panel: root
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        spacing: Style.space(4)
-        visible: root.lastOutput !== ""
-
-        PanelSeparator { width: parent.width }
-        Row {
-          width: parent.width
-          spacing: Style.space(6)
-          Text {
-            width: parent.width - clearBtn.width - Style.space(6)
-            text: root.lastOutput
-            color: root.dim
-            font.family: root.mono
-            font.pixelSize: Style.font.caption
-            wrapMode: Text.Wrap
-            maximumLineCount: 6
-            elide: Text.ElideRight
-          }
-          Button {
-            id: clearBtn
-            iconText: root.icClose; bordered: false; foreground: root.dim; fontFamily: root.ff
-            tooltipText: "Dismiss"
-            onClicked: root.lastOutput = ""
-          }
-        }
       }
 
       // ─────────────────────────────── overlays ──────────────────────────────
-      Rectangle {
-        anchors.fill: parent
-        visible: root.diffOpen
-        z: 50
-        color: Color.background
-
-        Column {
-          anchors.fill: parent
-          spacing: Style.space(8)
-
-          Row {
-            width: parent.width
-            spacing: Style.space(8)
-            Text {
-              width: parent.width - closeDiff.width - Style.space(8)
-              text: root.diffTitle
-              color: root.fg; font.family: root.ff; font.pixelSize: Style.font.title
-              font.bold: true; elide: Text.ElideMiddle
-            }
-            Button {
-              id: closeDiff
-              text: "Close"; bordered: false
-              foreground: root.fg; fontFamily: root.ff
-              onClicked: root.diffOpen = false
-            }
-          }
-          PanelSeparator { width: parent.width }
-
-          Flickable {
-            id: diffScroll
-            width: parent.width
-            height: parent.height - diffScroll.y
-            contentWidth: Math.max(width, diffBody.implicitWidth)
-            contentHeight: diffBody.implicitHeight
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-
-            Column {
-              id: diffBody
-              Repeater {
-                model: root.diffText.split("\n")
-                delegate: Text {
-                  required property string modelData
-                  text: modelData === "" ? " " : modelData
-                  font.family: root.mono
-                  font.pixelSize: Style.font.caption
-                  textFormat: Text.PlainText
-                  color: modelData.charAt(0) === "+" ? root.okColor
-                       : modelData.charAt(0) === "-" ? Color.urgent
-                       : modelData.charAt(0) === "@" ? Color.accent
-                       : modelData.charAt(0) === "#" ? root.dim
-                       : root.fg
-                }
-              }
-            }
-          }
-        }
-      }
+      TextViewer { panel: root; anchors.fill: parent; z: 50 }
 
       ConfirmDialog {
         id: confirmDialog
@@ -1474,7 +1138,4 @@ Panel {
       }
     }
   }
-
-  // ══════════════════════════ reusable pieces ══════════════════════════════
-
 }

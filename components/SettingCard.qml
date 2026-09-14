@@ -10,11 +10,14 @@ BorderSurface {
   // The panel this belongs to. Every value and every action comes from it.
   property var panel
   property var group: ({})
-  readonly property bool expanded: panel.isOpen(sc.group.id)
+  // Open while a filter is on, as on the Configs tab: the filter already
+  // chose the rows, and a closed card would hide the answer.
+  readonly property bool expanded: panel.isOpen(sc.group.id) || panel.settingFiltering
 
   implicitHeight: scCol.implicitHeight
   radius: Style.cornerRadius
-  color: Style.controlFill(false, false, panel.fg, Color.accent)
+  color: sc.group.changed > 0 ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.05)
+                              : Style.controlFill(false, false, panel.fg, Color.accent)
   borderSpec: Border.controlSpec(sc.expanded ? "focus" : "normal", panel.fg, Color.accent)
 
   Column {

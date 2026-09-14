@@ -1030,7 +1030,8 @@ for st in $core_states; do
     off)      word="off" ;;
     missing)  word="not here" ;;
   esac
-  check_true "the legend names '$st'" grep -qF "$word" <(grep -F 'unsaved    ' "$panel")
+  # The legend is on the Configs tab, which is a part in components/.
+  check_true "the legend names '$st'" grep -qF "$word" <(grep -hF 'unsaved    ' "$panel" "$HERE"/../components/*.qml)
   check_true "the README names '$st'" grep -qF "$word" "$readme"
 done
 

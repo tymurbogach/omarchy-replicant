@@ -65,11 +65,11 @@ Item {
       anchors.verticalCenter: parent.verticalCenter
       anchors.leftMargin: Style.spacing.rowPaddingX
       anchors.rightMargin: Style.spacing.rowPaddingX
-      spacing: Style.space(8)
+      spacing: Style.space(10)
 
       Text {
         anchors.verticalCenter: parent.verticalCenter
-        width: Style.space(14)
+        width: Style.space(20)
         text: R.stateGlyph(frow.syncState)
         color: panel.stateColor(frow.syncState)
         font.family: panel.ff; font.pixelSize: Style.font.body
@@ -78,7 +78,7 @@ Item {
 
       Column {
         anchors.verticalCenter: parent.verticalCenter
-        width: parent.width - Style.space(14) - chevron.width - parent.spacing * 2
+        width: parent.width - Style.space(20) - chevron.width - parent.spacing * 2
                - (primary.visible ? primary.width + parent.spacing : 0)
         spacing: Style.spacing.xs
         Text {
@@ -130,19 +130,14 @@ Item {
       }
 
       // The one action this row's state asks for, with its name on it.
-      Button {
+      RowAction {
         id: primary
+        panel: frow.panel
         anchors.verticalCenter: parent.verticalCenter
         visible: frow.isModified || frow.isIncoming
         text: frow.isIncoming ? "Restore" : "Save"
         iconText: frow.isIncoming ? panel.icFromRepo : panel.icSave
-        bordered: true
-        fontSize: Style.font.bodySmall
-        horizontalPadding: Style.space(8)
-        verticalPadding: Style.space(3)
         foreground: frow.isIncoming ? panel.warnColor : Color.accent
-        accent: Color.accent
-        fontFamily: panel.ff
         enabled: !panel.busy
         tooltipText: frow.isIncoming
                      ? "Bring down the newer copy that another machine saved (keeps a .bak copy)"

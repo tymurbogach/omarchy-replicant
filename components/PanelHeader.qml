@@ -42,24 +42,24 @@ Item {
         font.pixelSize: Math.round(Style.font.heading * 1.25)
         font.bold: true
       }
-      // The version, at the end of the name, where a person looks for it.
-      BorderSurface {
+      // The version, at the end of the name, where a person looks for it. A
+      // click asks GitHub for a newer one: the question belongs to the number.
+      Button {
         anchors.verticalCenter: parent.verticalCenter
         visible: panel.versionText !== ""
-        implicitWidth: verText.implicitWidth + Style.space(12)
-        implicitHeight: verText.implicitHeight + Style.space(4)
-        color: "transparent"
-        radius: Style.cornerRadius
-        borderSpec: Border.controlSpec("normal", panel.fg, Color.accent)
-        Text {
-          id: verText
-          anchors.centerIn: parent
-          text: panel.versionText
-          color: panel.dim
-          font.family: panel.ff
-          font.pixelSize: Style.font.caption
-          font.bold: true
-        }
+        text: panel.versionText
+        iconText: panel.updateChecking ? panel.icRefresh : ""
+        iconSpinning: panel.updateChecking
+        bordered: true
+        fontSize: Style.font.caption
+        horizontalPadding: Style.space(6)
+        verticalPadding: Style.space(2)
+        foreground: panel.dim
+        fontFamily: panel.ff
+        enabled: !panel.updateChecking
+        tooltipText: panel.updateAvailable ? panel.updateTooltip
+                                           : "Replicant " + panel.versionText + ". Click to ask GitHub for a newer version."
+        onClicked: panel.checkUpdates(true)
       }
     }
     Text {

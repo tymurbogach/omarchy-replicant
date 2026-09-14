@@ -196,6 +196,18 @@ suite: test-cli.sh
 from: else is_tracked_path "$path" && tracked=true; fi
 to: else :; fi
 why: the file picker says which files are tracked
+---
+file: bin/lib/plugins.sh
+suite: test-core.sh
+from: in_bar: ($bar | any(. == $i))})
+to: in_bar: false})
+why: the Plugins card finds a bar widget's settings in shell.json
+---
+file: bin/lib/plugins.sh
+suite: test-core.sh
+from: recorded: ($mine | length > 0),
+to: recorded: true,
+why: a plugin installed after the last save is not called recorded
 DATA
 )
 

@@ -11,56 +11,20 @@ Column {
   id: ct
   // The panel this belongs to. Every value and every action comes from it.
   property var panel
-  function focusSearch() { searchField.forceActiveFocus() }
+  function focusSearch() { filterBar.focusSearch() }
   spacing: Style.space(8)
 
-  Row {
-    width: parent.width
-    spacing: Style.space(8)
-    TextField {
-      id: searchField
-      width: parent.width - collapseBtn.width - Style.space(8)
-      placeholderText: "Filter by name or path…   (/)"
-      foreground: panel.fg
-      accent: Color.accent
-      font.family: panel.ff
-      onTextChanged: panel.fileSearch = text
-      onActiveFocusChanged: panel.noteFocus(searchField, activeFocus)
-      Keys.onEscapePressed: { text = ""; panel.releaseFocus() }
-    }
-    Button {
-      id: collapseBtn
-      text: "Collapse all"; bordered: false
-      foreground: panel.dim; fontFamily: panel.ff
-      tooltipText: "Close every open area and row  (c)"
-      onClicked: panel.closeAllCards()
-    }
-  }
-
-  Item {
-    width: parent.width
-    height: Style.space(34)
-    ButtonGroup {
-      anchors.left: parent.left
-      anchors.verticalCenter: parent.verticalCenter
-      focusable: false
-      spacing: Style.space(4)
-      fontSize: Style.font.bodySmall
-      foreground: panel.fg
-      accent: Color.accent
-      fontFamily: panel.ff
-      value: panel.stateFilter
-      options: panel.filterOptions
-      onChanged: function(v) { panel.stateFilter = v }
-    }
-  }
-
-  // The badges, once. Every row that needs a word says it in words too.
-  Text {
-    width: parent.width
-    text: "● unsaved    ↓ to restore    ↑ to push    ◆ saved    ○ default    ⊘ off    · not here"
-    color: panel.dim; font.family: panel.ff; font.pixelSize: Style.font.caption
-    wrapMode: Text.WordWrap
+  FilterBar {
+    id: filterBar
+    panel: ct.panel
+    width: ct.width
+    placeholder: "Filter by name or path…   (/)"
+    options: panel.filterOptions
+    value: panel.stateFilter
+    legend: "● unsaved    ↓ to restore    ↑ to push    ◆ saved    ○ default    ⊘ off    · not here"
+    collapseTip: "Close every open area and row  (c)"
+    onSearchEdited: function(t) { panel.fileSearch = t }
+    onFilterPicked: function(v) { panel.stateFilter = v }
   }
 
   Text {
@@ -74,8 +38,9 @@ Column {
 
   Repeater {
     model: panel.categoryCards
-    delegate: CategoryCard { panel: ct.panel;
+    delegate: CategoryCard {
       required property var modelData
+      panel: ct.panel
       card: modelData
       width: ct.width
     }

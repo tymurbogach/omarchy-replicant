@@ -27,6 +27,49 @@ build_pending_reinstalls_json() {
     })'
 }
 
+# build_plugins_json — every plugin installed here, and every plugin that a
+# machine's inventory records, for the Plugins card. The rows of that card are
+# only the plugins with a settings file of their own, so eight plugins showed
+# as three. A bar widget keeps its settings in its entry in shell.json
+# (`in_bar`), which the Desktop & bar area saves.
+#
+# Installed is asked of the plugins directory. Origin and method are what the
+# repo records, because that record is what another machine installs from.
+build_plugins_json() {
+  local -a mfs=()
+  local mf inv m installed='[]' bar='[]'
+  for mf in "$HOME/.config/omarchy/plugins"/*/manifest.json; do [[ -f "$mf" ]] && mfs+=("$mf"); done
+  if (( ${#mfs[@]} )); then
+    installed=$(jq -cs 'map(select(type == "object" and (.id // "") != "")
+                          | {id, name: (.name // .id), version: (.version // "" | tostring)})' \
+                  "${mfs[@]}" 2>/dev/null) || installed='[]'
+  fi
+  if [[ -f "$HOME/.config/omarchy/shell.json" ]]; then
+    bar=$(jq -c '[.. | objects | .id? | strings]' "$HOME/.config/omarchy/shell.json" 2>/dev/null) || bar='[]'
+  fi
+  for inv in "$STATE_ROOT"/*/omarchy-plugins.txt; do
+    [[ -f "$inv" ]] || continue
+    m="${inv%/omarchy-plugins.txt}"; m="${m##*/}"
+    awk -F'\t' -v m="$m" '!/^#/ && $1 != "" { print m "\t" $1 "\t" $2 "\t" $3 "\t" $4 }' "$inv"
+  done | jq -Rsc --argjson installed "$installed" --argjson bar "$bar" --arg here "$MACHINE" '
+    (split("\n") | map(select(length > 0) | split("\t")
+      | {machine: .[0], id: .[1], version: (.[2] // ""), origin: (.[3] // ""), method: (.[4] // "")})) as $rec
+    | ($installed | map(.id)) as $ids
+    | ($installed | map(. + {installed: true}))
+      + ($rec | map(select(.id as $i | $ids | any(. == $i) | not)) | group_by(.id)
+         | map({id: .[0].id, name: .[0].id, version: .[0].version, installed: false}))
+    | map(.id as $i
+          | ($rec | map(select(.id == $i))) as $r
+          | ($r | map(select(.machine == $here))) as $mine
+          | (($mine + $r) | first // {}) as $best
+          | . + {origin: (if ($best.origin // "-") == "-" then "" else $best.origin end),
+                 method: (if ($best.method // "-") == "-" then "" else $best.method end),
+                 recorded: ($mine | length > 0),
+                 machines: ($r | map(.machine) | unique),
+                 in_bar: ($bar | any(. == $i))})
+    | sort_by(.name | ascii_downcase)'
+}
+
 # Where a plugin came from, when nothing records it directly.
 #
 # Omarchy does not store an origin: `omarchy plugin list --json` has no such

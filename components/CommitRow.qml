@@ -25,6 +25,8 @@ Item {
 
   Rectangle {
     anchors.fill: head
+    anchors.leftMargin: Style.space(4)
+    anchors.rightMargin: Style.space(4)
     radius: Style.cornerRadius
     color: hit.containsMouse && cr.expandable ? Style.hoverFillFor(panel.fg, Color.accent) : "transparent"
   }
@@ -32,7 +34,7 @@ Item {
   Item {
     id: head
     width: parent.width
-    height: Style.space(26)
+    height: Style.space(28)
 
     MouseArea {
       id: hit
@@ -46,16 +48,10 @@ Item {
     Row {
       anchors.left: parent.left
       anchors.right: parent.right
-      anchors.leftMargin: Style.space(4)
-      anchors.rightMargin: Style.space(4)
+      anchors.leftMargin: Style.spacing.rowPaddingX
+      anchors.rightMargin: Style.spacing.rowPaddingX
       anchors.verticalCenter: parent.verticalCenter
       spacing: Style.space(8)
-      Text {
-        anchors.verticalCenter: parent.verticalCenter
-        width: Style.space(12)
-        text: cr.expandable ? (cr.expanded ? panel.icDown : panel.icRight) : ""
-        color: panel.dim; font.family: panel.ff; font.pixelSize: Style.font.caption
-      }
       Text {
         anchors.verticalCenter: parent.verticalCenter
         width: Style.space(96)
@@ -64,7 +60,7 @@ Item {
       }
       Text {
         anchors.verticalCenter: parent.verticalCenter
-        width: parent.width - Style.space(12) - Style.space(96) - countText.width - parent.spacing * 3
+        width: parent.width - Style.space(96) - countText.width - Style.space(14) - parent.spacing * 3
         // A run of identical saves is collapsed by core_log. The count says
         // the inventory commits are accounted for, not dropped.
         text: (cr.commit.subject || "") + ((cr.commit.count || 1) > 1 ? "   ×" + cr.commit.count : "")
@@ -77,14 +73,22 @@ Item {
         text: cr.expandable ? R.plural(cr.nfiles, "file") : ""
         color: panel.dim; font.family: panel.ff; font.pixelSize: Style.font.caption
       }
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(14)
+        horizontalAlignment: Text.AlignHCenter
+        text: cr.expandable ? (cr.expanded ? panel.icDown : panel.icRight) : ""
+        color: hit.containsMouse || cr.expanded ? panel.fg : panel.dim
+        font.family: panel.ff; font.pixelSize: Style.font.caption
+      }
     }
   }
 
   Column {
     id: filesCol
     y: head.height + Style.space(2)
-    x: Style.space(28)
-    width: parent.width - x
+    x: Style.spacing.rowPaddingX + Style.space(104)
+    width: parent.width - x - Style.spacing.rowPaddingX
     visible: cr.expanded
     spacing: Style.space(1)
     Repeater {

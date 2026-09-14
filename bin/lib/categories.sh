@@ -20,7 +20,7 @@ CATEGORIES=(
   "terminal|󰆍|Terminal & shell|Alacritty, foot, tmux, bashrc and which terminal opens|Copied back, then omarchy restart terminal"
   "development|󰅴|Development|git, editors, Claude and opencode, mise, VS Code|Copied back; nothing needs restarting"
   "secrets|󰌆|Secrets & keys|SSH keys, tokens and .env files — private, mode 600|Copied back as mode 600; contents are never printed"
-  "plugins|󰐱|Plugins|Plugin settings, plus every plugin's id and git origin|Plugin settings copied back; third-party plugins are installed only on request"
+  "plugins|󰐱|Plugins|Every installed plugin, and where its settings live|Plugin settings copied back; third-party plugins are installed only on request"
   "scripts|󰈙|Scripts|Your helper scripts under ~/.local/bin and Omarchy hooks|Copied back with the executable bit kept"
   "system|󰋊|System|systemd drop-ins for lid and sleep|Needs root: one file asks for it, a full restore prints sudo"
   "other|󰈔|Other|Anything else you asked Replicant to track|Copied back as-is"

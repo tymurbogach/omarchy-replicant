@@ -180,6 +180,26 @@ bwrap --dev-bind / / --tmpfs /etc/systemd/system \
   creates one, pass `panel: root`. Inside another part, pass `panel: <its id>.panel`, because a bare
   `panel: panel` binds the property to itself.
 - Put logic that needs no QML in `replicant.js`, and test it in `tests/qml`.
+- Follow the design rules below. A tab that builds its own card or row drifts from the others,
+  and the panel looks inconsistent although every tab looks fine on its own.
+
+## Design rules for the panel
+
+- Every block of a tab is a `Card`. Its header has an icon, a title and a subtitle, and on the right
+  a count and a status. A collapsible card has its chevron on the right edge.
+- Every list in a card uses `ListRow`, or `FileRow`, `SettingRow` or `CommitRow`. Each puts its
+  glyph in the same 20-pixel column, so the titles line up across cards and tabs.
+- A button on a row is a `RowAction`: bordered, small, and with a name. An action on the whole card
+  is a full-size bordered button. A flat button is an icon, or a tool at the foot of a tab.
+- Do not draw an action that does not apply. A disabled button is a question that the panel does
+  not answer.
+- One colour, one meaning. The accent is yours and waits for Save. Amber came from another machine,
+  or differs from the repo. Red destroys or failed. Green is done. Grey needs nothing.
+- One word, one meaning. "Default" is what Omarchy ships, on every tab.
+- A tint on a card says that the card asks for something. A value that only differs from a default
+  asks for nothing, so its card has no tint.
+- The file picker shows **Track** only on the row under the pointer. A list of identical buttons
+  hides the names that a person came to read.
 - Before `omarchy restart shell`, clear the compiled QML: `rm -rf ~/.cache/quickshell/qmlcache`.
   Quickshell does not reliably invalidate it, and the shell then runs the old code with no error.
 - To prove which code runs, add a temporary `Component.onCompleted: console.log("...")` and look for

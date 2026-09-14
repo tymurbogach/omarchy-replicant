@@ -932,6 +932,43 @@ check "…with its method" "add" "$(jq -r '.[] | select(.id=="demo.widget") | .m
 rm -f "$STATE_DIR/omarchy-themes.txt" "$STATE_DIR/omarchy-plugins.txt"
 check "empty inventory yields an empty array" "0" "$(build_pending_reinstalls_json | jq 'length')"
 
+section "the Plugins card lists every plugin, not only the ones with a settings file"
+# Eight plugins showed as three: the card's rows are only the plugins with a
+# file of their own. Installed comes from the plugins directory, the origin
+# from what the repo records, and a bar widget's settings are in shell.json.
+pdir="$HOME/.config/omarchy/plugins"
+mkdir -p "$pdir/io.ex.withfile" "$pdir/io.ex.widget" "$pdir/io.ex.fresh"
+printf '{"id":"io.ex.withfile","name":"With File","version":"2.0"}\n' > "$pdir/io.ex.withfile/manifest.json"
+printf '{"id":"io.ex.widget","name":"Widget","version":"1.0"}\n' > "$pdir/io.ex.widget/manifest.json"
+printf '{"id":"io.ex.fresh","name":"Fresh","version":"0.1"}\n' > "$pdir/io.ex.fresh/manifest.json"
+shell_bak=""; [[ -f "$HOME/.config/omarchy/shell.json" ]] && shell_bak=$(cat "$HOME/.config/omarchy/shell.json")
+printf '{"bar":{"left":[{"id":"io.ex.widget","items":["a"]}]}}\n' > "$HOME/.config/omarchy/shell.json"
+printf '# id\tversion\torigin\tmethod\nio.ex.withfile\t2.0\thttps://example.com/withfile.git\tadd\nio.ex.widget\t1.0\t-\t-\n' \
+  > "$STATE_DIR/omarchy-plugins.txt"
+mkdir -p "$STATE_ROOT/otherbox"
+printf 'io.ex.away\t3.0\thttps://example.com/away\tadd\n' > "$STATE_ROOT/otherbox/omarchy-plugins.txt"
+pl_json=$(build_plugins_json)
+check "valid JSON" "0" "$(jq empty <<<"$pl_json" >/dev/null 2>&1; echo $?)"
+check "every installed plugin, and the one only another machine has" "4" \
+  "$(jq '[.[] | select(.id | startswith("io.ex."))] | length' <<<"$pl_json")"
+check "a plugin here is installed" "true" "$(jq -r '.[] | select(.id=="io.ex.withfile") | .installed' <<<"$pl_json")"
+check "…with the name from its manifest" "With File" "$(jq -r '.[] | select(.id=="io.ex.withfile") | .name' <<<"$pl_json")"
+check "…and the origin that the repo records" "https://example.com/withfile.git" \
+  "$(jq -r '.[] | select(.id=="io.ex.withfile") | .origin' <<<"$pl_json")"
+check "a recorded '-' is no origin, not a dash" "" "$(jq -r '.[] | select(.id=="io.ex.widget") | .origin' <<<"$pl_json")"
+check "a bar widget is found in shell.json" "true" "$(jq -r '.[] | select(.id=="io.ex.widget") | .in_bar' <<<"$pl_json")"
+check "…and a plugin that is not there is not" "false" "$(jq -r '.[] | select(.id=="io.ex.withfile") | .in_bar' <<<"$pl_json")"
+check "a plugin installed after the last save is not recorded" "false" \
+  "$(jq -r '.[] | select(.id=="io.ex.fresh") | .recorded' <<<"$pl_json")"
+check "another machine's plugin is not installed here" "false" \
+  "$(jq -r '.[] | select(.id=="io.ex.away") | .installed' <<<"$pl_json")"
+check "…and says which machine has it" "otherbox" "$(jq -r '.[] | select(.id=="io.ex.away") | .machines[0]' <<<"$pl_json")"
+check "the full status carries the list" "true" \
+  "$(core_status --json --no-fetch 2>/dev/null | jq '[.plugins[].id] | index("io.ex.fresh") != null')"
+rm -rf "$pdir/io.ex.withfile" "$pdir/io.ex.widget" "$pdir/io.ex.fresh" "$STATE_ROOT/otherbox"
+rm -f "$STATE_DIR/omarchy-plugins.txt"
+if [[ -n "$shell_bak" ]]; then printf '%s\n' "$shell_bak" > "$HOME/.config/omarchy/shell.json"; else rm -f "$HOME/.config/omarchy/shell.json"; fi
+
 section "suggest proposes, and refuses to propose noise"
 mkdir -p "$HOME/.config/appstate" "$HOME/.local/bin"
 printf 'x\n' > "$HOME/.config/appstate/Local State"

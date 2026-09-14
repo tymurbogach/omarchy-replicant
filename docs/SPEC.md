@@ -48,6 +48,8 @@ Rules for the code:
   caller. A test compares every global name before and after a backup.
 - `Panel.qml` holds the state, the processes and the actions. Each tab is a part in `components/`
   (`OverviewTab`, `ConfigsTab`, `SettingsTab`, `RestoreTab`), and so is each piece of a tab.
+- Every tab is built from the same parts: `Card`, `ListRow`, `RowAction` and `FilterBar`. The
+  design rules for them are in `CONTRIBUTING.md`.
 - A scope change in the panel shows at once (`setScope`). The panel runs the commands one at a
   time in their own queue, and the status that follows does not force a fetch. A full status that
   is built after the queue is empty replaces what the panel assumed.
@@ -145,6 +147,12 @@ so `is_dir_entry` is the only test anywhere.
 - Themes are recorded as `name<TAB>origin` in `state/<machine>/omarchy-themes.txt`. The eight themes
   on the first machine were 556 MB, and 400 MB of that was their own `.git` directories.
 - Plugins are recorded as id, version, origin and method in `state/<machine>/omarchy-plugins.txt`.
+- The Plugins card lists every plugin (`build_plugins_json`). The plugins directory says which ones
+  are installed. Every machine's inventory adds the ones that only another machine has.
+- The origin and the method in that list come from the inventory in the repo, because another
+  machine installs from that record. A plugin installed after the last save shows as not recorded.
+- A bar widget keeps its settings in its entry in `shell.json` (`in_bar`), which the Desktop & bar
+  area saves. Only a plugin with a settings file of its own has a file row in the card.
 - A restore never installs a third-party theme or plugin. It names each one with the command that
   installs it. `install-theme <name>` and `install-plugin <id>` fetch one, and the panel confirms
   each one on its own.
@@ -243,8 +251,8 @@ commits arrive knows which one is right, so that moment writes it down.
 
 - `update-check` fetches `origin HEAD` into the plugin's own checkout, as `omarchy plugin update`
   does. The stamp is `FETCH_HEAD` in that checkout, so the check writes no file of its own.
-- The panel asks at most every six hours (`REPLICANT_UPDATE_MAX_AGE`). **Check for updates** and
-  `update-check --fetch` always ask.
+- The panel asks at most every six hours (`REPLICANT_UPDATE_MAX_AGE`). A click on the version in
+  the panel header and `update-check --fetch` always ask.
 - Only a fast-forward is an update. A checkout with commits of its own holds somebody's work.
 - `update` runs `omarchy plugin update <id> --yes`, which validates the new version and rolls back
   one that fails. `update` refuses a copy that is not the installed plugin, such as a development

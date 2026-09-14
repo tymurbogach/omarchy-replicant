@@ -25,7 +25,7 @@ walks through it.
 
 If a newer version is on GitHub, the panel header shows **Update to** and the version. The button
 lists what changed, installs the version with `omarchy plugin update`, and restarts the shell. The
-panel asks GitHub at most every six hours. **Check for updates** on the Overview asks at once.
+panel asks GitHub at most every six hours. Click the version in the header to ask at once.
 
 ```bash
 omarchy-replicant update-check    # what is new, if anything
@@ -127,6 +127,10 @@ Omarchy install command takes a commit to pin, so fetching somebody else's code 
 
 Before a plugin installs, Replicant says what the Omarchy marketplace checked, and whether the origin
 has moved since. Installing a theme also makes it the active theme.
+
+Panel, **Configs**, **Plugins** lists every plugin: its version, its origin, and where its settings
+live. Most plugins keep their settings in their entry in `shell.json`, which **Desktop & bar** saves.
+A plugin with a settings file of its own, `~/.config/omarchy/<name>.json`, also has a file row.
 
 ### What else it does
 

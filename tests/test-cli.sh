@@ -742,6 +742,44 @@ check "untrack leaves nothing pending" "0" \
   "$(git -C "$REPO" status --porcelain -- .replicant-track config/mine2.conf | grep -c . || true)"
 check "…because it made its own commit" "untrack: mine2.conf" "$(git -C "$REPO" log -1 --format=%s)"
 
+section "forget: a deleted file leaves the repo, and history brings it back"
+mkdir -p "$HOME/.config/foot"
+printf 'font=mono\n' > "$HOME/.config/foot/foot.ini"
+run savegame -m "save foot" --no-push >/dev/null 2>&1
+check_true "the copy is saved" test -f "$REPO/config/foot/foot.ini"
+check_false "forget refuses a file that is still here" "$CLI" forget foot/foot.ini
+check_contains "…and names the tool for that" "scope foot/foot.ini off" "$(run forget foot/foot.ini)"
+rm -f "$HOME/.config/foot/foot.ini"
+run forget foot/foot.ini >/dev/null 2>&1
+check_false "forget removes the copy" test -e "$REPO/config/foot/foot.ini"
+check "…in a commit of its own" "0" "$(git -C "$REPO" status --porcelain | grep -c 'foot' || true)"
+check "…so the row is gone" "0" \
+  "$(run status --json --no-fetch | jq '[.configs[] | select(.id == "foot/foot.ini")] | length')"
+check_false "forget needs an id" "$CLI" forget
+check_false "…that something tracks" "$CLI" forget nope/nope
+fsha=$(git -C "$REPO" log -1 --format=%H)
+check_contains "deleted lists the copy" "config/foot/foot.ini" "$(run deleted)"
+check "…and so does its JSON" "config/foot/foot.ini" \
+  "$(run deleted --json | jq -r --arg s "$fsha" '.[] | select(.sha == $s) | .files[0]')"
+before=$(hash_tree "$HOME")
+run recover "$fsha" >/dev/null 2>&1
+check "recover is a dry run by default" "$before" "$(hash_tree "$HOME")"
+check_false "…and puts nothing in the repo" test -e "$REPO/config/foot/foot.ini"
+run recover "$fsha" --apply >/dev/null 2>&1
+check_true "recover --apply brings the copy back" test -f "$REPO/config/foot/foot.ini"
+check "…and the file onto the machine" "font=mono" "$(cat "$HOME/.config/foot/foot.ini" 2>/dev/null)"
+check "…in one commit" "0" "$(git -C "$REPO" status --porcelain | grep -c 'foot' || true)"
+check "…so deleted no longer lists it" "0" \
+  "$(run deleted --json | jq --arg s "$fsha" '[.[] | select(.sha == $s)] | length')"
+check_false "recover refuses what is not a commit" "$CLI" recover not-a-commit --apply
+# An untrack removes the line and the copy in one commit. Bringing back only
+# the copy would last until the next save pruned it again.
+usha=$(git -C "$REPO" log --format='%H %s' | awk '$2 == "untrack:" && $3 == "mine2.conf" { print $1; exit }')
+rm -f "$HOME/.config/mine2.conf"
+run recover "$usha" --apply >/dev/null 2>&1
+check_contains "recovering an untrack tracks the file again" "mine2.conf" "$(cat "$REPO/.replicant-track")"
+check "…and puts it back on the machine" "mine" "$(cat "$HOME/.config/mine2.conf" 2>/dev/null)"
+
 section "the documented IPC surface is the one that exists"
 # Service.qml's comment gave `omarchy ipc call <target> <method>`. There is no
 # `omarchy ipc` command: anyone following it got "Unknown Omarchy command".

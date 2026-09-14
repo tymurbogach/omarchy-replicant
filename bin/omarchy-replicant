@@ -829,6 +829,45 @@ cmd_untrack() {
     "secrets/$id"
 }
 
+# cmd_forget <id>: a file you deleted, and its copy leaves the repo too. One of
+# your own entries is untracked; a shipped one keeps its place in the list.
+cmd_forget() {
+  local id="${1:-}"
+  [[ -n "$id" ]] || fail "usage: omarchy-replicant forget <id>"
+  load_core
+  core_forget "$id" || exit 1
+  commit_repo_shape "forget: $id (gone from $MACHINE)" \
+    .replicant-track \
+    "config/$id" \
+    "profiles/$(current_profile)/config/$id" \
+    "secrets/$id"
+}
+
+cmd_deleted() { ensure_core; bash "$CORE" deleted "$@"; }
+
+# cmd_recover <sha> [--apply]: undo the deletions of one commit, in the repo and
+# on this machine. A dry run by default, like every command that writes here.
+cmd_recover() {
+  local sha="" DRY=1 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --apply) DRY=0 ;;
+      --dry-run) DRY=1 ;;
+      -*) fail "unknown option: $arg" ;;
+      *) [[ -z "$sha" ]] && sha="$arg" ;;
+    esac
+  done
+  [[ -n "$sha" ]] || fail "usage: omarchy-replicant recover <sha> [--apply]  (the shas: omarchy-replicant deleted)"
+  [[ -d "$REPO_DIR/.git" ]] || fail "no repo yet"
+  load_core
+  core_recover "$sha" "$DRY" || exit 1
+  (( DRY )) && return 0
+  local first="${RECOVERED[0]}" more=$(( ${#RECOVERED[@]} - 1 )) subject
+  subject="recover: $(rel_for_repo_path "$first")"
+  (( more > 0 )) && subject+=", +$more more"
+  commit_repo_shape "$subject (from ${sha:0:7})" .replicant-track "${RECOVERED[@]}"
+}
+
 cmd_suggest() {
   local as_json=0
   while (( $# )); do case "$1" in --json) as_json=1; shift;; *) shift;; esac; done
@@ -1394,6 +1433,7 @@ What gets backed up
   suggest [--json]            Config on this machine that nothing is backing up yet
   track <path> [name] [--secret]   Add a file or directory to YOUR list
   untrack <id>                Drop one of your own entries, and its copy
+  forget <id>                 A file you deleted: its copy leaves the repo too
   scope <id> shared|profile|off    Who syncs this file        (sync <id> on|off is the old form)
   profile [name]              Which profile this machine is in
   save-file <id> [-m]         Commit and push just that one file
@@ -1411,6 +1451,8 @@ Putting things back            (dry run by default; .bak.<epoch> kept for everyt
   restore-file <id>           One file or directory back from the repo
   reset <id>                  One file back to Omarchy's default
   reset-all [--apply] [--yes] Everything with a known default back to factory
+  deleted                     Copies that left the repo, by the commit that removed them
+  recover <sha> [--apply]     Bring back what one commit deleted, onto this machine too
 
 Third-party code               (no dry run, no backup; fetches the moment you run it)
   install-theme <name>        Install one theme from your inventory — never automatic
@@ -1525,6 +1567,20 @@ Dry-run by default, like everything here that writes.
   [untrack]="untrack <id>
   Drop one of your own entries AND its copy in the repo. Refuses entries that
   ship with the plugin — use 'scope <id> off' for those."
+  [forget]="forget <id>
+  For a file you deleted from this machine: its copy leaves the repo too, in one
+  commit. One of your own entries is untracked. A shipped entry stays in the
+  plugin's list, so it shows again if the file comes back. Git history keeps
+  the copy: 'deleted' lists it and 'recover' brings it back."
+  [deleted]="deleted [--json]
+  Every copy that left your repo and is not back, grouped by the commit that
+  removed it, newest first. Only the shared tree, the secrets and this
+  profile's tree: another profile's files belong to another machine."
+  [recover]="recover <sha> [--apply]
+  Undo the deletions of one commit from 'deleted'. The copies come back into
+  the repo, the entries that commit untracked are tracked again, and each file
+  is put back on this machine with a .bak.<epoch> of what it replaces.
+  A dry run by default."
   [suggest]="suggest [--json]
   Config on this machine that nothing is backing up yet, credentials first.
   It only proposes; nothing is tracked until you say so."
@@ -1596,10 +1652,10 @@ main() {
   # Anything that writes to the repo takes the lock first; read-only commands
   # (status/get/diff/edit) stay lock-free so the panel's polling never blocks.
   case "$cmd" in
-    init|create|backup|savegame|set|save-file|reset|reset-all|push|pull|clone|restore|sync|scope|track|untrack|profile|revert|restore-file|install-theme|install-plugin) acquire_repo_lock ;;
+    init|create|backup|savegame|set|save-file|reset|reset-all|push|pull|clone|restore|sync|scope|track|untrack|forget|profile|revert|restore-file|install-theme|install-plugin) acquire_repo_lock ;;
     # These write only when they apply. A dry run takes no lock: taking it
     # creates the lock file, and purge would then list its own lock.
-    undo|backups|purge)
+    undo|backups|purge|recover)
       if [[ -d "$REPLICANT_HOME" ]] && [[ " $* " == *" --apply "* ||
             ( "$cmd" == undo && ( " $* " == *" --yes "* || " $* " == *" -y "* ) ) ]]; then
         acquire_repo_lock
@@ -1628,6 +1684,9 @@ main() {
     scope) shift; cmd_scope "$@";;
     track) shift; cmd_track "$@";;
     untrack) shift; cmd_untrack "$@";;
+    forget) shift; cmd_forget "$@";;
+    deleted) shift; cmd_deleted "$@";;
+    recover) shift; cmd_recover "$@";;
     suggest) shift; cmd_suggest "$@";;
     profile) shift; cmd_profile "$@";;
     revert) shift; cmd_revert "$@";;

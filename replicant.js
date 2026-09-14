@@ -251,6 +251,48 @@ function rowsFor(repoState, categoryId, search, filter) {
   return out
 }
 
+// ── plugins ─────────────────────────────────────────────────────────────────
+// An origin the way a person reads it: no scheme, no .git, no trailing slash.
+function originLabel(origin) {
+  var s = String(origin || "").replace(/^[a-z+]+:\/\//, "").replace(/^git@([^:]+):/, "$1/")
+  return s.replace(/\.git$/, "").replace(/\/$/, "")
+}
+
+// Every plugin of the payload, with where its settings live. A plugin that
+// keeps its own file (~/.config/omarchy/<last segment of the id>.json) has a
+// row in the Plugins card. A bar widget keeps its settings in its entry in
+// shell.json, which the Desktop & bar area saves. Some plugins have neither.
+function pluginRows(repoState) {
+  var rows = ({})
+  var list = repoState.configs || []
+  for (var i = 0; i < list.length; i++) rows[list[i].id] = true
+  return (repoState.plugins || []).map(function(p) {
+    var fileId = "plugins/" + String(p.id).split(".").pop() + ".json"
+    var where = rows[fileId] ? "file" : p.in_bar === true ? "bar" : "none"
+    return { id: p.id, name: p.name || p.id, version: p.version || "", installed: p.installed === true,
+             origin: p.origin || "", method: p.method || "", recorded: p.recorded === true,
+             settings: where, settingsId: where === "file" ? fileId : "" }
+  })
+}
+
+// The words on the right of a plugin's row: where its settings are.
+function pluginWhere(p) {
+  if (!p.installed) return "not installed here"
+  if (p.settings === "file") return "own settings file"
+  if (p.settings === "bar") return "settings in shell.json"
+  return "no settings"
+}
+
+// The line under a plugin's name: its version and where it comes from, as the
+// repo records it. A plugin installed after the last save is not recorded yet.
+function pluginDetail(p) {
+  var v = p.version !== "" ? "v" + p.version + "  ·  " : ""
+  if (p.installed && !p.recorded) return v + "not in your repo yet: the next save records it"
+  if (p.origin === "") return v + "no origin: nothing can install it again"
+  if (p.method === "clone") return v + "a copy of " + p.origin + ", edited here"
+  return v + originLabel(p.origin)
+}
+
 // ── the reader and the result bar ───────────────────────────────────────────
 // How the reader colours one line. "diff" is a unified diff. "output" is what a
 // command printed, with the marks the CLI draws: ✓ done, ✗ failed, ! a warning,

@@ -33,6 +33,13 @@ Card {
     width: parent.width
     visible: cc.card.id === "shortcuts" && !panel.filtering
   }
+  // Plugins lists every plugin first. Its file rows are only the plugins
+  // that keep a settings file of their own.
+  PluginsView {
+    panel: cc.panel
+    width: parent.width
+    visible: cc.card.id === "plugins" && !panel.filtering
+  }
 
   Repeater {
     model: cc.open ? cc.card.rows : []

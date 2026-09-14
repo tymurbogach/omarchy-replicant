@@ -128,6 +128,10 @@ Omarchy install command takes a commit to pin, so fetching somebody else's code 
 Before a plugin installs, Replicant says what the Omarchy marketplace checked, and whether the origin
 has moved since. Installing a theme also makes it the active theme.
 
+Panel, **Configs**, **Plugins** lists every plugin: its version, its origin, and where its settings
+live. Most plugins keep their settings in their entry in `shell.json`, which **Desktop & bar** saves.
+A plugin with a settings file of its own, `~/.config/omarchy/<name>.json`, also has a file row.
+
 ### What else it does
 
 - **46 paths out of the box**: 43 configs and 3 secrets, plus whatever you add, in eleven areas.

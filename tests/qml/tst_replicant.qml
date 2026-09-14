@@ -216,6 +216,39 @@ TestCase {
     verify(R.stateGlyph("pending") !== R.stateGlyph("saved"))
   }
 
+  function test_originLabel() {
+    compare(R.originLabel("https://github.com/me/plug.git"), "github.com/me/plug")
+    compare(R.originLabel("git@github.com:me/plug.git"), "github.com/me/plug")
+    compare(R.originLabel("https://example.com/x/"), "example.com/x")
+    compare(R.originLabel(""), "")
+  }
+
+  function test_pluginRows_say_where_the_settings_live() {
+    var st = { configs: [ { id: "plugins/hw.json" } ], plugins: [
+      { id: "io.x.hw", name: "HW", version: "2", installed: true, origin: "https://h/hw.git", method: "add", recorded: true, in_bar: true },
+      { id: "io.x.bar", name: "Bar", version: "1", installed: true, origin: "https://h/bar", method: "add", recorded: true, in_bar: true },
+      { id: "io.x.none", name: "None", version: "1", installed: true, origin: "", method: "", recorded: false, in_bar: false },
+      { id: "io.x.away", name: "io.x.away", version: "3", installed: false, origin: "https://h/away", method: "add", recorded: false, in_bar: false } ] }
+    var rows = R.pluginRows(st)
+    compare(rows.length, 4)
+    // A file row wins over the bar entry: the file is what the card lists.
+    compare(rows[0].settings, "file")
+    compare(rows[0].settingsId, "plugins/hw.json")
+    compare(rows[1].settings, "bar")
+    compare(rows[2].settings, "none")
+    compare(R.pluginWhere(rows[0]), "own settings file")
+    compare(R.pluginWhere(rows[1]), "settings in shell.json")
+    compare(R.pluginWhere(rows[2]), "no settings")
+    compare(R.pluginWhere(rows[3]), "not installed here")
+    compare(R.pluginDetail(rows[1]), "v1  ·  h/bar")
+    // Installed after the last save: the repo does not know it yet.
+    compare(R.pluginDetail(rows[2]), "v1  ·  not in your repo yet: the next save records it")
+    compare(R.pluginDetail({ version: "", installed: true, recorded: true, origin: "omarchy.indicators", method: "clone" }),
+            "a copy of omarchy.indicators, edited here")
+    compare(R.pluginDetail({ version: "1", installed: true, recorded: true, origin: "", method: "" }),
+            "v1  ·  no origin: nothing can install it again")
+  }
+
   function test_agoText() {
     compare(R.agoText(1000, 1030), "just now")
     compare(R.agoText(0, 600), "10 minutes ago")

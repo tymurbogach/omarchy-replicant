@@ -147,6 +147,12 @@ so `is_dir_entry` is the only test anywhere.
 - Themes are recorded as `name<TAB>origin` in `state/<machine>/omarchy-themes.txt`. The eight themes
   on the first machine were 556 MB, and 400 MB of that was their own `.git` directories.
 - Plugins are recorded as id, version, origin and method in `state/<machine>/omarchy-plugins.txt`.
+- The Plugins card lists every plugin (`build_plugins_json`). The plugins directory says which ones
+  are installed. Every machine's inventory adds the ones that only another machine has.
+- The origin and the method in that list come from the inventory in the repo, because another
+  machine installs from that record. A plugin installed after the last save shows as not recorded.
+- A bar widget keeps its settings in its entry in `shell.json` (`in_bar`), which the Desktop & bar
+  area saves. Only a plugin with a settings file of its own has a file row in the card.
 - A restore never installs a third-party theme or plugin. It names each one with the command that
   installs it. `install-theme <name>` and `install-plugin <id>` fetch one, and the panel confirms
   each one on its own.

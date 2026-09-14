@@ -4,6 +4,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
+import "../replicant.js" as R
 
 // This machine at a glance: its state and the two buttons it asks for, the
 // machines that share the repo, and what was saved lately.
@@ -11,41 +12,41 @@ Column {
   id: ot
   // The panel this belongs to. Every value and every action comes from it.
   property var panel
-  spacing: Style.space(14)
+  readonly property string url: R.webUrl(panel.repoState.remote || "")
+  spacing: Style.space(10)
 
   StatusCard { panel: ot.panel; width: ot.width }
 
   MachinesCard { panel: ot.panel; width: ot.width }
 
-  Column {
+  Card {
+    panel: ot.panel
     width: ot.width
-    spacing: Style.space(1)
-    PanelSectionHeader { width: parent.width; text: "Recent saves"; foreground: panel.fg; fontFamily: panel.ff }
-    Item { width: 1; height: Style.space(4) }
-    Text {
-      width: parent.width
-      visible: panel.recent.length === 0
-      text: "Nothing saved yet."
-      color: panel.dim; font.family: panel.ff; font.pixelSize: Style.font.caption
-    }
+    icon: panel.icHistory
+    title: "Recent saves"
+    subtitle: "Click a save to see the files it changed"
+
+    CardNote { panel: ot.panel; visible: panel.recent.length === 0; text: "Nothing saved yet." }
     Repeater {
       model: panel.recent
-      delegate: CommitRow { panel: ot.panel;
+      delegate: CommitRow {
         required property var modelData
+        panel: ot.panel
         commit: modelData
         width: ot.width
       }
     }
-    Button {
+    Row {
+      leftPadding: Style.spacing.rowPaddingX - Style.space(6)
       visible: panel.recent.length >= panel.logCount && panel.logCount < 40
-      text: "Show older saves"; iconText: panel.icHistory; bordered: false
-      fontSize: Style.font.caption; foreground: panel.dim; fontFamily: panel.ff
-      tooltipText: "Eight more"
-      onClicked: panel.showOlder()
+      Button {
+        text: "Show older saves"; iconText: panel.icDown; bordered: false
+        fontSize: Style.font.bodySmall; foreground: panel.dim; fontFamily: panel.ff
+        tooltipText: "Eight more"
+        onClicked: panel.showOlder()
+      }
     }
   }
-
-  PanelSeparator { width: ot.width }
 
   // The tools. Each one is read-only or copies into the local repo only.
   Flow {
@@ -59,10 +60,17 @@ Column {
       onClicked: panel.doDoctor()
     }
     Button {
-      text: "Open repo folder"; iconText: panel.icFolderOpen; bordered: false
+      text: "Repo folder"; iconText: panel.icFolderOpen; bordered: false
       fontSize: Style.font.bodySmall; foreground: panel.fg; fontFamily: panel.ff
-      tooltipText: panel.repoState.repo_dir || ""
+      tooltipText: "Open " + (panel.repoState.repo_dir || "the repo") + " in your file manager"
       onClicked: panel.openRepoFolder()
+    }
+    Button {
+      visible: ot.url !== ""
+      text: "GitHub"; iconText: panel.icGithub; bordered: false
+      fontSize: Style.font.bodySmall; foreground: panel.fg; fontFamily: panel.ff
+      tooltipText: "Open " + ot.url
+      onClicked: panel.openUrl(ot.url)
     }
     Button {
       text: "Copy without saving"; iconText: panel.icCopy; bordered: false
@@ -70,13 +78,6 @@ Column {
       enabled: !panel.busy
       tooltipText: "Copy this machine into the local repo. Nothing is committed or pushed."
       onClicked: panel.doBackup()
-    }
-    Button {
-      text: "Check for updates"; iconText: panel.icUpdate; bordered: false
-      fontSize: Style.font.bodySmall; foreground: panel.fg; fontFamily: panel.ff
-      enabled: !panel.updateChecking
-      tooltipText: panel.updateTooltip
-      onClicked: panel.checkUpdates(true)
     }
   }
 }

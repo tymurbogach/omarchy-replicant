@@ -48,6 +48,8 @@ Rules for the code:
   caller. A test compares every global name before and after a backup.
 - `Panel.qml` holds the state, the processes and the actions. Each tab is a part in `components/`
   (`OverviewTab`, `ConfigsTab`, `SettingsTab`, `RestoreTab`), and so is each piece of a tab.
+- Every tab is built from the same parts: `Card`, `ListRow`, `RowAction` and `FilterBar`. The
+  design rules for them are in `CONTRIBUTING.md`.
 - A scope change in the panel shows at once (`setScope`). The panel runs the commands one at a
   time in their own queue, and the status that follows does not force a fetch. A full status that
   is built after the queue is empty replaces what the panel assumed.
@@ -243,8 +245,8 @@ commits arrive knows which one is right, so that moment writes it down.
 
 - `update-check` fetches `origin HEAD` into the plugin's own checkout, as `omarchy plugin update`
   does. The stamp is `FETCH_HEAD` in that checkout, so the check writes no file of its own.
-- The panel asks at most every six hours (`REPLICANT_UPDATE_MAX_AGE`). **Check for updates** and
-  `update-check --fetch` always ask.
+- The panel asks at most every six hours (`REPLICANT_UPDATE_MAX_AGE`). A click on the version in
+  the panel header and `update-check --fetch` always ask.
 - Only a fast-forward is an update. A checkout with commits of its own holds somebody's work.
 - `update` runs `omarchy plugin update <id> --yes`, which validates the new version and rolls back
   one that fails. `update` refuses a copy that is not the installed plugin, such as a development

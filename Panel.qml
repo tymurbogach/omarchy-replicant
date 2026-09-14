@@ -605,7 +605,7 @@ Panel {
 
   // ── the plugin's own updates ──────────────────────────────────────────────
   // The check asks the plugin's origin at most every six hours on its own, and
-  // always when "Check for updates" is pressed. An update goes through
+  // always when the version in the header is clicked. An update goes through
   // `omarchy plugin update`, which validates the new version and rolls back one
   // that fails, and then the shell restarts to load it.
   property var updateInfo: ({})

@@ -25,7 +25,7 @@ walks through it.
 
 If a newer version is on GitHub, the panel header shows **Update to** and the version. The button
 lists what changed, installs the version with `omarchy plugin update`, and restarts the shell. The
-panel asks GitHub at most every six hours. **Check for updates** on the Overview asks at once.
+panel asks GitHub at most every six hours. Click the version in the header to ask at once.
 
 ```bash
 omarchy-replicant update-check    # what is new, if anything

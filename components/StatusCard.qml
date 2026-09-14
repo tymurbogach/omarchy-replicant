@@ -40,21 +40,23 @@ BorderSurface {
     Item {
       width: parent.width
       height: Style.space(44)
+      // In the glyph column of every card, so the title lines up with theirs.
       Text {
         id: glyph
         anchors.left: parent.left
         anchors.verticalCenter: parent.verticalCenter
-        width: Style.space(34)
+        width: Style.space(20)
+        horizontalAlignment: Text.AlignHCenter
         text: sc.head.tone === "ok" ? panel.icCheck
             : sc.head.tone === "warn" ? panel.icAlert
             : sc.head.tone === "accent" ? panel.icSave : panel.icRefresh
         color: sc.toneColor
         font.family: panel.ff
-        font.pixelSize: Math.round(Style.font.display * 1.1)
+        font.pixelSize: Style.font.display
       }
       Column {
         anchors.left: glyph.right
-        anchors.leftMargin: Style.space(8)
+        anchors.leftMargin: Style.space(10)
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
         spacing: Style.space(2)

@@ -19,7 +19,7 @@ Item {
   readonly property bool isLongList: srow.isChoice && (setting.options || []).length > 8
   readonly property bool usable: setting.available === true && !panel.busy
   // Customised means "not what Omarchy ships". The badge in front of the label
-  // says it the way a file row does: a dot for yours, a ring for Omarchy's.
+  // says it the way a file row does: a dot for yours, a ring for the default.
   readonly property bool customised: srow.setting.can_revert_default === true
 
   // Whether the exact value is worth repeating under the label. It is there
@@ -58,10 +58,10 @@ Item {
   // count, NOT the text's own implicitHeight: this row's children are
   // verticalCenter-anchored to it, so a height derived from them is the
   // parent-height <-> child-position loop that renders the row at nothing.
-  // 40 is what fits on one line at the panel's width, now that a badge
-  // column sits in front of the label.
+  // 38 is what fits on one line at the panel's width, with the badge in the
+  // glyph column that every row shares.
   readonly property string noticeText: String(srow.setting.notice || "")
-  readonly property int subtitleLines: srow.subtitleText.length > 40 ? 2 : 1
+  readonly property int subtitleLines: srow.subtitleText.length > 38 ? 2 : 1
   // The notice is counted too, and it was not. A row carrying one rendered
   // four lines of text in the two-line height and the notice was cut in half
   // — "Overridden: Omarchy Sleepwalker is blocki…", losing the clause that
@@ -69,7 +69,7 @@ Item {
   // row's children are verticalCenter-anchored to it, so a height derived
   // from their own implicitHeight is the polish() loop that renders nothing.
   readonly property int noticeLines: srow.noticeText === "" ? 0
-                                   : (srow.noticeText.length > 40 ? 2 : 1)
+                                   : (srow.noticeText.length > 38 ? 2 : 1)
   implicitHeight: Style.space(34 + 16 * srow.subtitleLines + 16 * srow.noticeLines)
   opacity: srow.setting.available === true ? 1.0 : 0.45
 
@@ -79,11 +79,11 @@ Item {
     anchors.verticalCenter: parent.verticalCenter
     anchors.leftMargin: Style.spacing.rowPaddingX
     anchors.rightMargin: Style.spacing.rowPaddingX
-    spacing: Style.space(8)
+    spacing: Style.space(10)
 
     Text {
       anchors.verticalCenter: parent.verticalCenter
-      width: Style.space(14)
+      width: Style.space(20)
       text: srow.setting.available !== true ? "·" : srow.customised ? "●" : "○"
       color: srow.customised ? Color.accent : panel.dim
       font.family: panel.ff; font.pixelSize: Style.font.body
@@ -91,7 +91,7 @@ Item {
     }
 
     Column {
-      width: parent.width - Style.space(14) - controlSlot.width - revertSlot.width - parent.spacing * 3
+      width: parent.width - Style.space(20) - controlSlot.width - revertSlot.width - parent.spacing * 3
       anchors.verticalCenter: parent.verticalCenter
       spacing: Style.spacing.xs
       Text {

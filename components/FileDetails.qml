@@ -35,7 +35,7 @@ Item {
     anchors.left: parent.left
     anchors.right: parent.right
     // In line with the title of the row, past the badge.
-    anchors.leftMargin: Style.spacing.rowPaddingX + Style.space(22)
+    anchors.leftMargin: Style.spacing.rowPaddingX + Style.space(30)
     anchors.rightMargin: Style.spacing.rowPaddingX
     spacing: Style.space(8)
 
@@ -105,36 +105,36 @@ Item {
       width: parent.width
       spacing: Style.space(4)
 
-      Button {
+      RowAction {
+        panel: fd.panel
         visible: !fd.missing
-        text: "Edit"; iconText: panel.icEdit; bordered: true
-        fontSize: Style.font.bodySmall; foreground: panel.fg; fontFamily: panel.ff
+        text: "Edit"; iconText: panel.icEdit
         tooltipText: "Open it in your editor"
         onClicked: panel.doEdit(fd.row.id)
       }
-      Button {
+      RowAction {
+        panel: fd.panel
         visible: !fd.missing
-        text: fd.isSecret ? "Compare" : "Show changes"; iconText: panel.icDiff; bordered: true
-        fontSize: Style.font.bodySmall; foreground: panel.fg; fontFamily: panel.ff
+        text: fd.isSecret ? "Compare" : "Show changes"; iconText: panel.icDiff
         tooltipText: fd.isSecret ? "Say whether it differs from your repo. Its contents are never shown."
                                  : "What differs from your repo, or from Omarchy's default"
         onClicked: panel.doDiff(fd.row.id)
       }
       // Save, and Restore for an incoming file, are on the row's head already:
       // they are the one action that the state asks for.
-      Button {
+      RowAction {
+        panel: fd.panel
         visible: fd.canRestore && !fd.isIncoming
-        text: "Restore from repo"; iconText: panel.icFromRepo; bordered: true
-        fontSize: Style.font.bodySmall; foreground: fd.isIncoming || fd.missing ? panel.warnColor : panel.fg
-        fontFamily: panel.ff
+        text: "Restore from repo"; iconText: panel.icFromRepo
+        foreground: fd.missing ? panel.warnColor : panel.fg
         enabled: !panel.busy
         tooltipText: "Put back the copy saved in your repo. What is here now is kept as .bak.<epoch>."
         onClicked: panel.askRestoreFile(fd.row)
       }
-      Button {
+      RowAction {
+        panel: fd.panel
         visible: fd.canReset
-        text: "Reset to default"; iconText: panel.icDefault; bordered: true
-        fontSize: Style.font.bodySmall; foreground: panel.fg; fontFamily: panel.ff
+        text: "Reset to default"; iconText: panel.icDefault
         enabled: !panel.busy
         tooltipText: "Put Omarchy's default back. What is here now is kept as .bak.<epoch>."
         onClicked: panel.ask("reset-file", fd.row.id,
@@ -143,20 +143,22 @@ Item {
       }
       // Only on the user's own entries. A shipped entry is switched off
       // instead, which keeps its row and its copy.
-      Button {
+      RowAction {
+        panel: fd.panel
         visible: fd.isUser && !fd.missing
-        text: "Stop tracking"; iconText: panel.icUntrack; bordered: true
-        fontSize: Style.font.bodySmall; foreground: panel.dim; fontFamily: panel.ff
+        text: "Stop tracking"; iconText: panel.icUntrack
+        foreground: panel.dim
         enabled: !panel.busy
         tooltipText: "It leaves your list, and its copy leaves the repo. The file here is untouched, and git history keeps the copy."
         onClicked: panel.ask("untrack", fd.row.id,
                              "Stop tracking " + fd.row.label + "?\n\nThe file on this machine is untouched. Its copy leaves your repo, and git history keeps it: Restore, Deleted from your repo, brings it back.",
                              "Stop tracking")
       }
-      Button {
+      RowAction {
+        panel: fd.panel
         visible: fd.missing && fd.row.saved === true
-        text: "Forget it"; iconText: panel.icUntrack; bordered: true
-        fontSize: Style.font.bodySmall; foreground: panel.dim; fontFamily: panel.ff
+        text: "Forget it"; iconText: panel.icUntrack
+        foreground: panel.dim
         enabled: !panel.busy
         tooltipText: "The copy leaves your repo too. Git history keeps it, and the Restore tab can bring it back."
         onClicked: panel.ask("forget", fd.row.id,

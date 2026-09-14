@@ -10,83 +10,33 @@ import "../replicant.js" as R
 // saved. With two machines this answers "did the desktop actually push?",
 // which is why the repo exists. The remote, the branch and this machine's
 // name used to be a table of their own, and nobody read it.
-Column {
+Card {
   id: mc
-  // The panel this belongs to. Every value and every action comes from it.
-  property var panel
-  readonly property string url: R.webUrl(panel.repoState.remote || "")
-  spacing: Style.space(2)
+  readonly property var machines: panel.repoState.machines || []
 
-  Item {
-    width: mc.width
-    implicitHeight: Style.space(28)
-    PanelSectionHeader {
-      anchors.left: parent.left
-      anchors.right: ghBtn.left
-      anchors.verticalCenter: parent.verticalCenter
-      text: "Machines on " + (panel.repoState.remote_name || "this repo")
-      foreground: panel.fg
-      fontFamily: panel.ff
-    }
-    Button {
-      id: ghBtn
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      visible: mc.url !== ""
-      text: "Open on GitHub"; iconText: panel.icGithub; bordered: false
-      foreground: panel.dim; fontFamily: panel.ff
-      fontSize: Style.font.caption
-      tooltipText: mc.url
-      onClicked: panel.openUrl(mc.url)
-    }
-  }
+  icon: panel.icMachine
+  title: "Machines"
+  subtitle: "Every machine that saves into " + (panel.repoState.remote_name || "this repo")
+  countText: String(mc.machines.length)
 
   Repeater {
-    model: panel.repoState.machines || []
-    delegate: Item {
-      id: machineRow
+    model: mc.machines
+    delegate: ListRow {
       required property var modelData
+      panel: mc.panel
       width: mc.width
-      implicitHeight: Style.space(26)
-      Row {
-        anchors.left: parent.left
-        anchors.leftMargin: Style.space(4)
-        anchors.verticalCenter: parent.verticalCenter
-        spacing: Style.space(10)
-        Text {
-          anchors.verticalCenter: parent.verticalCenter
-          text: panel.icMachine
-          color: machineRow.modelData.current ? Color.accent : panel.dim
-          font.family: panel.ff; font.pixelSize: Style.font.body
-        }
-        Text {
-          anchors.verticalCenter: parent.verticalCenter
-          text: machineRow.modelData.name
-          color: panel.fg; font.family: panel.ff; font.pixelSize: Style.font.body
-          font.bold: machineRow.modelData.current
-        }
-        Text {
-          anchors.verticalCenter: parent.verticalCenter
-          visible: machineRow.modelData.current
-          text: "this machine"
-          color: panel.dim; font.family: panel.ff; font.pixelSize: Style.font.caption
-        }
-        Text {
-          anchors.verticalCenter: parent.verticalCenter
-          // A machine with no recorded profile guessed one from its chassis.
-          text: machineRow.modelData.profile
-              ? machineRow.modelData.profile + " profile"
-              : (machineRow.modelData.current ? panel.profileName + " profile (guessed)" : "no profile")
-          color: Color.accent; font.family: panel.ff; font.pixelSize: Style.font.caption
-        }
-        Text {
-          anchors.verticalCenter: parent.verticalCenter
-          text: (machineRow.modelData.last_epoch || 0) > 0
-                ? "saved " + R.agoText(machineRow.modelData.last_epoch)
-                : (machineRow.modelData.last_save ? "saved " + machineRow.modelData.last_save : "no saves yet")
-          color: panel.dim; font.family: panel.ff; font.pixelSize: Style.font.caption
-        }
-      }
+      icon: panel.icMachine
+      iconColor: modelData.current ? Color.accent : panel.dim
+      title: modelData.name
+      titleBold: modelData.current
+      // A machine with no recorded profile guessed one from its chassis.
+      detail: (modelData.profile ? modelData.profile + " profile"
+               : (modelData.current ? panel.profileName + " profile (guessed)" : "no profile"))
+              + "  ·  "
+              + ((modelData.last_epoch || 0) > 0 ? "saved " + R.agoText(modelData.last_epoch)
+                 : (modelData.last_save ? "saved " + modelData.last_save : "no saves yet"))
+      meta: modelData.current ? "this machine" : ""
+      metaColor: Color.accent
     }
   }
 }

@@ -461,8 +461,8 @@ Panel {
   // the command committed and pushed, and then wait for a full status with a
   // fetch: six seconds between the click and the button saying what was
   // clicked. Now the row shows the new scope straight away, the changes run
-  // one after another in their own queue, and the status that follows skips
-  // the fetch. The CLI's lock keeps them in order with everything else.
+  // one after another in their own queue, and the status that follows does
+  // not force a fetch. The CLI's lock keeps them in order with everything else.
   property var scopeOverrides: ({})
   property var scopeQueue: []
   property bool scopeAwaitingStatus: false

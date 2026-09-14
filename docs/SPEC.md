@@ -49,8 +49,8 @@ Rules for the code:
 - `Panel.qml` holds the state, the processes and the actions. Each tab is a part in `components/`
   (`OverviewTab`, `ConfigsTab`, `SettingsTab`, `RestoreTab`), and so is each piece of a tab.
 - A scope change in the panel shows at once (`setScope`). The panel runs the commands one at a
-  time in their own queue, and the status that follows skips the fetch. A full status that is
-  built after the queue is empty replaces what the panel assumed.
+  time in their own queue, and the status that follows does not force a fetch. A full status that
+  is built after the queue is empty replaces what the panel assumed.
 
 ## One rule above the others
 

@@ -68,9 +68,9 @@ section "one word for one state"
 # The scope button says Off, the legend says off and a card says "3 off". The
 # row and the stat card said "not synced": two words for one state.
 off_row=$(grep -oE 'if \(st === "off"\) return "[^"]+"' "$ROOT/replicant.js" | sed -E 's/.*return "(.*)"/\1/')
-off_card=$(grep -oE 'label: "[^"]+"; value: String\(root\.countOff\)' "$PANEL" | sed -E 's/label: "([^"]+)".*/\1/')
-check_contains "the row calls it off"        "off" "$off_row"
-check_contains "…and so does the stat card"  "off" "$off_card"
+off_chip=$(grep -oE '"⊘ " \+ root\.nOff \+ " [^"]+"' "$PANEL" | sed -E 's/.*" ([^"]+)"$/\1/')
+check_contains "the row calls it off"                  "off" "$off_row"
+check_contains "…and so does its chip on the Overview" "off" "$off_chip"
 
 section "a card's subtitle fits its card"
 # A card header elides its subtitle, and the end goes first. The key check above

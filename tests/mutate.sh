@@ -148,6 +148,54 @@ suite: test-cli.sh
 from: printf -v "$1" '%s' "${SCOPE_OF[$2]:-shared}"
 to: printf -v "$1" '%s' shared
 why: the fork-free scope lookup gives the real scope
+---
+file: bin/omarchy-replicant
+suite: test-cli.sh
+from: if [[ -e "$REPO_DIR/${p%/}" || -n "$(git_repo ls-files -- "$p" 2>/dev/null)" ]]; then paths+=("$p"); fi
+to: paths+=("$p")
+why: untrack commits although one of its paths does not exist
+---
+file: bin/lib/track.sh
+suite: test-cli.sh
+from: if [[ -e "${src%/}" ]]; then
+to: if false; then
+why: forget refuses a file that is still on the machine
+---
+file: bin/lib/history.sh
+suite: test-cli.sh
+from: if (( dry )); then skip "dry-run: nothing was touched. Repeat with --apply"; return 0; fi
+to: :
+why: recover is a dry run by default
+---
+file: bin/lib/history.sh
+suite: test-cli.sh
+from: [[ -n "${in_head[$line]:-}" || -n "${seen[$line]:-}" ]] && continue
+to: :
+why: deleted does not list a copy that is back in the repo
+---
+file: bin/lib/history.sh
+suite: test-cli.sh
+from: write_track_file ${keep[@]+"${keep[@]}"}
+to: :
+why: recovering an untrack tracks the file again
+---
+file: bin/lib/update.sh
+suite: test-cli.sh
+from: (( now - $(stat -c %Y "$stamp" 2>/dev/null || echo 0) >= UPDATE_MAX_AGE ))
+to: true
+why: update-check asks the origin at most every UPDATE_MAX_AGE
+---
+file: bin/lib/update.sh
+suite: test-cli.sh
+from: [[ -n "$id" && "$PLUGIN_DIR" == "$HOME/.config/omarchy/plugins/$id" ]]
+to: true
+why: only the installed copy updates through omarchy plugin update
+---
+file: bin/lib/suggest.sh
+suite: test-cli.sh
+from: else is_tracked_path "$path" && tracked=true; fi
+to: else :; fi
+why: the file picker says which files are tracked
 DATA
 )
 

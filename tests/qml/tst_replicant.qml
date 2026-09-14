@@ -90,11 +90,33 @@ TestCase {
     compare(sec[0].scope, "off")
   }
 
-  function test_nextScope_cycles() {
-    compare(R.nextScope("shared", true), "profile")
-    compare(R.nextScope("profile", true), "off")
-    compare(R.nextScope("off", true), "shared")
-    compare(R.nextScope("shared", false), "off")
+  function test_lineRole_for_a_diff() {
+    compare(R.lineRole("+added", "diff"), "add")
+    compare(R.lineRole("-removed", "diff"), "del")
+    compare(R.lineRole("--- repo", "diff"), "dim")
+    compare(R.lineRole("@@ -1 +1 @@", "diff"), "hunk")
+    compare(R.lineRole(" context", "diff"), "fg")
+  }
+
+  function test_lineRole_for_command_output() {
+    compare(R.lineRole("  ✓ hypr/input.lua (already matches)", "output"), "ok")
+    compare(R.lineRole("  ✗ remote is PUBLIC", "output"), "bad")
+    compare(R.lineRole("Save failed (exit 1)", "output"), "bad")
+    compare(R.lineRole("  · dry-run: 2 files untouched", "output"), "dim")
+    compare(R.lineRole("  » mv a b", "output"), "accent")
+    compare(R.lineRole("== hyprland · Hyprland", "output"), "head")
+    compare(R.lineRole("GitHub", "output"), "head")
+    compare(R.lineRole("      +new line", "output"), "add")
+    compare(R.lineRole("      -old line", "output"), "del")
+    compare(R.lineRole("Everything saved and pushed.", "output"), "fg")
+  }
+
+  function test_resultLine() {
+    compare(R.resultLine("→ savegame\n  ✓ done\nEverything saved and pushed.", true), "Everything saved and pushed.")
+    compare(R.resultLine("Save failed (exit 1)\nsome detail\nRun pull, then save again.", false),
+            "Save failed (exit 1): Run pull, then save again.")
+    compare(R.resultLine("  ✓ reset hypr/input.lua\n", true), "reset hypr/input.lua")
+    compare(R.resultLine("", true), "")
   }
 
   function test_backupRows_keeps_the_newest_per_id() {
@@ -107,6 +129,91 @@ TestCase {
     compare(rows[0].path, "a.2")
     compare(rows[0].older, 1)
     compare(rows[1].older, 0)
+  }
+
+  function test_headline_follows_the_order_of_summary() {
+    compare(R.headline(facts({ asked: false })).tone, "dim")
+    compare(R.headline(facts({ ahead: 1, behind: 1 })).tone, "warn")
+    compare(R.headline(facts({ behind: 2, incoming: 1 })).title, "2 changes waiting on GitHub")
+    var inc = R.headline(facts({ incoming: 1, dirty: 3 }))
+    compare(inc.title, "1 file came from another machine")
+    verify(inc.detail.indexOf("Save would overwrite") !== -1, inc.detail)
+    compare(inc.detail.indexOf("Restore puts it here"), 0)
+    compare(R.headline(facts({ incoming: 2 })).detail.indexOf("Restore puts them here"), 0)
+    compare(R.headline(facts({ dirty: 3 })).tone, "accent")
+    compare(R.headline(facts({ ahead: 2 })).title, "2 commits not pushed yet")
+    var ok = R.headline(facts({ tracked: 68, lastSave: "2 hours ago" }))
+    compare(ok.tone, "ok")
+    compare(ok.detail, "68 files backed up · last save 2 hours ago")
+  }
+
+  function test_nameList_caps_the_names() {
+    compare(R.nameList(["a", "b"], 8), "  a\n  b")
+    compare(R.nameList(["a", "b", "c"], 2), "  a\n  b\n  +1 more")
+  }
+
+  function test_repoPathLabel() {
+    compare(R.repoPathLabel("config/hypr/input.lua").label, "hypr/input.lua")
+    compare(R.repoPathLabel("config/hypr/input.lua").note, "")
+    var p = R.repoPathLabel("profiles/laptop/config/hypr/monitors.lua")
+    compare(p.label, "hypr/monitors.lua")
+    compare(p.note, "laptop profile")
+    compare(R.repoPathLabel("secrets/ssh/id_ed25519").note, "secret")
+    compare(R.repoPathLabel("state/omarchy/pacman.txt").label, "state/omarchy/pacman.txt")
+  }
+
+  function test_repoCopyText_follows_the_scope() {
+    compare(R.repoCopyText({ id: "a.conf", secret: false }, "shared", "laptop"), "config/a.conf")
+    compare(R.repoCopyText({ id: "a.conf", secret: false }, "profile", "laptop"), "profiles/laptop/config/a.conf")
+    compare(R.repoCopyText({ id: "env/x", secret: true }, "shared", "laptop"), "secrets/env/x")
+  }
+
+  function test_sizeText_and_prettyPath() {
+    compare(R.sizeText(512), "512 B")
+    compare(R.sizeText(2048), "2.0 KB")
+    compare(R.sizeText(20480), "20 KB")
+    compare(R.sizeText(3 * 1048576), "3.0 MB")
+    compare(R.prettyPath("/home/u/.config", "/home/u"), "~/.config")
+    compare(R.prettyPath("/home/u", "/home/u"), "~")
+    compare(R.prettyPath("/home/user2/x", "/home/u"), "/home/user2/x")
+  }
+
+  function test_webUrl_only_for_github() {
+    compare(R.webUrl("https://github.com/me/my-replicant.git"), "https://github.com/me/my-replicant")
+    compare(R.webUrl("git@github.com:me/my-replicant.git"), "https://github.com/me/my-replicant")
+    compare(R.webUrl("/srv/git/repo.git"), "")
+  }
+
+  function test_filters_keep_the_rows_they_name() {
+    verify(R.rowMatchesFilter({ sync_state: "missing" }, "changed"))
+    verify(R.rowMatchesFilter({ sync_state: "incoming" }, "changed"))
+    verify(!R.rowMatchesFilter({ sync_state: "saved" }, "changed"))
+    verify(R.rowMatchesFilter({ sync_state: "off" }, "off"))
+    verify(R.rowMatchesFilter({ sync_state: "saved" }, "all"))
+    var st = { configs: [
+      { id: "a", label: "a", src: "/a", category: "c", sync_state: "unsaved" },
+      { id: "b", label: "b", src: "/b", category: "c", sync_state: "saved" } ] }
+    compare(R.rowsFor(st, "c", "", "changed").length, 1)
+    compare(R.rowsFor(st, "c", "", "all").length, 2)
+  }
+
+  function test_wouldRestore_needs_a_differing_copy() {
+    verify(R.wouldRestore({ synced: true, saved: true, sync_state: "unsaved" }))
+    verify(R.wouldRestore({ synced: true, saved: true, sync_state: "missing" }))
+    verify(!R.wouldRestore({ synced: true, saved: false, sync_state: "unsaved" }))
+    verify(!R.wouldRestore({ synced: false, saved: true, sync_state: "off" }))
+    verify(!R.wouldRestore({ synced: true, saved: true, sync_state: "saved" }))
+  }
+
+  function test_a_scope_change_shows_before_the_status_confirms_it() {
+    var row = { id: "a", scope: "shared", sync_state: "saved" }
+    compare(R.effectiveScope(row, {}), "shared")
+    compare(R.effectiveScope(row, { a: "off" }), "off")
+    compare(R.displayState(row, { a: "off" }), "off")
+    compare(R.displayState(row, { a: "profile" }), "saved")
+    compare(R.displayState({ id: "a", scope: "off", sync_state: "off" }, { a: "shared" }), "pending")
+    compare(R.displayState(row, { a: "shared" }), "saved")
+    verify(R.stateGlyph("pending") !== R.stateGlyph("saved"))
   }
 
   function test_agoText() {

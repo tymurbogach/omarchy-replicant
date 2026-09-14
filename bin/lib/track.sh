@@ -148,3 +148,28 @@ core_untrack() {
   [[ -e "$copy" ]] && rm -rf -- "$copy"
   echo "$rel is no longer tracked (the copy in your repo was removed too)" >&2
 }
+
+# core_forget <rel>: a file is gone from this machine, and its copy leaves the
+# repo too. One of the user's own entries is untracked. A shipped entry keeps
+# its place in the plugin's list, so it shows again if the file comes back.
+# Git history keeps the copy either way, and `recover` brings it back.
+core_forget() {
+  local rel="$1" src copy
+  [[ -n "$rel" ]] || { echo "forget: usage: forget <id>" >&2; return 1; }
+  src=$(resolve_manifest_src "$rel") || { echo "forget: unknown id: $rel" >&2; return 1; }
+  # Forgetting a file that is still here would last until the next save, which
+  # copies it in again. The two tools for that case say what they do.
+  if [[ -e "${src%/}" ]]; then
+    if is_user_entry "$rel"; then
+      echo "forget: ${src/#$HOME/\~} is still on this machine. To stop saving it: untrack $rel" >&2
+    else
+      echo "forget: ${src/#$HOME/\~} is still on this machine. To stop saving it: scope $rel off" >&2
+    fi
+    return 1
+  fi
+  if is_user_entry "$rel"; then core_untrack "$rel"; return; fi
+  copy=$(repo_copy_for_rel "$rel")
+  [[ -e "${copy%/}" ]] || { echo "forget: $rel has no copy in your repo, so there is nothing to forget" >&2; return 1; }
+  rm -rf -- "${copy%/}"
+  echo "$rel is gone from your repo too. Git history keeps it: 'recover' brings it back" >&2
+}

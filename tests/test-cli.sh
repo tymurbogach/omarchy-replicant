@@ -730,6 +730,118 @@ printf 'API_TOKEN=%s\n' "${P_GH}abcdefghijklmnopqrstuvwxyz0123456789" > "$d/conf
 check_false "…but a real one in the same place is"           bash "$SCAN" "$d/config"
 rm -rf "$d"
 
+section "untrack commits the list and the copy together"
+# commit_repo_shape named the profile path of a shared file, which never exists.
+# git add refused the whole list, so an untrack was never committed at all.
+printf 'mine\n' > "$HOME/.config/mine2.conf"
+run track "$HOME/.config/mine2.conf" >/dev/null 2>&1
+run savegame -m "save mine2" --no-push >/dev/null 2>&1
+check_true "the copy is saved first" test -f "$REPO/config/mine2.conf"
+run untrack mine2.conf >/dev/null 2>&1
+check "untrack leaves nothing pending" "0" \
+  "$(git -C "$REPO" status --porcelain -- .replicant-track config/mine2.conf | grep -c . || true)"
+check "…because it made its own commit" "untrack: mine2.conf" "$(git -C "$REPO" log -1 --format=%s)"
+
+section "forget: a deleted file leaves the repo, and history brings it back"
+mkdir -p "$HOME/.config/foot"
+printf 'font=mono\n' > "$HOME/.config/foot/foot.ini"
+run savegame -m "save foot" --no-push >/dev/null 2>&1
+check_true "the copy is saved" test -f "$REPO/config/foot/foot.ini"
+check_false "forget refuses a file that is still here" "$CLI" forget foot/foot.ini
+check_contains "…and names the tool for that" "scope foot/foot.ini off" "$(run forget foot/foot.ini)"
+rm -f "$HOME/.config/foot/foot.ini"
+run forget foot/foot.ini >/dev/null 2>&1
+check_false "forget removes the copy" test -e "$REPO/config/foot/foot.ini"
+check "…in a commit of its own" "0" "$(git -C "$REPO" status --porcelain | grep -c 'foot' || true)"
+check "…so the row is gone" "0" \
+  "$(run status --json --no-fetch | jq '[.configs[] | select(.id == "foot/foot.ini")] | length')"
+check_false "forget needs an id" "$CLI" forget
+check_false "…that something tracks" "$CLI" forget nope/nope
+fsha=$(git -C "$REPO" log -1 --format=%H)
+check_contains "deleted lists the copy" "config/foot/foot.ini" "$(run deleted)"
+check "…and so does its JSON" "config/foot/foot.ini" \
+  "$(run deleted --json | jq -r --arg s "$fsha" '.[] | select(.sha == $s) | .files[0]')"
+before=$(hash_tree "$HOME")
+run recover "$fsha" >/dev/null 2>&1
+check "recover is a dry run by default" "$before" "$(hash_tree "$HOME")"
+check_false "…and puts nothing in the repo" test -e "$REPO/config/foot/foot.ini"
+run recover "$fsha" --apply >/dev/null 2>&1
+check_true "recover --apply brings the copy back" test -f "$REPO/config/foot/foot.ini"
+check "…and the file onto the machine" "font=mono" "$(cat "$HOME/.config/foot/foot.ini" 2>/dev/null)"
+check "…in one commit" "0" "$(git -C "$REPO" status --porcelain | grep -c 'foot' || true)"
+check "…so deleted no longer lists it" "0" \
+  "$(run deleted --json | jq --arg s "$fsha" '[.[] | select(.sha == $s)] | length')"
+check_false "recover refuses what is not a commit" "$CLI" recover not-a-commit --apply
+# An untrack removes the line and the copy in one commit. Bringing back only
+# the copy would last until the next save pruned it again.
+usha=$(git -C "$REPO" log --format='%H %s' | awk '$2 == "untrack:" && $3 == "mine2.conf" { print $1; exit }')
+rm -f "$HOME/.config/mine2.conf"
+run recover "$usha" --apply >/dev/null 2>&1
+check_contains "recovering an untrack tracks the file again" "mine2.conf" "$(cat "$REPO/.replicant-track")"
+check "…and puts it back on the machine" "mine" "$(cat "$HOME/.config/mine2.conf" 2>/dev/null)"
+
+section "the file picker lists one directory and writes nothing"
+printf 'x\n' > "$HOME/.config/api-token.txt"
+before=$(hash_tree "$HOME")
+b=$(run browse-json "~/.config")
+check "browse-json answers JSON" "0" "$(jq empty <<<"$b" >/dev/null 2>&1; echo $?)"
+check "…for the directory it was given" "$HOME/.config" "$(jq -r '.dir' <<<"$b")"
+check "…with its parent, to go up" "$HOME" "$(jq -r '.parent' <<<"$b")"
+check "…directories first" "d" "$(jq -r '.entries[0].type' <<<"$b")"
+check "…and a credential marked as one" "secret" \
+  "$(jq -r '.entries[] | select(.name == "api-token.txt") | .kind' <<<"$b")"
+check "…and a tracked file marked as tracked" "true" \
+  "$(run browse-json "$HOME/.config/hypr" | jq -r '.entries[] | select(.name == "input.lua") | .tracked')"
+check "…and a path that is not there answers with an error" "does not exist" \
+  "$(run browse-json "$HOME/not-here" | jq -r '.error')"
+check "browse changes nothing" "$before" "$(hash_tree "$HOME")"
+rm -f "$HOME/.config/api-token.txt"
+
+section "the plugin updates itself only through omarchy plugin update"
+# A copy of the plugin, cloned from a bare origin, stands in for the installed
+# checkout. Then the origin gets a newer version.
+porigin="$TMP/plugin-origin.git"; git init -q --bare "$porigin"
+pwork="$TMP/plugin-work"; mkdir -p "$pwork"
+cp -r "$HERE/../bin" "$HERE/../manifest.json" "$pwork/"
+git -C "$pwork" init -q -b main && git -C "$pwork" add -A && git -C "$pwork" commit -qm v1
+git -C "$pwork" remote add origin "$porigin" && git -C "$pwork" push -q origin main 2>/dev/null
+git -C "$porigin" symbolic-ref HEAD refs/heads/main
+pid=$(jq -r '.id' "$pwork/manifest.json")
+pinst="$HOME/.config/omarchy/plugins/$pid"
+git clone -q "$porigin" "$pinst" 2>/dev/null
+uc=$("$pinst/bin/omarchy-replicant" update-check --json 2>/dev/null)
+check "an up-to-date checkout has no update" "false" "$(jq -r '.available' <<<"$uc")"
+check "…and knows it is the installed copy" "true" "$(jq -r '.installed' <<<"$uc")"
+jq '.version = "99.0.0"' "$pwork/manifest.json" > "$pwork/m.json" && mv "$pwork/m.json" "$pwork/manifest.json"
+git -C "$pwork" commit -qam "Release 99.0.0" && git -C "$pwork" push -q origin main 2>/dev/null
+uc=$("$pinst/bin/omarchy-replicant" update-check --json --fetch 2>/dev/null)
+check "a newer origin is an update" "true" "$(jq -r '.available' <<<"$uc")"
+check "…named by its version" "99.0.0" "$(jq -r '.latest' <<<"$uc")"
+check "…with what it changes" "Release 99.0.0" "$(jq -r '.commits[0].subject' <<<"$uc")"
+check_contains "the text form says how to update" "omarchy-replicant update" \
+  "$("$pinst/bin/omarchy-replicant" update-check 2>&1)"
+stamp="$pinst/.git/FETCH_HEAD"
+touch -d '1 hour ago' "$stamp"; m1=$(stat -c %Y "$stamp")
+"$pinst/bin/omarchy-replicant" update-check --json >/dev/null 2>&1
+check "the origin is asked at most every 6 hours" "$m1" "$(stat -c %Y "$stamp")"
+REPLICANT_UPDATE_MAX_AGE=0 "$pinst/bin/omarchy-replicant" update-check --json >/dev/null 2>&1
+check_false "…and again once that is up" test "$m1" = "$(stat -c %Y "$stamp")"
+check_false "a copy that is not the installed one refuses to update" "$pwork/bin/omarchy-replicant" update --yes
+check_contains "…and says to use git" "git pull" "$("$pwork/bin/omarchy-replicant" update --yes 2>&1)"
+: > "$STUB_LOG"
+check_false "a failing omarchy plugin update fails the update" "$pinst/bin/omarchy-replicant" update --yes
+check_contains "…and Omarchy's command is the one that ran" "omarchy plugin update $pid --yes" "$(cat "$STUB_LOG")"
+okbin="$TMP/okbin"; mkdir -p "$okbin"
+printf '#!/bin/sh\necho "omarchy $*" >> "%s"\nexit 0\n' "$TMP/ok.log" > "$okbin/omarchy"; chmod +x "$okbin/omarchy"
+mkdir -p "$HOME/.cache/quickshell/qmlcache"; touch "$HOME/.cache/quickshell/qmlcache/stale"
+# XDG_CACHE_HOME is pinned to the fake $HOME: the real one would clear the
+# compiled QML of the shell that is running on this machine.
+PATH="$okbin:$PATH" XDG_CACHE_HOME="$HOME/.cache" "$pinst/bin/omarchy-replicant" update --yes --restart >/dev/null 2>&1
+for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q 'restart shell' "$TMP/ok.log" 2>/dev/null && break; sleep 0.2; done
+check_contains "update runs Omarchy's update" "omarchy plugin update $pid --yes" "$(cat "$TMP/ok.log" 2>/dev/null)"
+check_contains "…--restart then restarts the shell" "omarchy restart shell" "$(cat "$TMP/ok.log" 2>/dev/null)"
+check_false "…after it cleared the stale compiled QML" test -e "$HOME/.cache/quickshell/qmlcache/stale"
+
 section "the documented IPC surface is the one that exists"
 # Service.qml's comment gave `omarchy ipc call <target> <method>`. There is no
 # `omarchy ipc` command: anyone following it got "Unknown Omarchy command".

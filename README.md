@@ -21,6 +21,17 @@ Click the icon in your bar, then **Create private repo**. The plugin creates a p
 copies your configs and secrets into it, and pushes. [First-time setup](docs/getting-started.md)
 walks through it.
 
+## Update
+
+If a newer version is on GitHub, the panel header shows **Update to** and the version. The button
+lists what changed, installs the version with `omarchy plugin update`, and restarts the shell. The
+panel asks GitHub at most every six hours. **Check for updates** on the Overview asks at once.
+
+```bash
+omarchy-replicant update-check    # what is new, if anything
+omarchy-replicant update          # asks, then updates; --restart restarts the shell
+```
+
 ## Usage
 
 ### Why not just copy dotfiles
@@ -65,16 +76,37 @@ omarchy-replicant scope hypr/input.lua profile
 The plugin ships only the paths that any Omarchy machine plausibly has. **Your** own files go into a
 list in your own repo, so they travel to your second machine and stay private.
 
-Panel, **Configs**, **Add more files** proposes what is not tracked yet. Each row gives a reason and
-a **Track** button. It never proposes a symlink, a mise shim, a browser's own state, a file that
-another plugin installed, or a file identical to Omarchy's default. It marks a file that holds a
-credential, so that you track it as a secret. Nothing is added until you press the button.
+Panel, **Configs**, **Add files** has two ways in:
+
+- **Suggestions** proposes what is not tracked yet, each with a reason and a **Track** button. It
+  never proposes a symlink, a mise shim, a browser's own state, a file that another plugin
+  installed, or a file identical to Omarchy's default. It marks a file that holds a credential, so
+  that you track it as a secret.
+- **Browse your files** lists any folder, hidden files included, and tracks a file or a whole
+  folder with one click. You can also type or paste a path, and track it as a secret.
+
+Nothing is added until you press a button.
 
 ```bash
 omarchy-replicant suggest                                # the same list, in a terminal
 omarchy-replicant track ~/.local/bin/my-script
 omarchy-replicant track ~/.config/nvim/                  # a whole directory
 omarchy-replicant track ~/.config/gh/hosts.yml --secret  # stored at mode 600, never shown
+```
+
+### Stop saving a file, and get it back
+
+Click a row in **Configs** to open it. It shows where the file and its copy live, who syncs it, and
+every action for it. **Stop tracking** takes one of your own files off the list, and its copy
+leaves the repo. **Forget it** does the same for a file that is gone from this machine.
+
+Git history keeps every copy. **Restore**, **Deleted from your repo** lists them by the commit that
+removed them. **Bring back** puts the copy back in the repo and on this machine, and tracks it again.
+
+```bash
+omarchy-replicant forget hypr/old.lua        # a file you deleted: its copy goes too
+omarchy-replicant deleted                    # what left the repo, by commit
+omarchy-replicant recover <sha> --apply      # bring back what that commit deleted
 ```
 
 ### Big things are installed, not copied
@@ -120,6 +152,10 @@ has moved since. Installing a theme also makes it the active theme.
   a mode and a count of variables. No value is ever drawn on screen, and the diff refuses to show one.
 - **An undo for the undo.** Every write keeps the version it replaced as `.bak.<epoch>`. The
   Restore tab lists them and puts one back with a button. Undo is a swap, so it is itself reversible.
+- **Every save names its files.** Open a save under **Recent saves** to see what it touched.
+- **Counts that explain themselves.** Each count on the Overview names its files when you point at
+  it, and a click opens those files in **Configs**.
+- **A preview you can read.** Restore and reset previews open in the panel, in full.
 - **No terminal pop-ups.** Editing opens your editor, a diff renders in the panel, and a destructive
   action confirms in the panel.
 
@@ -137,8 +173,9 @@ Panel, **Restore**, *Preview* shows what would change, and touches nothing.
 
 - **Settings**: panel, **Settings**. A change is written to the real config file, applied, and
   committed. The CLI does the same with `omarchy-replicant set <id> <value>`, in the stored unit.
-- **Scopes and profiles**: the scope button on every row of **Configs**, or `scope` and `profile`.
-- **Your own files**: **Add more files** in the panel, or `track` and `untrack`.
+- **Scopes and profiles**: open a row in **Configs** and pick **Shared**, your profile, or **Off**.
+  The row shows the change at once. In a terminal: `scope` and `profile`.
+- **Your own files**: **Add files** in the panel, or `track`, `untrack` and `forget`.
 - **A key for the panel**: bind `omarchy shell replicant toggle` in `~/.config/hypr/bindings.lua`.
   `omarchy shell replicant tab settings` opens the panel on one tab.
 - **The command line**: the panel does not need it. To put `omarchy-replicant` on your `PATH`, run

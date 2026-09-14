@@ -10,7 +10,10 @@ BorderSurface {
   // The panel this belongs to. Every value and every action comes from it.
   property var panel
   property var card: ({})
-  readonly property bool expanded: panel.isOpen(cc.card.id)
+  // A filter is a question about the rows, so while one is on, every card
+  // that has an answer is open. Filtering and then opening eleven cards to
+  // find the three matches was the search doing half its job.
+  readonly property bool expanded: panel.isOpen(cc.card.id) || panel.filtering
 
   // Height derives from the column, so the column is anchored to the TOP and
   // never centred — centring inside a parent sized by that same child is the
@@ -53,7 +56,7 @@ BorderSurface {
       // want to see is the keyboard. The file row is still there below.
       Column {
         width: parent.width
-        visible: cc.card.id === "shortcuts"
+        visible: cc.card.id === "shortcuts" && !panel.filtering
         spacing: Style.space(2)
         ShortcutsView { panel: cc.panel; width: parent.width }
       }

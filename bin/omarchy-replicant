@@ -750,12 +750,24 @@ cmd_settings() {
 # Both the scope list and the profile map are part of the repo's shape, so a
 # change to either is committed like any other decision — otherwise the second
 # machine never learns about it, which is the whole point of keeping them here.
+#
+# Only the paths that exist, on disk or in the index, reach git. `git add` stops
+# at the first path that matches nothing and stages none of the others. Untrack
+# names both places a copy can live, and one of them never exists, so an untrack
+# was never committed: the list and the removed copy stayed pending until the
+# next save swept them into a commit about something else.
 commit_repo_shape() {
   local msg="$1"; shift
   [[ -d "$REPO_DIR/.git" ]] || return 0
-  git_repo add -- "$@" >/dev/null 2>&1 || true
-  if ! git_repo diff --cached --quiet -- "$@" 2>/dev/null; then
-    git_repo commit -q -m "$msg" -- "$@" >/dev/null 2>&1 || true
+  local -a paths=()
+  local p
+  for p in "$@"; do
+    if [[ -e "$REPO_DIR/${p%/}" || -n "$(git_repo ls-files -- "$p" 2>/dev/null)" ]]; then paths+=("$p"); fi
+  done
+  (( ${#paths[@]} )) || return 0
+  git_repo add -A -- "${paths[@]}" >/dev/null 2>&1 || true
+  if ! git_repo diff --cached --quiet -- "${paths[@]}" 2>/dev/null; then
+    git_repo commit -q -m "$msg" -- "${paths[@]}" >/dev/null 2>&1 || true
     git_repo push -q 2>/dev/null || warn "committed locally; push failed (offline?)"
   fi
 }
@@ -815,6 +827,90 @@ cmd_untrack() {
     "config/$id" \
     "profiles/$(current_profile)/config/$id" \
     "secrets/$id"
+}
+
+# cmd_forget <id>: a file you deleted, and its copy leaves the repo too. One of
+# your own entries is untracked; a shipped one keeps its place in the list.
+cmd_forget() {
+  local id="${1:-}"
+  [[ -n "$id" ]] || fail "usage: omarchy-replicant forget <id>"
+  load_core
+  core_forget "$id" || exit 1
+  commit_repo_shape "forget: $id (gone from $MACHINE)" \
+    .replicant-track \
+    "config/$id" \
+    "profiles/$(current_profile)/config/$id" \
+    "secrets/$id"
+}
+
+cmd_deleted() { ensure_core; bash "$CORE" deleted "$@"; }
+
+# cmd_recover <sha> [--apply]: undo the deletions of one commit, in the repo and
+# on this machine. A dry run by default, like every command that writes here.
+cmd_recover() {
+  local sha="" DRY=1 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --apply) DRY=0 ;;
+      --dry-run) DRY=1 ;;
+      -*) fail "unknown option: $arg" ;;
+      *) [[ -z "$sha" ]] && sha="$arg" ;;
+    esac
+  done
+  [[ -n "$sha" ]] || fail "usage: omarchy-replicant recover <sha> [--apply]  (the shas: omarchy-replicant deleted)"
+  [[ -d "$REPO_DIR/.git" ]] || fail "no repo yet"
+  load_core
+  core_recover "$sha" "$DRY" || exit 1
+  (( DRY )) && return 0
+  local first="${RECOVERED[0]}" more=$(( ${#RECOVERED[@]} - 1 )) subject
+  subject="recover: $(rel_for_repo_path "$first")"
+  (( more > 0 )) && subject+=", +$more more"
+  commit_repo_shape "$subject (from ${sha:0:7})" .replicant-track "${RECOVERED[@]}"
+}
+
+# ── the plugin itself ────────────────────────────────────────────────────────
+cmd_update_check() { ensure_core; bash "$CORE" update-check "$@"; }
+
+# cmd_update [--yes] [--restart]: install the newer version with Omarchy's own
+# command. That command fast-forwards the checkout, validates the plugin, and
+# rolls back when validation fails. This one adds the confirmation and, with
+# --restart, the shell restart that loads the new code.
+cmd_update() {
+  local yes=0 restart=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --yes|-y) yes=1 ;;
+      --restart) restart=1 ;;
+      *) fail "unknown option: $arg" ;;
+    esac
+  done
+  load_core
+  local j cur lat
+  j=$(core_update_check --fetch --json)
+  cur=$(jq -r '.current' <<<"$j"); lat=$(jq -r '.latest' <<<"$j")
+  [[ "$(jq -r '.checkout' <<<"$j")" == true ]] || fail "this copy of the plugin is not a git checkout, so it cannot update itself"
+  [[ "$(jq -r '.installed' <<<"$j")" == true ]] || fail "this copy runs from $PLUGIN_DIR, which is not the installed plugin. Update it with git pull"
+  if [[ "$(jq -r '.available' <<<"$j")" != true ]]; then ok "Replicant $cur is up to date"; return 0; fi
+  [[ "$(jq -r '.dirty' <<<"$j")" != true ]] || fail "the installed plugin has local changes in $PLUGIN_DIR, and omarchy plugin update cannot fast-forward over them"
+  echo "Replicant $cur -> ${lat:-newer}:" >&2
+  jq -r '.commits[] | "  " + .sha + "  " + .subject' <<<"$j" >&2
+  if (( ! yes )); then
+    read -rp "Update now? [y/N] " resp </dev/tty 2>&1 || resp=""
+    [[ $resp == [yY] ]] || fail "update cancelled"
+  fi
+  command -v omarchy >/dev/null 2>&1 || fail "omarchy not found"
+  omarchy plugin update "$PLUGIN_ID" --yes >&2 || fail "omarchy plugin update failed. Nothing was changed"
+  ok "updated to ${lat:-the newest version}"
+  if (( restart )); then
+    # Quickshell does not reliably notice that its compiled QML is stale
+    # (CONTRIBUTING.md), and a restart on the old cache runs the old panel.
+    rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/quickshell/qmlcache"
+    # Its own session: the shell that runs this command is the one that stops.
+    setsid -f omarchy restart shell </dev/null >/dev/null 2>&1 || warn "could not restart the shell: run omarchy restart shell"
+    info "the shell restarts to load it"
+  else
+    info "restart the shell to load it: omarchy restart shell"
+  fi
 }
 
 cmd_suggest() {
@@ -1382,6 +1478,7 @@ What gets backed up
   suggest [--json]            Config on this machine that nothing is backing up yet
   track <path> [name] [--secret]   Add a file or directory to YOUR list
   untrack <id>                Drop one of your own entries, and its copy
+  forget <id>                 A file you deleted: its copy leaves the repo too
   scope <id> shared|profile|off    Who syncs this file        (sync <id> on|off is the old form)
   profile [name]              Which profile this machine is in
   save-file <id> [-m]         Commit and push just that one file
@@ -1399,6 +1496,8 @@ Putting things back            (dry run by default; .bak.<epoch> kept for everyt
   restore-file <id>           One file or directory back from the repo
   reset <id>                  One file back to Omarchy's default
   reset-all [--apply] [--yes] Everything with a known default back to factory
+  deleted                     Copies that left the repo, by the commit that removed them
+  recover <sha> [--apply]     Bring back what one commit deleted, onto this machine too
 
 Third-party code               (no dry run, no backup; fetches the moment you run it)
   install-theme <name>        Install one theme from your inventory — never automatic
@@ -1407,6 +1506,10 @@ Third-party code               (no dry run, no backup; fetches the moment you ru
 
 Second machine
   clone <url>                 Point this machine at the repo you already have
+
+The plugin itself
+  update-check [--fetch]      Whether a newer Replicant is at its origin    (--json)
+  update [--yes] [--restart]  Install it with omarchy plugin update
 
 Housekeeping
   backups [--prune] [--apply] Every .bak.<epoch> this plugin left, and when
@@ -1513,6 +1616,27 @@ Dry-run by default, like everything here that writes.
   [untrack]="untrack <id>
   Drop one of your own entries AND its copy in the repo. Refuses entries that
   ship with the plugin — use 'scope <id> off' for those."
+  [forget]="forget <id>
+  For a file you deleted from this machine: its copy leaves the repo too, in one
+  commit. One of your own entries is untracked. A shipped entry stays in the
+  plugin's list, so it shows again if the file comes back. Git history keeps
+  the copy: 'deleted' lists it and 'recover' brings it back."
+  [deleted]="deleted [--json]
+  Every copy that left your repo and is not back, grouped by the commit that
+  removed it, newest first. Only the shared tree, the secrets and this
+  profile's tree: another profile's files belong to another machine."
+  [recover]="recover <sha> [--apply]
+  Undo the deletions of one commit from 'deleted'. The copies come back into
+  the repo, the entries that commit untracked are tracked again, and each file
+  is put back on this machine with a .bak.<epoch> of what it replaces.
+  A dry run by default."
+  [update-check]="update-check [--fetch] [--json]
+  Whether the plugin's origin has a newer version, and what it changes. It
+  asks the origin at most every 6 hours, unless --fetch is given."
+  [update]="update [--yes] [--restart]
+  Install the newer version with 'omarchy plugin update', which validates it
+  and rolls back a version that fails. Asks first, unless --yes is given.
+  --restart restarts the shell afterwards, so that the new code loads."
   [suggest]="suggest [--json]
   Config on this machine that nothing is backing up yet, credentials first.
   It only proposes; nothing is tracked until you say so."
@@ -1584,10 +1708,10 @@ main() {
   # Anything that writes to the repo takes the lock first; read-only commands
   # (status/get/diff/edit) stay lock-free so the panel's polling never blocks.
   case "$cmd" in
-    init|create|backup|savegame|set|save-file|reset|reset-all|push|pull|clone|restore|sync|scope|track|untrack|profile|revert|restore-file|install-theme|install-plugin) acquire_repo_lock ;;
+    init|create|backup|savegame|set|save-file|reset|reset-all|push|pull|clone|restore|sync|scope|track|untrack|forget|profile|revert|restore-file|install-theme|install-plugin) acquire_repo_lock ;;
     # These write only when they apply. A dry run takes no lock: taking it
     # creates the lock file, and purge would then list its own lock.
-    undo|backups|purge)
+    undo|backups|purge|recover)
       if [[ -d "$REPLICANT_HOME" ]] && [[ " $* " == *" --apply "* ||
             ( "$cmd" == undo && ( " $* " == *" --yes "* || " $* " == *" -y "* ) ) ]]; then
         acquire_repo_lock
@@ -1616,7 +1740,15 @@ main() {
     scope) shift; cmd_scope "$@";;
     track) shift; cmd_track "$@";;
     untrack) shift; cmd_untrack "$@";;
+    forget) shift; cmd_forget "$@";;
+    deleted) shift; cmd_deleted "$@";;
+    recover) shift; cmd_recover "$@";;
+    update-check) shift; cmd_update_check "$@";;
+    update) shift; cmd_update "$@";;
     suggest) shift; cmd_suggest "$@";;
+    # The panel's file picker. Not in usage(), like backups-json: it prints JSON
+    # for the panel, and `track <path>` is what a person types.
+    browse-json) ensure_core; bash "$CORE" browse "${2:-}";;
     profile) shift; cmd_profile "$@";;
     revert) shift; cmd_revert "$@";;
     restore-file) shift; cmd_restore_file "$@";;

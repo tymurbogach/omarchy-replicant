@@ -249,6 +249,12 @@ check "valid JSON"          "0"    "$(printf '%s' "$log" | jq empty >/dev/null 2
 check "at least one commit" "true" "$(printf '%s' "$log" | jq 'length > 0')"
 check "entries carry a subject" "0" "$(printf '%s' "$log" | jq '[.[] | select(.subject == null)] | length')"
 check "sha is abbreviated"      "7" "$(printf '%s' "$log" | jq -r '.[0].sha | length')"
+# The panel opens a save and lists what it touched.
+check "a save names the files it touched" "true" "$(printf '%s' "$log" | jq '.[0].files | length > 0')"
+check "…each with a one-letter status" "0" \
+  "$(printf '%s' "$log" | jq '[.[0].files[] | select((.status | length) != 1)] | length')"
+check "…and nfiles counts them" "true" "$(printf '%s' "$log" | jq '.[0].nfiles == (.[0].files | length)')"
+check "…and the save carries its time" "true" "$(printf '%s' "$log" | jq '.[0].epoch > 0')"
 
 section "backup only ever reads the configs it tracks"
 # Scoped to ~/.config on purpose: the state/ inventory shells out to pacman,

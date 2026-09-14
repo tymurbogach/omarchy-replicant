@@ -335,11 +335,14 @@ core_status() {
           local mname mwhen
           mname=$(basename "$d")
           mwhen=$(git -C "$REPO_DIR" log -1 --date=format:'%d %b %H:%M' --format='%ad' -- "state/$mname" 2>/dev/null || true)
+          # The epoch too: the panel says "2 hours ago", which is the question.
+          local mepoch; mepoch=$(git -C "$REPO_DIR" log -1 --format='%at' -- "state/$mname" 2>/dev/null || true)
           local mprof; mprof=$(profile_for_machine "$mname" 2>/dev/null || echo "")
-          printf '%s\t%s\t%s\t%s\n' "$mname" "$mwhen" \
-            "$( [[ "$mname" == "$MACHINE" ]] && echo true || echo false )" "$mprof"
+          printf '%s\t%s\t%s\t%s\t%s\n' "$mname" "$mwhen" \
+            "$( [[ "$mname" == "$MACHINE" ]] && echo true || echo false )" "$mprof" "${mepoch:-0}"
         done; } | jq -Rsc 'split("\n") | map(select(length > 0) | split("\t")
-          | {name: .[0], last_save: .[1], current: (.[2] == "true"), profile: (.[3] // "")})'
+          | {name: .[0], last_save: .[1], current: (.[2] == "true"), profile: (.[3] // ""),
+             last_epoch: (.[4] | tonumber? // 0)})'
     )
     # Which profiles exist, and how many files each one is actually holding —
     # the answer to "did scoping that file to a profile do anything?".
@@ -463,13 +466,23 @@ core_log() {
   # said "state: … inventory" and the two that recorded a decision the user
   # actually made were what fell off the bottom. Read more than we show, so
   # collapsing lengthens the history instead of shortening the list.
-  git -C "$REPO_DIR" log -n "$(( n * 4 ))" --date=format:'%d %b %H:%M' \
-      --pretty=format:'%H%x1f%ad%x1f%s%x1f%an' 2>/dev/null |
-    jq -Rsc --argjson n "$n" 'split("\n") | map(select(length > 0) | split("\u001f")
-             | {sha: .[0][0:7], date: .[1], subject: .[2], author: .[3], count: 1})
-             | reduce .[] as $c ([];
-                 if (length > 0 and .[-1].subject == $c.subject)
-                 then .[0:-1] + [.[-1] * {count: (.[-1].count + 1)}]
-                 else . + [$c] end)
-             | .[0:$n]'
+  #
+  # Each save also names the files it touched, so the panel can open a big one
+  # and show them. A collapsed run names every file of the run once. Names only:
+  # a path is on screen in the Configs tab already, and a secret's contents
+  # never reach a commit, let alone this list.
+  git -C "$REPO_DIR" log -n "$(( n * 4 ))" --date=format:'%d %b %H:%M' --name-status \
+      --format=$'\x1e%H\x1f%ad\x1f%s\x1f%an\x1f%at' 2>/dev/null |
+    jq -Rsc --argjson n "$n" '
+      split("\u001e") | map(select(length > 0) | split("\n") | map(select(length > 0))
+        | (.[0] | split("\u001f")) as $h
+        | {sha: $h[0][0:7], date: $h[1], subject: $h[2], author: $h[3],
+           epoch: ($h[4] | tonumber? // 0), count: 1,
+           files: (.[1:] | map(split("\t") | {status: .[0][0:1], path: .[-1]}))})
+      | reduce .[] as $c ([];
+          if (length > 0 and .[-1].subject == $c.subject)
+          then .[0:-1] + [.[-1] * {count: (.[-1].count + 1),
+                                   files: ((.[-1].files + $c.files) | unique_by(.path))}]
+          else . + [$c] end)
+      | .[0:$n] | map(.nfiles = (.files | length) | .files = .files[0:60])'
 }

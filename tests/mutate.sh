@@ -190,6 +190,12 @@ suite: test-cli.sh
 from: [[ -n "$id" && "$PLUGIN_DIR" == "$HOME/.config/omarchy/plugins/$id" ]]
 to: true
 why: only the installed copy updates through omarchy plugin update
+---
+file: bin/lib/suggest.sh
+suite: test-cli.sh
+from: else is_tracked_path "$path" && tracked=true; fi
+to: else :; fi
+why: the file picker says which files are tracked
 DATA
 )
 

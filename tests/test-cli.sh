@@ -780,6 +780,23 @@ run recover "$usha" --apply >/dev/null 2>&1
 check_contains "recovering an untrack tracks the file again" "mine2.conf" "$(cat "$REPO/.replicant-track")"
 check "…and puts it back on the machine" "mine" "$(cat "$HOME/.config/mine2.conf" 2>/dev/null)"
 
+section "the file picker lists one directory and writes nothing"
+printf 'x\n' > "$HOME/.config/api-token.txt"
+before=$(hash_tree "$HOME")
+b=$(run browse-json "~/.config")
+check "browse-json answers JSON" "0" "$(jq empty <<<"$b" >/dev/null 2>&1; echo $?)"
+check "…for the directory it was given" "$HOME/.config" "$(jq -r '.dir' <<<"$b")"
+check "…with its parent, to go up" "$HOME" "$(jq -r '.parent' <<<"$b")"
+check "…directories first" "d" "$(jq -r '.entries[0].type' <<<"$b")"
+check "…and a credential marked as one" "secret" \
+  "$(jq -r '.entries[] | select(.name == "api-token.txt") | .kind' <<<"$b")"
+check "…and a tracked file marked as tracked" "true" \
+  "$(run browse-json "$HOME/.config/hypr" | jq -r '.entries[] | select(.name == "input.lua") | .tracked')"
+check "…and a path that is not there answers with an error" "does not exist" \
+  "$(run browse-json "$HOME/not-here" | jq -r '.error')"
+check "browse changes nothing" "$before" "$(hash_tree "$HOME")"
+rm -f "$HOME/.config/api-token.txt"
+
 section "the plugin updates itself only through omarchy plugin update"
 # A copy of the plugin, cloned from a bare origin, stands in for the installed
 # checkout. Then the origin gets a newer version.

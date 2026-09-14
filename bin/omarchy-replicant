@@ -1746,6 +1746,9 @@ main() {
     update-check) shift; cmd_update_check "$@";;
     update) shift; cmd_update "$@";;
     suggest) shift; cmd_suggest "$@";;
+    # The panel's file picker. Not in usage(), like backups-json: it prints JSON
+    # for the panel, and `track <path>` is what a person types.
+    browse-json) ensure_core; bash "$CORE" browse "${2:-}";;
     profile) shift; cmd_profile "$@";;
     revert) shift; cmd_revert "$@";;
     restore-file) shift; cmd_restore_file "$@";;

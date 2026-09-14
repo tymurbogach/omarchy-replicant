@@ -96,6 +96,38 @@ suggest_kind() {
   esac
 }
 
+# core_browse [dir]: one directory as JSON, for the panel's file picker. It
+# lists every entry, hidden ones included, because dotfiles are the point, and
+# says which ones something already tracks. It reads and never writes. The
+# picker is how a person tracks a file that suggest cannot know about: a
+# project's .env, a script outside ~/.local/bin, a file under /etc.
+core_browse() {
+  local dir="${1:-$HOME}" real parent name type size path tracked kind
+  case "$dir" in "~") dir="$HOME" ;; "~/"*) dir="$HOME/${dir#\~/}" ;; esac
+  browse_error() { jq -nc --arg dir "$dir" --arg error "$1" --arg home "$HOME" '{dir:$dir, home:$home, error:$error, entries:[]}'; }
+  real=$(realpath -e -- "$dir" 2>/dev/null) || { browse_error "does not exist"; return 1; }
+  [[ -d "$real" ]] || { browse_error "is not a directory"; return 1; }
+  [[ -r "$real" && -x "$real" ]] || { browse_error "cannot be read"; return 1; }
+  parent=$(dirname -- "$real")
+  {
+    while IFS=$'\t' read -r type size name; do
+      path="${real%/}/$name"
+      tracked=false
+      if [[ "$type" == d ]]; then is_tracked_path "$path/" && tracked=true
+      else is_tracked_path "$path" && tracked=true; fi
+      kind=config
+      [[ "$type" == f ]] && kind=$(suggest_kind "$path")
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$path" "$type" "$size" "$tracked" "$kind"
+    done < <(find "$real" -mindepth 1 -maxdepth 1 \( -type d -o -type f -o -type l \) \
+               -printf '%y\t%s\t%f\n' 2>/dev/null | head -n 500)
+  } | jq -Rsc --arg dir "$real" --arg parent "$parent" --arg home "$HOME" '
+      split("\n") | map(select(length > 0) | split("\t") | {
+        name: .[0], path: .[1], type: .[2], size: (.[3]|tonumber? // 0),
+        tracked: (.[4] == "true"), kind: .[5]})
+      | sort_by((if .type == "d" then 0 else 1 end), (.name | ascii_downcase))
+      | {dir: $dir, parent: $parent, home: $home, entries: .}'
+}
+
 # core_suggest [--json] — "path<TAB>rel<TAB>reason" per line, or the same as
 # JSON for the panel's checklist.
 core_suggest() {

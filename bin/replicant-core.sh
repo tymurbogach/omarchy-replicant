@@ -84,6 +84,7 @@ case "${1:-}" in
   track)              shift; core_track "$@" ;;
   untrack)            core_untrack "${2:-}" ;;
   suggest)            core_suggest "${2:-}" ;;
+  browse)             core_browse "${2:-}" ;;
   deleted)            core_deleted "${2:-}" ;;
   update-check)       shift; core_update_check "$@" ;;
   incoming)           core_incoming "${2:-}" "${3:-}" ;;

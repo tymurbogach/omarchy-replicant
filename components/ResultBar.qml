@@ -47,7 +47,7 @@ Item {
       anchors.right: buttons.left
       anchors.rightMargin: Style.space(6)
       anchors.verticalCenter: parent.verticalCenter
-      text: rb.running ? panel.busyLabel : panel.resultLine
+      text: rb.running ? panel.stageText : panel.resultLine
       color: rb.running ? panel.fg : panel.lastOk ? panel.fg : Color.urgent
       font.family: panel.ff; font.pixelSize: Style.font.caption
       elide: Text.ElideRight

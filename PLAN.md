@@ -237,11 +237,11 @@ tools/
 - [x] Move migration behavior into `bin/lib/migrate.sh`.
 - [x] Move inventory behavior out of layout code and into `bin/lib/inventory.sh`.
 - [x] Keep `bin/lib/layout.sh` responsible only for repository layout and schema upgrades.
-- [ ] Make `bin/lib/status.sh` serialize registry and state results without deriving policy.
+- [x] Make `bin/lib/status.sh` serialize registry and state results without deriving policy.
 - [x] Move repository lifecycle and remote transport into `bin/lib/repo.sh`.
 - [x] Move backup entrypoint ownership into `bin/lib/backup.sh`.
 - [x] Preserve stable command output until compatibility fields are removed.
-- [ ] Avoid unrelated refactors in settings and plugin-management modules.
+- [x] Avoid unrelated refactors in settings and plugin-management modules.
 - [x] Add shell module contract tests before deleting legacy functions.
 
 ## 8. Publish the v2 Status Contract
@@ -388,13 +388,13 @@ omarchy-replicant migrate-v2 \
 - [x] Add next-change and previous-change actions in the diff viewer.
 - [x] Add copy actions for live and repository paths.
 - [x] Add filters for changed, incoming, missing, locked, and large entries.
-- [ ] Sort actionable entries before saved entries while keeping stable ordering.
+- [x] Sort actionable entries before saved entries while keeping stable ordering.
 - [x] Show visible and total counts after every filter.
-- [ ] Add useful empty states with a direct next action.
-- [ ] Show distinct offline, ahead, behind, and local-only states.
-- [ ] Add a retry-push action when a commit is local only.
-- [ ] Report save stages: scanning, encrypting, committing, and pushing.
-- [ ] Permit cancellation only before the commit stage.
+- [x] Add useful empty states with a direct next action.
+- [x] Show distinct offline, ahead, behind, and local-only states.
+- [x] Add a retry-push action when a commit is local only.
+- [x] Report save stages: scanning, encrypting, committing, and pushing.
+- [x] Permit cancellation only before the commit stage.
 - [ ] Give every disabled action a visible reason.
 - [ ] Ensure all essential operations work without a mouse.
 - [x] Keep secret values and encrypted metadata out of notifications and clipboard actions.
@@ -403,6 +403,7 @@ omarchy-replicant migrate-v2 \
 
 - [x] Add dedicated crypto, migration, transaction, and registry test suites.
 - [ ] Run integration tests in a container with an `age` build that supports `-pq`.
+  Docker remains blocked because `/var/run/docker.sock` denies access on this host.
 - [x] Test missing, wrong, malformed, and permission-invalid identities.
 - [x] Test tampered ciphertext. It must never replace live data.
 - [x] Test interruption during encryption, commit, fast-forward, and push.

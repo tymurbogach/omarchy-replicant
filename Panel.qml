@@ -35,6 +35,10 @@ Panel {
   readonly property string remoteState: String(root.repoState.remote_state || (root.repoState.remote ? "synced" : "local-only"))
   readonly property string remoteStateText: R.remoteStateWord(root.remoteState)
   readonly property bool controllerCancelAllowed: controller.cancelAllowed
+  readonly property string stageText: controller.stage === "scanning" ? "Scanning…"
+      : controller.stage === "encrypting" ? "Encrypting…"
+      : controller.stage === "committing" ? "Committing…"
+      : controller.stage === "publishing" ? "Publishing…" : root.busyLabel
   // True once a real status response has come back at least once. Gates the
   // "no repo yet — create one" screen: showing it before we know the state let
   // a stray click re-point an already-configured remote (a real incident).

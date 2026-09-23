@@ -28,9 +28,9 @@ Card {
   expanded: panel.isOpen("__suggest")
   onToggled: panel.toggleCard("__suggest")
 
-  Item {
+    Item {
     width: parent.width
-    height: Style.space(38)
+    height: Style.space(54)
     ButtonGroup {
       anchors.left: parent.left
       anchors.leftMargin: Style.spacing.rowPaddingX
@@ -97,6 +97,7 @@ Card {
       anchors.verticalCenter: parent.verticalCenter
       text: "Track"; iconText: panel.icPlus
       enabled: !panel.busy && pathField.text.trim() !== ""
+      disabledReason: panel.busy ? "Another Replicant operation is running." : "Enter a file or folder path first."
       tooltipText: "Track this path. A folder is tracked whole."
       onClicked: if (panel.trackTyped(pathField.text, false)) pathField.text = ""
     }
@@ -109,8 +110,20 @@ Card {
       text: "As secret"; iconText: panel.icKey
       foreground: panel.warnColor
       enabled: !panel.busy && pathField.text.trim() !== ""
+      disabledReason: panel.busy ? "Another Replicant operation is running." : "Enter a file or folder path first."
       tooltipText: "Track it as a secret: stored at mode 600, and its contents are never shown"
       onClicked: if (panel.trackTyped(pathField.text, true)) pathField.text = ""
+    }
+    Text {
+      anchors.left: parent.left
+      anchors.leftMargin: Style.spacing.rowPaddingX
+      anchors.bottom: parent.bottom
+      text: panel.busy ? "Another Replicant operation is running."
+                       : pathField.text.trim() === "" ? "Enter a path before you track it." : ""
+      visible: text !== ""
+      color: panel.dim
+      font.family: panel.ff
+      font.pixelSize: Style.font.caption
     }
   }
 

@@ -43,7 +43,7 @@ Column {
         text: "Preview"; iconText: panel.icEye; bordered: true
         foreground: panel.fg; fontFamily: panel.ff
         enabled: !panel.busy
-        tooltipText: "Show what a restore would change. It writes nothing."
+        tooltipText: panel.busy ? "Disabled: another Replicant operation is running." : "Show what a restore would change. It writes nothing."
         onClicked: panel.runPreview("Restore everything: preview", ["restore", "--dry-run"])
       }
       Button {
@@ -51,7 +51,7 @@ Column {
         foreground: panel.restoreDiffers > 0 ? panel.warnColor : panel.fg
         accent: Color.accent; fontFamily: panel.ff
         enabled: !panel.busy
-        tooltipText: "Write every area back from your repo, and run what each area needs"
+        tooltipText: panel.busy ? "Disabled: another Replicant operation is running." : "Write every area back from your repo, and run what each area needs"
         onClicked: panel.ask("restore-all", "",
           "Restore EVERYTHING from your GitHub repo onto this machine?\n\n"
           + (panel.restoreDiffers > 0 ? R.plural(panel.restoreDiffers, "file") + " differ from your repo. " : "")
@@ -78,7 +78,7 @@ Column {
           iconText: panel.icEye; bordered: false
           foreground: panel.dim; fontFamily: panel.ff
           enabled: !panel.busy
-          tooltipText: "Preview " + areaRow.modelData.label + ". It writes nothing."
+          tooltipText: panel.busy ? "Disabled: another Replicant operation is running." : "Preview " + areaRow.modelData.label + ". It writes nothing."
           onClicked: panel.runPreview(areaRow.modelData.label + ": preview",
                                       ["restore", "--dry-run", "--only", areaRow.modelData.id])
         }
@@ -121,7 +121,7 @@ Column {
         text: "Preview"; iconText: panel.icEye; bordered: true
         foreground: panel.fg; fontFamily: panel.ff
         enabled: !panel.busy
-        tooltipText: "Show what a reset would change. It writes nothing."
+        tooltipText: panel.busy ? "Disabled: another Replicant operation is running." : "Show what a reset would change. It writes nothing."
         onClicked: panel.runPreview("Reset to Omarchy's defaults: preview", ["reset-all", "--dry-run"])
       }
       Button {
@@ -129,7 +129,7 @@ Column {
         text: "Reset to factory"; iconText: panel.icDefault; bordered: true
         foreground: panel.fg; accent: Color.urgent; fontFamily: panel.ff
         enabled: !panel.busy
-        tooltipText: "Put Omarchy's default back on every file listed in the preview"
+        tooltipText: panel.busy ? "Disabled: another Replicant operation is running." : "Put Omarchy's default back on every file listed in the preview"
         onClicked: panel.ask("reset-all", "",
           "Reset " + R.plural(panel.resetDiffers, "customised file") + " to the Omarchy default?\n\nYour repo keeps its copy, and each file is backed up as .bak.<epoch> first.",
           "Reset")

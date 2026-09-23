@@ -398,4 +398,29 @@ TestCase {
     snapshot.scrollY.configs = 0
     compare(snapshot.scrollY.configs, 0)
   }
+
+  function test_keyboard_focus_order_covers_tabs_cards_and_rows() {
+    var items = R.focusItems("configs", [
+      { id: "shell", rows: [{ id: "a" }, { id: "b" }] },
+      { id: "appearance", rows: [{ id: "c" }] }
+    ], [], [])
+    compare(items.map(function(item) { return item.kind + ":" + item.id }).join(","),
+            "tab:overview,tab:configs,tab:settings,tab:restore,filter:configs-search,filter:configs-state,card:shell,row:a,row:b,card:appearance,row:c")
+    compare(R.moveFocus(items, 0, 2), 2)
+    compare(R.moveFocus(items, 8, 5), 10)
+  }
+
+  function test_keyboard_focus_order_covers_setting_groups() {
+    var items = R.focusItems("settings", [], [], [{ id: "display" }, { id: "input" }])
+    compare(items.slice(6).map(function(item) { return item.id }).join(","), "display,input")
+  }
+
+  function test_disabled_actions_explain_their_blocker_without_private_data() {
+    compare(R.actionDisabledReason({ busy: true }), "Another Replicant operation is running.")
+    compare(R.actionDisabledReason({ ready: false }), "Configure a repository first.")
+    compare(R.actionDisabledReason({ available: false }), "This setting is not available in this machine's configuration.")
+    compare(R.actionDisabledReason({ hasInput: false }), "Enter a file or folder path first.")
+    compare(R.actionDisabledReason({ hasSelection: false }), "Select entries with the same supported operation.")
+    compare(R.actionDisabledReason({ hasKey: false }), "Import the encryption key before managing secrets.")
+  }
 }

@@ -301,6 +301,46 @@ function navigationScroll(snapshot, tab, maximum) {
   return Math.max(0, Math.min(raw, Math.max(0, Number(maximum) || 0)))
 }
 
+// Build the logical order used by the panel's keyboard cursor. The visual
+// controls remain ordinary QML controls, but their order is stable and can be
+// tested without a running shell.
+function focusItems(tab, cards, rows, settings) {
+  var out = [{ kind: "tab", id: "overview" }, { kind: "tab", id: "configs" },
+             { kind: "tab", id: "settings" }, { kind: "tab", id: "restore" }]
+  if (tab === "configs") {
+    out.push({ kind: "filter", id: "configs-search" }, { kind: "filter", id: "configs-state" });
+    (cards || []).forEach(function(card) {
+      out.push({ kind: "card", id: String(card.id) })
+      ;(card.rows || []).forEach(function(row) {
+        out.push({ kind: "row", id: String(row.id) })
+        if (row.sync_state === "incoming" || row.sync_state === "unsaved" || row.sync_state === "unpushed")
+          out.push({ kind: "action", id: String(row.id) })
+      })
+    })
+  } else if (tab === "settings") {
+    out.push({ kind: "filter", id: "settings-search" }, { kind: "filter", id: "settings-state" })
+    ;(settings || []).forEach(function(group) { out.push({ kind: "card", id: String(group.id) }) })
+  }
+  return out
+}
+
+function moveFocus(items, index, delta) {
+  var list = items || [], max = list.length - 1
+  if (max < 0) return 0
+  return Math.max(0, Math.min(max, Number(index) + Number(delta)))
+}
+
+function actionDisabledReason(facts) {
+  var f = facts || {}
+  if (f.busy === true) return "Another Replicant operation is running."
+  if (f.ready === false) return "Configure a repository first."
+  if (f.available === false) return "This setting is not available in this machine's configuration."
+  if (f.hasInput === false) return "Enter a file or folder path first."
+  if (f.hasSelection === false) return "Select entries with the same supported operation."
+  if (f.hasKey === false) return "Import the encryption key before managing secrets."
+  return ""
+}
+
 function validBulkActions(rows) {
   var list = rows || []
   if (list.length === 0) return []

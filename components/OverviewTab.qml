@@ -92,7 +92,8 @@ Column {
       text: "Health check"; iconText: panel.icShield; bordered: false
       fontSize: Style.font.bodySmall; foreground: panel.fg; fontFamily: panel.ff
       enabled: !panel.checking
-      tooltipText: "Check login, that the repo is private, the hooks and the permissions. It fixes nothing."
+      tooltipText: panel.checking ? "Disabled: the health check is already running."
+                   : "Check login, that the repo is private, the hooks and the permissions. It fixes nothing."
       onClicked: panel.doDoctor()
     }
     Button {
@@ -112,7 +113,8 @@ Column {
       text: "Copy without saving"; iconText: panel.icCopy; bordered: false
       fontSize: Style.font.bodySmall; foreground: panel.fg; fontFamily: panel.ff
       enabled: !panel.busy
-      tooltipText: "Copy this machine into the local repo. Nothing is committed or pushed."
+      tooltipText: panel.busy ? "Disabled: another Replicant operation is running."
+                   : "Copy this machine into the local repo. Nothing is committed or pushed."
       onClicked: panel.doBackup()
     }
   }

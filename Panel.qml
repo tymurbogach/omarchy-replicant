@@ -70,9 +70,17 @@ Panel {
   readonly property var bulkActions: R.validBulkActions(root.selectedRows)
   readonly property var selectionSummary: R.selectionSummary(root.selectedRows)
   property int manageCursor: 0
-  property int keyboardCursor: 0
-  readonly property string keyboardCursorId: root.visibleConfigRows.length > 0
-      ? root.visibleConfigRows[Math.max(0, Math.min(root.keyboardCursor, root.visibleConfigRows.length - 1))].id : ""
+  // The cursor is logical. It includes tabs, cards and rows, so mouse focus
+  // is never required to reach a control in a long panel.
+  property int keyboardFocusIndex: 0
+  readonly property var keyboardFocusItems: R.focusItems(root.activeTab, root.categoryCards,
+                                                         root.visibleConfigRows, root.settingGroups)
+  readonly property var keyboardFocus: root.keyboardFocusItems.length > 0
+      ? root.keyboardFocusItems[Math.max(0, Math.min(root.keyboardFocusIndex,
+                                                     root.keyboardFocusItems.length - 1))]
+      : ({ kind: "tab", id: root.activeTab })
+  readonly property string keyboardCursorId: root.keyboardFocus.kind === "row"
+      ? root.keyboardFocus.id : ""
   function toggleManage() {
     if (!root.manageMode) root.captureNavigation()
     root.manageMode = !root.manageMode
@@ -90,10 +98,24 @@ Panel {
     root.manageCursor = Math.max(0, Math.min(root.visibleConfigRows.length - 1, root.manageCursor + delta))
   }
   function moveKeyboardCursor(delta) {
-    if (root.activeTab !== "configs" || root.visibleConfigRows.length === 0) return
-    root.keyboardCursor = Math.max(0, Math.min(root.visibleConfigRows.length - 1,
-                                                root.keyboardCursor + delta))
-    var row = root.visibleConfigRows[root.keyboardCursor]
+    root.keyboardFocusIndex = R.moveFocus(root.keyboardFocusItems, root.keyboardFocusIndex, delta)
+    var target = root.keyboardFocus
+    if (target.kind === "tab") { root.activeTab = target.id; return }
+    if (target.kind === "filter") {
+      if (root.activeTab === "settings") settingsTab.focusSearch()
+      else configsTab.focusSearch()
+      return
+    }
+    if (target.kind === "card") {
+      var cards = {}; for (var key in root.openCards) cards[key] = root.openCards[key]
+      cards[target.id] = true; root.openCards = cards
+      Qt.callLater(root.restoreNavigation)
+      return
+    }
+    if (target.kind === "action") return
+    if (target.kind !== "row") return
+    var row = root.visibleConfigRows.filter(function(item) { return item.id === target.id })[0]
+    if (!row) return
     for (var i = 0; i < root.categoryCards.length; i++) {
       var card = root.categoryCards[i]
       if (!card.rows || !card.rows.some(function(r) { return r.id === row.id })) continue
@@ -104,8 +126,21 @@ Panel {
     }
   }
   function activateKeyboardCursor() {
-    if (root.activeTab !== "configs" || root.keyboardCursorId === "") return
-    root.toggleRow(root.keyboardCursorId)
+    var target = root.keyboardFocus
+    if (target.kind === "tab") { root.activeTab = target.id; return }
+    if (target.kind === "filter") {
+      if (root.activeTab === "settings") settingsTab.focusSearch()
+      else configsTab.focusSearch()
+      return
+    }
+    if (target.kind === "card") { root.toggleCard(target.id); return }
+    if (target.kind === "action") {
+      var actionRow = root.visibleConfigRows.filter(function(item) { return item.id === target.id })[0]
+      if (actionRow && actionRow.sync_state === "incoming") root.askRestoreFile(actionRow)
+      else if (actionRow) root.doSaveFile(actionRow.id)
+      return
+    }
+    if (target.kind === "row" && target.id !== "") root.toggleRow(target.id)
   }
   function toggleSelected(id, extend) {
     var next = root.selectedIds.slice()
@@ -260,6 +295,9 @@ Panel {
       for (var k in root.scrollPositions) next[k] = root.scrollPositions[k]
       next[root.activeTab] = target
       root.scrollPositions = next
+      // A snapshot describes one content transition. Do not replay it on a
+      // later tab change or after the user scrolls again.
+      root.navigationSnapshot = null
       root.navigationRestorePending = false
     })
   }
@@ -1054,6 +1092,8 @@ Panel {
     return true
   }
   onActiveTabChanged: {
+    var tabIndex = ["overview", "configs", "settings", "restore"].indexOf(root.activeTab)
+    root.keyboardFocusIndex = tabIndex < 0 ? 0 : tabIndex
     root.rememberCurrentScroll()
     root.lastScrollTab = root.activeTab
     var y = root.scrollPositions[root.activeTab] || 0
@@ -1094,6 +1134,9 @@ Panel {
         if (root.keyboardHelpOpen) root.keyboardHelpOpen = false
         else if (root.viewerOpen) root.closeViewer()
         else if (confirmDialog.opened) confirmDialog.opened = false
+        else if (root.openRow !== "") root.openRow = ""
+        else if (root.keyboardFocus.kind === "card" && root.isOpen(root.keyboardFocus.id))
+          root.toggleCard(root.keyboardFocus.id)
         else root.close()
       }
       onTextKey: function(t) {
@@ -1130,7 +1173,7 @@ Panel {
       }
       onMoveRequested: function(dx, dy) {
         if (root.manageMode) root.moveManageCursor(dy)
-        else if (root.activeTab === "configs") root.moveKeyboardCursor(dy)
+        else root.moveKeyboardCursor(dy !== 0 ? dy : dx)
       }
       onActivateRequested: {
         if (root.manageMode && root.activeTab === "configs" && root.visibleConfigRows.length > 0)
@@ -1178,7 +1221,7 @@ Panel {
           foreground: root.fg
           accent: Color.accent
           fontFamily: root.ff
-          focusable: true
+          focusable: root.keyboardFocus.kind === "tab"
           onChanged: function(v) { root.activeTab = v }
         }
 

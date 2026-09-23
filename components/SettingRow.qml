@@ -257,14 +257,14 @@ Item {
           visible: srow.setting.can_revert_default === true
           iconText: panel.icDefault; bordered: false; foreground: panel.dim; fontFamily: panel.ff
           enabled: !panel.busy
-          tooltipText: "Back to Omarchy's default: " + srow.setting.default_text
+          tooltipText: panel.busy ? "Disabled: another Replicant operation is running." : "Back to Omarchy's default: " + srow.setting.default_text
           onClicked: panel.doRevert(srow.setting.id, "default")
         }
         Button {
           visible: srow.setting.can_revert_repo === true
           iconText: panel.icFromRepo; bordered: false; foreground: panel.dim; fontFamily: panel.ff
           enabled: !panel.busy
-          tooltipText: "Back to what your repo has: " + srow.setting.repo_text
+          tooltipText: panel.busy ? "Disabled: another Replicant operation is running." : "Back to what your repo has: " + srow.setting.repo_text
           onClicked: panel.doRevert(srow.setting.id, "repo")
         }
       }

@@ -22,11 +22,15 @@ BorderSurface {
   property string statusText: ""
   // "" (dim), "accent" (yours, to save) or "warn" (from elsewhere, differs).
   property string statusTone: ""
+  property string keyboardId: ""
   // A tint says that the card asks for something. A value that only differs
   // from a default asks for nothing, and its card is not tinted.
   property string tint: ""
   property bool collapsible: false
   property bool expanded: true
+  readonly property bool keyboardFocused: panel.keyboardFocus
+      && panel.keyboardFocus.kind === "card"
+      && panel.keyboardFocus.id === card.keyboardId
   default property alias content: body.data
   signal toggled()
 
@@ -38,7 +42,7 @@ BorderSurface {
   radius: Style.cornerRadius
   color: card.tint !== "" ? Qt.rgba(card.tintColor.r, card.tintColor.g, card.tintColor.b, 0.07)
                           : Style.controlFill(false, false, panel.fg, Color.accent)
-  borderSpec: Border.controlSpec(card.collapsible && card.expanded ? "focus" : "normal", panel.fg, Color.accent)
+  borderSpec: Border.controlSpec(card.keyboardFocused || (card.collapsible && card.expanded) ? "focus" : "normal", panel.fg, Color.accent)
 
   Column {
     id: col

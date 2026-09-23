@@ -395,8 +395,8 @@ omarchy-replicant migrate-v2 \
 - [x] Add a retry-push action when a commit is local only.
 - [x] Report save stages: scanning, encrypting, committing, and pushing.
 - [x] Permit cancellation only before the commit stage.
-- [ ] Give every disabled action a visible reason.
-- [ ] Ensure all essential operations work without a mouse.
+- [x] Give every disabled action a visible reason.
+- [x] Ensure all essential operations work without a mouse.
 - [x] Keep secret values and encrypted metadata out of notifications and clipboard actions.
 
 ## 14. Test Failure Modes and Security Boundaries
@@ -419,8 +419,8 @@ omarchy-replicant migrate-v2 \
 - [x] Test missing-file counts and bar priority.
 - [x] Test edit and exact revert for files and directories.
 - [x] Test incoming changes combined with local changes.
-- [ ] Test navigation restoration after diff, preview, edit, refresh, and row removal.
-- [ ] Test viewer scroll reset separately from body scroll restoration.
+- [x] Test navigation restoration after diff, preview, edit, refresh, and row removal.
+- [x] Test viewer scroll reset separately from body scroll restoration.
 - [x] Add pure JavaScript tests for navigation snapshots.
 - [x] Add offscreen QML interaction tests for manage mode and focus.
 - [x] Complete one real-shell screenshot review for each changed visual state.

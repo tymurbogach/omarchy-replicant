@@ -13,6 +13,7 @@ Card {
   readonly property string navigationId: sc.group.id || ""
 
   icon: sc.group.icon
+  keyboardId: sc.navigationId
   title: sc.group.name
   subtitle: sc.group.description
   countText: String((sc.group.items || []).length)

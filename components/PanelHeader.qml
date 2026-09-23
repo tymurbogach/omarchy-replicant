@@ -57,7 +57,8 @@ Item {
         foreground: panel.dim
         fontFamily: panel.ff
         enabled: !panel.updateChecking
-        tooltipText: panel.updateAvailable ? panel.updateTooltip
+        tooltipText: panel.updateChecking ? "Disabled: the update check is running."
+                                           : panel.updateAvailable ? panel.updateTooltip
                                            : "Replicant " + panel.versionText + ". Click to ask GitHub for a newer version."
         onClicked: panel.checkUpdates(true)
       }
@@ -95,7 +96,7 @@ Item {
       accent: Color.accent
       fontFamily: panel.ff
       enabled: !panel.busy
-      tooltipText: panel.updateTooltip
+      tooltipText: panel.busy ? "Disabled: another Replicant operation is running." : panel.updateTooltip
       onClicked: panel.askUpdate()
     }
     Button {

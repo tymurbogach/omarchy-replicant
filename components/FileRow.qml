@@ -20,6 +20,9 @@ Item {
   property var config: ({})
   property string navigationId: ""
   readonly property bool keyboardFocused: panel.keyboardCursorId === frow.config.id
+  readonly property bool keyboardActionFocused: panel.keyboardFocus
+      && panel.keyboardFocus.kind === "action"
+      && panel.keyboardFocus.id === frow.config.id
   // A scope change shows at once, before the status that confirms it arrives.
   readonly property string scope: R.effectiveScope(frow.config, panel.scopeOverrides)
   readonly property string syncState: R.displayState(frow.config, panel.scopeOverrides) || "saved"
@@ -47,8 +50,8 @@ Item {
     radius: Style.cornerRadius
     color: frow.expanded ? Style.hoverFillFor(panel.fg, Color.accent)
          : hit.containsMouse ? Qt.rgba(panel.fg.r, panel.fg.g, panel.fg.b, 0.04) : "transparent"
-    border.width: frow.keyboardFocused ? 1 : 0
-    border.color: Color.accent
+    border.width: frow.keyboardFocused || frow.keyboardActionFocused ? 1 : 0
+    border.color: frow.keyboardActionFocused ? panel.warnColor : Color.accent
   }
 
   Item {

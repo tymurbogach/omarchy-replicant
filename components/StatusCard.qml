@@ -89,7 +89,9 @@ BorderSurface {
         accent: Color.accent; fontFamily: panel.ff
         iconSpinning: panel.saving
         enabled: panel.ready && !panel.busy
-        tooltipText: panel.remoteState === "ahead" ? "Retry publishing the local commits" : "Copy this machine into the repo, commit and push  (s)"
+        tooltipText: !panel.ready ? "Disabled: configure a repository first."
+                    : panel.busy ? "Disabled: another Replicant operation is running."
+                    : panel.remoteState === "ahead" ? "Retry publishing the local commits" : "Copy this machine into the repo, commit and push  (s)"
         onClicked: panel.remoteState === "ahead" && panel.nDirty === 0 ? panel.doRetryPush() : panel.doSavegame()
       }
       Button {
@@ -98,7 +100,9 @@ BorderSurface {
         accent: Color.accent; fontFamily: panel.ff
         iconSpinning: panel.pulling
         enabled: panel.ready && !panel.busy
-        tooltipText: "Bring down what another machine saved  (p)"
+        tooltipText: !panel.ready ? "Disabled: configure a repository first."
+                    : panel.busy ? "Disabled: another Replicant operation is running."
+                    : "Bring down what another machine saved  (p)"
         onClicked: panel.doPull()
       }
     }

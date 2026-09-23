@@ -4,6 +4,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
+import "../replicant.js" as R
 
 // A button on a row: bordered, small, and with its name on it. Every row
 // action in the panel is one, so the buttons of a file, a backup and a plugin
@@ -14,7 +15,7 @@ Button {
   property var panel
   // A disabled action must answer why it cannot run. Callers may replace this
   // with a more specific reason, such as a missing key or an active job.
-  property string disabledReason: "Another Replicant operation is running."
+  property string disabledReason: R.actionDisabledReason({ busy: panel ? panel.busy : false })
   bordered: true
   fontSize: Style.font.bodySmall
   horizontalPadding: Style.space(8)

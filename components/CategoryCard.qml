@@ -21,6 +21,7 @@ Card {
   }
 
   icon: cc.card.icon
+  keyboardId: cc.navigationId
   title: cc.card.label
   subtitle: cc.card.description
   countText: cc.card.count === cc.card.total ? String(cc.card.count)

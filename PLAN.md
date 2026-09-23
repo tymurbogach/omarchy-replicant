@@ -439,7 +439,7 @@ omarchy-replicant migrate-v2 \
 - [x] A missing saved entry never produces a synced bar state.
 - [x] Closing diff, preview, edit, or confirmation returns to the same tab, row, expansion state, and viewport offset.
 - [x] Bulk operations are atomic and create one commit.
-- [ ] Status performance does not regress by more than 10 percent against the recorded baseline.
+- [x] Status performance does not regress by more than 10 percent against the recorded baseline.
 - [x] Full status remains authoritative even when file timestamps are preserved.
 - [x] No test, fixture, screenshot, document, commit message, or log contains personal repository data.
 

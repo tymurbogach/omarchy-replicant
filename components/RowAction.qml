@@ -12,6 +12,9 @@ import qs.Ui
 Button {
   // The panel this belongs to. Every value and every action comes from it.
   property var panel
+  // A disabled action must answer why it cannot run. Callers may replace this
+  // with a more specific reason, such as a missing key or an active job.
+  property string disabledReason: "Another Replicant operation is running."
   bordered: true
   fontSize: Style.font.bodySmall
   horizontalPadding: Style.space(8)
@@ -19,4 +22,6 @@ Button {
   foreground: panel ? panel.fg : Color.foreground
   accent: Color.accent
   fontFamily: panel ? panel.ff : Style.font.family
+  ToolTip.visible: hovered && !enabled
+  ToolTip.text: disabledReason
 }

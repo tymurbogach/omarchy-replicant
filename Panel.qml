@@ -70,6 +70,9 @@ Panel {
   readonly property var bulkActions: R.validBulkActions(root.selectedRows)
   readonly property var selectionSummary: R.selectionSummary(root.selectedRows)
   property int manageCursor: 0
+  property int keyboardCursor: 0
+  readonly property string keyboardCursorId: root.visibleConfigRows.length > 0
+      ? root.visibleConfigRows[Math.max(0, Math.min(root.keyboardCursor, root.visibleConfigRows.length - 1))].id : ""
   function toggleManage() {
     if (!root.manageMode) root.captureNavigation()
     root.manageMode = !root.manageMode
@@ -85,6 +88,24 @@ Panel {
   function moveManageCursor(delta) {
     if (!root.manageMode || root.activeTab !== "configs" || root.visibleConfigRows.length === 0) return
     root.manageCursor = Math.max(0, Math.min(root.visibleConfigRows.length - 1, root.manageCursor + delta))
+  }
+  function moveKeyboardCursor(delta) {
+    if (root.activeTab !== "configs" || root.visibleConfigRows.length === 0) return
+    root.keyboardCursor = Math.max(0, Math.min(root.visibleConfigRows.length - 1,
+                                                root.keyboardCursor + delta))
+    var row = root.visibleConfigRows[root.keyboardCursor]
+    for (var i = 0; i < root.categoryCards.length; i++) {
+      var card = root.categoryCards[i]
+      if (!card.rows || !card.rows.some(function(r) { return r.id === row.id })) continue
+      var cards = {}; for (var k in root.openCards) cards[k] = root.openCards[k]
+      cards[card.id] = true; root.openCards = cards
+      Qt.callLater(root.restoreNavigation)
+      return
+    }
+  }
+  function activateKeyboardCursor() {
+    if (root.activeTab !== "configs" || root.keyboardCursorId === "") return
+    root.toggleRow(root.keyboardCursorId)
   }
   function toggleSelected(id, extend) {
     var next = root.selectedIds.slice()
@@ -1099,8 +1120,8 @@ Panel {
           if (!root.isOpen("__suggest")) root.toggleCard("__suggest")
         }
         else if (t === "m" && root.activeTab === "configs") root.toggleManage()
-        else if (t === "j" && root.manageMode) root.moveManageCursor(1)
-        else if (t === "k" && root.manageMode) root.moveManageCursor(-1)
+        else if (t === "j") root.manageMode ? root.moveManageCursor(1) : root.moveKeyboardCursor(1)
+        else if (t === "k") root.manageMode ? root.moveManageCursor(-1) : root.moveKeyboardCursor(-1)
         // "/" filters where you already are.
         else if (t === "/") {
           if (root.activeTab === "settings") settingsTab.focusSearch()
@@ -1108,11 +1129,13 @@ Panel {
         }
       }
       onMoveRequested: function(dx, dy) {
-        root.moveManageCursor(dy)
+        if (root.manageMode) root.moveManageCursor(dy)
+        else if (root.activeTab === "configs") root.moveKeyboardCursor(dy)
       }
       onActivateRequested: {
         if (root.manageMode && root.activeTab === "configs" && root.visibleConfigRows.length > 0)
           root.toggleSelected(root.visibleConfigRows[root.manageCursor].id, false)
+        else root.activateKeyboardCursor()
       }
 
       // ─────────────────────────────── header (fixed) ────────────────────────

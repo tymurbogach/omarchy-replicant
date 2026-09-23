@@ -18,6 +18,9 @@ Item {
                                 || setting.type === "ini-enum"
   readonly property bool isLongList: srow.isChoice && (setting.options || []).length > 8
   readonly property bool usable: setting.available === true && !panel.busy
+  readonly property string unavailableReason: setting.available !== true
+      ? "This setting is not available in this machine's configuration."
+      : (panel.busy ? "Another Replicant operation is running." : "")
   // Customised means "not what Omarchy ships". The badge in front of the label
   // says it the way a file row does: a dot for yours, a ring for the default.
   readonly property bool customised: srow.setting.can_revert_default === true
@@ -150,6 +153,8 @@ Item {
           to: srow.isNumber && typeof srow.setting.display_max === "number" ? srow.setting.display_max : 999999
           stepSize: srow.isNumber && typeof srow.setting.display_step === "number" ? srow.setting.display_step : 1
           value: srow.isNumber && typeof srow.setting.display_value === "number" ? srow.setting.display_value : 0
+          ToolTip.visible: hovered && !enabled
+          ToolTip.text: srow.unavailableReason
           onModified: function(v) {
             if (!srow.usable) return
             var scale = typeof srow.setting.scale === "number" && srow.setting.scale > 0 ? srow.setting.scale : 1
@@ -199,6 +204,8 @@ Item {
         accent: Color.accent
         onToggled: if (srow.usable) panel.doSetSetting(srow.setting.id,
                       (srow.setting.value === true || srow.setting.value === "true") ? "false" : "true")
+        ToolTip.visible: hovered && !enabled
+        ToolTip.text: srow.unavailableReason
       }
 
       Dropdown {
@@ -212,6 +219,8 @@ Item {
         options: srow.isChoice ? (srow.setting.options || []) : []
         fontFamily: panel.ff
         onChanged: function(v) { if (srow.usable && v !== srow.setting.value) panel.doSetSetting(srow.setting.id, v) }
+        ToolTip.visible: hovered && !enabled
+        ToolTip.text: srow.unavailableReason
       }
 
       // ~30 themes; a plain dropdown makes you hunt for the one you want.
@@ -227,6 +236,8 @@ Item {
         options: srow.isChoice ? (srow.setting.options || []) : []
         fontFamily: panel.ff
         onChanged: function(v) { if (srow.usable && v !== srow.setting.value) panel.doSetSetting(srow.setting.id, v) }
+        ToolTip.visible: hovered && !enabled
+        ToolTip.text: srow.unavailableReason
       }
     }
 

@@ -377,4 +377,25 @@ TestCase {
     compare(R.navigationScroll(snapshot, "settings", 100), 0)
     compare(R.navigationScroll(snapshot, "configs", -1), 0)
   }
+
+  function test_navigation_falls_back_when_anchor_is_removed() {
+    var snapshot = R.navigationSnapshot({
+      activeTab: "configs",
+      scrollY: { configs: 240 },
+      anchor: { kind: "row", id: "removed", offset: 18 }
+    })
+    compare(R.navigationScroll(snapshot, "configs", 100), 100)
+    compare(snapshot.anchor.id, "removed")
+  }
+
+  function test_navigation_keeps_body_and_viewer_offsets_independent() {
+    var snapshot = R.navigationSnapshot({
+      scrollY: { configs: 240 },
+      viewerScrollY: 91
+    })
+    compare(snapshot.scrollY.configs, 240)
+    compare(snapshot.viewerScrollY, 91)
+    snapshot.scrollY.configs = 0
+    compare(snapshot.viewerScrollY, 91)
+  }
 }

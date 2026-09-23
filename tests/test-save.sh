@@ -220,6 +220,10 @@ rc=0; out=$(run push 2>&1) || rc=$?
 check "a failed push exits 1" "1" "$rc"
 check_contains "…saying the commits stay local" "Saved locally" "$out"
 check_contains "…with the retry step" "pull" "$out"
+printf 'shape fixture\n' > "$HOME/.config/shape.conf"
+rc=0; out=$(run track "$HOME/.config/shape.conf" 2>&1) || rc=$?
+check "a shape commit also reports a failed push" "1" "$rc"
+check_contains "…and keeps the shape commit local" "Saved locally" "$out"
 git -C "$REPO" remote remove origin 2>/dev/null
 out=$(run push 2>&1; echo "rc=$?")
 check "nothing to push exits 0 once the remote is gone" "1" "$(grep -c 'rc=0' <<<"$out" || true)"

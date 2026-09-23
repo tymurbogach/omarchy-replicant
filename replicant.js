@@ -183,6 +183,10 @@ function needsAttention(st) {
 // Which rows a filter keeps: "all", "changed" or "off".
 function rowMatchesFilter(row, filter) {
   if (filter === "changed") return needsAttention(row.sync_state)
+  if (filter === "incoming") return row.sync_state === "incoming"
+  if (filter === "missing") return row.sync_state === "missing"
+  if (filter === "locked") return row.sync_state === "locked" || row.locked === true
+  if (filter === "large") return Number(row.size || 0) >= 1024 * 1024
   if (filter === "off") return row.sync_state === "off"
   return true
 }
@@ -239,6 +243,45 @@ function rangeIds(rows, anchor, target) {
   return rows.slice(a, b + 1).map(function(r) { return r.id })
 }
 
+// Copy the panel navigation state without retaining QML objects. Geometry is
+// measured by the panel, while this value stays safe to compare in tests.
+function navigationSnapshot(v) {
+  var tabs = ["overview", "configs", "settings", "restore"]
+  var scroll = {}, sourceScroll = v.scrollY || {}
+  for (var i = 0; i < tabs.length; i++) scroll[tabs[i]] = Number(sourceScroll[tabs[i]]) || 0
+  return {
+    activeTab: tabs.indexOf(v.activeTab) >= 0 ? v.activeTab : "overview",
+    scrollY: scroll,
+    openCards: copyKeys(v.openCards),
+    openRow: String(v.openRow || ""),
+    openCommits: copyKeys(v.openCommits),
+    fileSearch: String(v.fileSearch || ""),
+    stateFilter: String(v.stateFilter || "all"),
+    settingSearch: String(v.settingSearch || ""),
+    settingFilter: String(v.settingFilter || "all"),
+    manageMode: v.manageMode === true,
+    selectedIds: (v.selectedIds || []).slice(),
+    selectionAnchor: String(v.selectionAnchor || ""),
+    anchor: v.anchor && v.anchor.id ? {
+      kind: String(v.anchor.kind || "card"),
+      id: String(v.anchor.id),
+      offset: Number(v.anchor.offset) || 0
+    } : null
+  }
+}
+
+function copyKeys(value) {
+  var out = {}
+  var source = value || {}
+  for (var k in source) if (source[k] === true) out[k] = true
+  return out
+}
+
+function navigationScroll(snapshot, tab, maximum) {
+  var raw = snapshot && snapshot.scrollY ? Number(snapshot.scrollY[tab]) || 0 : 0
+  return Math.max(0, Math.min(raw, Math.max(0, Number(maximum) || 0)))
+}
+
 function validBulkActions(rows) {
   var list = rows || []
   if (list.length === 0) return []
@@ -283,7 +326,8 @@ function secretRows(repoState) {
       synced: s.synced, scope: s.synced === false ? "off" : "shared",
       source: s.source || "manifest", is_dir: false, nfiles: 0,
       secret: true, kind: s.kind, mode: s.mode,
-      vars: s.vars || [], var_count: s.var_count || 0
+      vars: s.vars || [], var_count: s.var_count || 0, size: Number(s.size || 0),
+      locked: s.locked === true, incoming: s.incoming === true, unpushed: s.unpushed === true
     })
   }
   return out
@@ -303,6 +347,7 @@ function entryRows(repoState) {
       saved: e.saved === true, is_default: e.is_default === true,
       synced: e.scope !== "off", scope: e.scope || "shared", source: e.source || "override",
       is_dir: e.kind === "dir", nfiles: e.nfiles || 0,
+      size: Number(e.size || 0),
       secret: secret, kind: secret ? "secret" : "", mode: "", vars: [], var_count: 0,
       locked: e.locked === true, incoming: e.incoming === true, unpushed: e.unpushed === true
     })
@@ -318,7 +363,8 @@ function allRows(repoState) {
       sync_state: c.sync_state, exists: c.exists, has_default: c.has_default,
       saved: c.saved === true, is_default: c.is_default === true, synced: c.synced,
       scope: c.scope || "shared", source: c.source || "override", is_dir: c.is_dir === true,
-      nfiles: c.nfiles || 0, secret: false, kind: "", mode: "", vars: [], var_count: 0
+      nfiles: c.nfiles || 0, size: Number(c.size || 0), secret: false, kind: "", mode: "", vars: [], var_count: 0,
+      locked: c.locked === true, incoming: c.incoming === true, unpushed: c.unpushed === true
     }
   }).concat(secretRows(repoState))
 }

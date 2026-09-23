@@ -9,11 +9,22 @@ import qs.Ui
 Card {
   id: cc
   property var card: ({})
+  readonly property string navigationId: cc.card.id || ""
+  function navigationItem(openRow, openCards) {
+    if (openRow !== "") {
+      for (var i = 0; i < fileRepeater.count; i++) {
+        var row = fileRepeater.itemAt(i)
+        if (row && row.navigationId === openRow) return row
+      }
+    }
+    return openCards && openCards[cc.card.id] ? cc : null
+  }
 
   icon: cc.card.icon
   title: cc.card.label
   subtitle: cc.card.description
-  countText: String(cc.card.count)
+  countText: cc.card.count === cc.card.total ? String(cc.card.count)
+             : String(cc.card.count) + "/" + String(cc.card.total)
   statusText: cc.card.incoming > 0 ? cc.card.incoming + " to restore"
             : cc.card.changed > 0 ? cc.card.changed + " changed"
             : cc.card.off > 0 ? cc.card.off + " off" : "in sync"
@@ -42,12 +53,14 @@ Card {
   }
 
   Repeater {
+    id: fileRepeater
     model: cc.open ? cc.card.rows : []
     delegate: FileRow {
       required property var modelData
       panel: cc.panel
       config: modelData
       width: cc.width
+      navigationId: modelData.id
     }
   }
 

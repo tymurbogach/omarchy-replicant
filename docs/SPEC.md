@@ -13,6 +13,7 @@ This document describes the data model of the plugin and the rules that the code
   and it runs nothing when it is sourced.
 - `bin/lib/common.sh` holds what the CLI and the core both need: `plural` and the machine name.
 - The QML files (`BarWidget.qml`, `Panel.qml`, `Service.qml`) run the CLI and read its JSON.
+- `ReplicantController.qml` owns CLI processes, their queue and result dispatch.
 - `components/` holds the parts of the panel, one file each. A part reaches the panel only through
   its `panel` property.
 - `replicant.js` holds the pure functions that the QML files share. `tests/qml` tests them.
@@ -28,7 +29,10 @@ This document describes the data model of the plugin and the rules that the code
 | `incoming.sh` | What another machine changed, and what differs on this one |
 | `backups.sh` | The `.bak.<epoch>` safety net, `undo`, and the backups that setting edits make |
 | `tree.sh` | Writing files and directory trees, with a backup of what they replace |
-| `layout.sh` | The repo layout, the pre-commit hook, and the backup itself |
+| `layout.sh` | The repo layout and the pre-commit hook |
+| `inventory.sh` | Machine inventories that a restore or rebuild can consume |
+| `backup.sh` | Copies live configuration and secrets into the save repository |
+| `repo.sh` | Git repository lifecycle and remote transport |
 | `gitstate.sh` | One git call for the state of every row |
 | `discover.sh` | Entries found rather than listed: plugin configs and Hyprland modules |
 | `settings.sh` | The settings registry, its readers and its writers |
@@ -51,7 +55,8 @@ Rules for the code:
   and a plain `declare` there makes a local of that function.
 - Every variable in a function is `local`. Bash scopes dynamically, so a leaked name changes the
   caller. A test compares every global name before and after a backup.
-- `Panel.qml` holds the state, the processes and the actions. Each tab is a part in `components/`
+- `Panel.qml` holds presentation state, navigation state and actions. The controller owns processes.
+  Each tab is a part in `components/`
   (`OverviewTab`, `ConfigsTab`, `SettingsTab`, `RestoreTab`), and so is each piece of a tab.
 - Every tab is built from the same parts: `Card`, `ListRow`, `RowAction` and `FilterBar`. The
   design rules for them are in `CONTRIBUTING.md`.
@@ -336,7 +341,7 @@ commits arrive knows which one is right, so that moment writes it down.
 - The command stages under `$REPLICANT_HOME/migration/<id>/repo`, creates one root commit, pushes it,
   clones it independently and checks the result before activation.
 - The old repository is renamed to `legacy-repo-<epoch>`. The command never deletes it or its remote.
-  `migration-warning` remains until the user confirms credential rotation and legacy cleanup.
+  `migration-warning` remains until the user confirms credential rotation and legacy cleanup in the panel.
 - A failed preflight, encryption step, validation step, push or clone leaves the active v1 repo in place.
 
 ## The safety net

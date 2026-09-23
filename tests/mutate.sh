@@ -17,7 +17,7 @@ ONLY="${1:-}"
 
 # file, suite, from, to, why. One record per block, blocks separated by "---".
 MUTATIONS=$(cat <<'DATA'
-file: bin/lib/layout.sh
+file: bin/lib/backup.sh
 suite: test-core.sh
 from: is_excluded "$(owning_rel "$candrel")" && continue
 to: :
@@ -53,7 +53,7 @@ from: if [[ ! -x "$SCAN" ]]; then
 to: if false; then
 why: the pre-commit hook blocks a commit when the scanner is missing
 ---
-file: bin/lib/layout.sh
+file: bin/lib/backup.sh
 suite: test-core.sh
 from: scan_dirs+=("$REPO_DIR/profiles/$(current_profile)/config")
 to: :
@@ -89,13 +89,7 @@ from: fail "unknown area: $ONLY (areas: ${CATEGORY_ORDER[*]})"
 to: :
 why: restore refuses an unknown area
 ---
-file: bin/omarchy-replicant
-suite: test-journey.sh
-from:     PUSH_STATE=failed
-to:     PUSH_STATE=ok
-why: savegame reports a push that failed
----
-file: bin/lib/layout.sh
+file: bin/lib/backup.sh
 suite: test-journey.sh
 from:     if is_incoming_rel "$rel" && entry_differs "$rlive" "$rrepo" "$isdir"; then
 to:     if false; then
@@ -125,7 +119,7 @@ from: local who; who=$(id -un)
 to: local who; who=$USER
 why: a new repo gets an identity when $USER is not set
 ---
-file: bin/lib/layout.sh
+file: bin/lib/backup.sh
 suite: test-core.sh
 from: -o $(id -un) -g $(id -gn)
 to: -o $USER -g $USER
@@ -211,8 +205,8 @@ why: a plugin installed after the last save is not called recorded
 ---
 file: bin/lib/schema.sh
 suite: test-schema.sh
-from:     1|2) return 0 ;;
-to:     1|2|99) return 0 ;;
+from:     2) return 0 ;;
+to:     2|99) return 0 ;;
 why: a newer data format blocks writes
 ---
 file: bin/lib/schema.sh
@@ -238,12 +232,6 @@ suite: test-schema.sh
 from:     '{machineId: $id, profile: $profile, clientVersion: $client, schemaVersion: $schema}' > "$dir/$id.json"
 to:     '{machineId: $id, profile: $profile, clientVersion: $client, schemaVersion: $schema, debug: $id}' > "$dir/$id.json"
 why: machine metadata holds exactly four fields
----
-file: bin/omarchy-replicant
-suite: test-schema.sh
-from:   bash "$CORE" schema-gate || exit 1
-to:   :
-why: savegame stops before the commit on a newer format
 ---
 file: bin/lib/crypto.sh
 suite: test-crypto.sh
@@ -287,10 +275,10 @@ from:   printf '%s %s %s %s\n' "$n_unsaved" "$n_incoming" "$n_locked" "$n_missin
 to:   printf '%s %s %s\n' "$n_unsaved" "$n_incoming" "$n_locked"
 why: the bar counts locked secrets apart from unsaved ones
 ---
-file: bin/lib/layout.sh
+file: bin/lib/inventory.sh
 suite: test-crypto.sh
-from:     rm -f "$STATE_DIR/$_retired"
-to:     :
+from:   for retired in system.txt mise.txt npm-global.txt containers.txt system-services.txt defined-secrets.txt; do
+to:   for retired in system.txt mise.txt npm-global.txt containers.txt system-services.txt; do
 why: a backup sweeps retired inventories including defined-secrets.txt
 ---
 file: bin/omarchy-replicant
@@ -359,6 +347,18 @@ from:     did_commit=1
 to:     did_commit=0
 why: a committed transaction is fast-forwarded into the active repo
 ---
+file: bin/lib/migrate.sh
+suite: test-migration.sh
+from:   mv -- "$REPO_DIR" "$legacy" || { rm -f -- "$identity_backup"; rm -rf -- "$root"; return 1; }
+to:   true || { rm -f -- "$identity_backup"; rm -rf -- "$root"; return 1; }
+why: migration activates the new repository only after the staged copy passes verification
+---
+file: bin/omarchy-replicant
+suite: test-bulk.sh
+from:         (( rc == 0 )) && git_repo merge --ff-only -q FETCH_HEAD || rc=$?
+to:         (( rc == 0 )) && : || rc=$?
+why: a successful bulk transaction fast-forwards the active repository
+---
 file: bin/lib/save.sh
 suite: test-save.sh
 from:     echo "save: the repo has uncommitted changes — a save needs a clean worktree:" >&2
@@ -371,15 +371,15 @@ from:   warn "savegame is deprecated — 'save' does this now (same options)"
 to:   :
 why: savegame says it is deprecated
 ---
-file: bin/omarchy-replicant
+file: bin/lib/repo.sh
 suite: test-save.sh
 from:     echo "pull: the repo has uncommitted changes — pull needs a clean worktree:" >&2
 to:     :
 why: pull refuses a dirty worktree instead of stashing it
 ---
-file: bin/omarchy-replicant
+file: bin/lib/repo.sh
 suite: test-save.sh
-from:     ok "nothing to push — there is no remote yet: run 'omarchy-replicant create --push'"
+from:     echo "nothing to push — there is no remote yet: run 'omarchy-replicant create --push'" >&2
 to:     :
 why: push names the next step when there is no remote
 ---
@@ -395,11 +395,6 @@ from:     if (( ! force )); then
 to:     if false; then
 why: discarding a committed transaction needs an explicit force
 ---
-file: bin/omarchy-replicant
-suite: test-save.sh
-from:   warn "backup is deprecated — it only reviews now; 'changes' shows the same, 'save --id <id> -m "why"' commits one entry"
-to:   :
-why: backup says it is a read-only alias for changes
 DATA
 )
 
@@ -440,6 +435,7 @@ while IFS= read -r line; do
     "to: "*|"to:") to="${line#to:}"; to="${to# }" ;;
     "why: "*)   why="${line#why: }" ;;
     "---")
+      [[ -n "$file" ]] || continue
       num=$((num + 1))
       if [[ -z "$ONLY" || "$ONLY" == "$num" ]]; then
         while (( $(jobs -rp | wc -l) >= JOBS )); do wait -n; done

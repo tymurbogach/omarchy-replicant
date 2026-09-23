@@ -216,6 +216,30 @@ status_migration_json() {
     '{data_version:$data_version,required:$required,legacy_warning:$warning}'
 }
 
+# core_changes: read-only review of the worktree. The CLI only delegates here
+# and keeps ownership of its user-facing command syntax.
+core_changes() {
+  [[ -e "$REPO_DIR/.git" ]] || {
+    echo "no repo yet — run 'create' or 'clone' first" >&2
+    return 1
+  }
+  local pending staged
+  pending=$(git -C "$REPO_DIR" status --short 2>/dev/null | head -n 100)
+  if [[ -z "$pending" ]]; then
+    echo "nothing pending — everything copied in is committed" >&2
+  else
+    printf '%s\n' "$pending"
+  fi
+  staged=$(git -C "$REPO_DIR" diff --cached --stat 2>/dev/null | head -n 100)
+  if [[ -n "$staged" ]]; then
+    echo "--- staged ---" >&2
+    printf '%s\n' "$staged" >&2
+  fi
+  if [[ -n "$pending$staged" ]]; then
+    echo "To save it: 'save --all -m \"why\"', or 'save --id <id> -m \"why\"' for one entry." >&2
+  fi
+}
+
 # core_shortcuts — the keyboard, in two halves. Omarchy's model is "defaults,
 # plus your overrides in hypr/bindings.lua", so the backup tracks the overrides
 # (a snapshot of every active binding would go stale with the next update) while

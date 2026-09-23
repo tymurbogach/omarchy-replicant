@@ -13,6 +13,10 @@
 # No suite may download the marketplace catalog, which is 7.6 MB from the
 # network. A test that needs a catalog points this at a fixture of its own.
 export REPLICANT_CATALOG_URL="file:///nonexistent/replicant-test-catalog.json"
+# Most historical parity suites intentionally build v1 fixtures so they can
+# inspect the read-only compatibility shape. Security tests unset this escape
+# hatch before invoking a writer and verify that v1 mutations are blocked.
+export REPLICANT_TEST_ALLOW_LEGACY_WRITES=1
 
 # A test must never reach the real machine, the session or the network. These
 # commands can change one of them, so each is a stub that logs its call to

@@ -26,6 +26,7 @@ tab="${2:-overview}"; cards="${3:-}"; js="${4:-}"
 command -v quickshell >/dev/null 2>&1 || { echo "panel-shot: needs quickshell" >&2; exit 2; }
 
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+mkdir -m 700 "$work/runtime"
 cp -r "$SHELL_DIR/Ui" "$work/Ui"
 ln -s "$SHELL_DIR/Commons" "$work/Commons"
 ln -s "$SHELL_DIR/services" "$work/services"
@@ -150,7 +151,7 @@ ShellRoot {
     }
     Timer {
       id: grab
-      interval: 500
+      interval: 1500
       onTriggered: frame.grabToImage(function(r) { r.saveToFile(Quickshell.env("SHOT_OUT")); Qt.quit() })
     }
   }
@@ -166,7 +167,7 @@ out=$(realpath -m -- "$out")
 rm -f -- "$out"
 SHOT_PANEL="file://$ROOT/Panel.qml" SHOT_STATUS="$status" SHOT_TAB="$tab" SHOT_CARDS="$cards" \
 SHOT_JS="$js" SHOT_LATE_JS="${LATE_JS:-}" SHOT_SCROLL="${SCROLL:-0}" SHOT_OUT="$out" \
-QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
+XDG_RUNTIME_DIR="$work/runtime" QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME='' QT_QUICK_BACKEND=software \
   timeout 60 quickshell -p "$work" > "$work/log" 2>&1 || true
 if [[ -f "$out" ]]; then
   printf '%s\n' "$out"

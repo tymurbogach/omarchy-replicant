@@ -114,6 +114,20 @@ Item {
       }
       RowAction {
         panel: fd.panel
+        visible: !fd.missing && !fd.isSecret
+        text: "Copy live path"; iconText: panel.icCopy
+        tooltipText: "Copy the live path to the clipboard"
+        onClicked: panel.copyPath(fd.row.src, false)
+      }
+      RowAction {
+        panel: fd.panel
+        visible: fd.row.saved === true && !fd.isSecret
+        text: "Copy repo path"; iconText: panel.icCopy
+        tooltipText: "Copy the repository path to the clipboard"
+        onClicked: panel.copyPath(panel.repoState.repo_dir + "/" + R.repoCopyText(fd.row, fd.scope, panel.profileName), false)
+      }
+      RowAction {
+        panel: fd.panel
         visible: !fd.missing
         text: fd.isSecret ? "Compare" : "Show changes"; iconText: panel.icDiff
         tooltipText: fd.isSecret ? "Say whether it differs from your repo. Its contents are never shown."

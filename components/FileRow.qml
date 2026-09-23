@@ -18,6 +18,7 @@ Item {
   // The panel this belongs to. Every value and every action comes from it.
   property var panel
   property var config: ({})
+  property string navigationId: ""
   // A scope change shows at once, before the status that confirms it arrives.
   readonly property string scope: R.effectiveScope(frow.config, panel.scopeOverrides)
   readonly property string syncState: R.displayState(frow.config, panel.scopeOverrides) || "saved"

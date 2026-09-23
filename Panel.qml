@@ -7,8 +7,9 @@ import qs.Ui
 import "components"
 import "replicant.js" as R
 
-// The Replicant panel: four tabs over one CLI. This file holds the state, the
-// processes and the actions. What is drawn is in components/, one part each,
+// The Replicant panel: four tabs over one CLI. This file holds presentation,
+// navigation and action state. ReplicantController owns CLI processes. What is
+// drawn is in components/, one part each,
 // and each part reaches the panel through its `panel` property. The pure logic
 // is in replicant.js, where tests/qml tests it.
 //
@@ -44,7 +45,13 @@ Panel {
   property string stateFilter: "all"
   property string settingSearch: ""
   property string settingFilter: "all"
+  property var scrollPositions: ({ overview: 0, configs: 0, settings: 0, restore: 0 })
+  property string lastScrollTab: "overview"
+  property var navigationSnapshot: null
+  property bool restoringNavigation: false
+  property bool navigationRestorePending: false
   property bool manageMode: false
+  property bool keyboardHelpOpen: false
   property var selectedIds: []
   property string selectionAnchor: ""
   readonly property var visibleConfigRows: R.visibleRows(root.repoState, root.categoryCards, root.suggestions,
@@ -57,6 +64,7 @@ Panel {
   readonly property var selectionSummary: R.selectionSummary(root.selectedRows)
   property int manageCursor: 0
   function toggleManage() {
+    if (!root.manageMode) root.captureNavigation()
     root.manageMode = !root.manageMode
     if (!root.manageMode) root.selectedIds = []
     else if (root.suggestions.length > 0 && !root.isOpen("__suggest")) root.toggleCard("__suggest")
@@ -67,6 +75,10 @@ Panel {
     root.selectedIds = next
   }
   function selectVisible() { root.selectedIds = root.visibleConfigRows.map(function(r) { return r.id }) }
+  function moveManageCursor(delta) {
+    if (!root.manageMode || root.activeTab !== "configs" || root.visibleConfigRows.length === 0) return
+    root.manageCursor = Math.max(0, Math.min(root.visibleConfigRows.length - 1, root.manageCursor + delta))
+  }
   function toggleSelected(id, extend) {
     var next = root.selectedIds.slice()
     var ids = extend && root.selectionAnchor !== ""
@@ -114,6 +126,115 @@ Panel {
     next[sha] = !next[sha]
     root.openCommits = next
   }
+
+  function setFileSearch(value) {
+    root.fileSearch = value
+    if (!root.restoringNavigation) root.resetCurrentTabScroll()
+  }
+  function setStateFilter(value) {
+    root.stateFilter = value
+    if (!root.restoringNavigation) root.resetCurrentTabScroll()
+  }
+  function setSettingSearch(value) {
+    root.settingSearch = value
+    if (!root.restoringNavigation) root.resetCurrentTabScroll()
+  }
+  function setSettingFilter(value) {
+    root.settingFilter = value
+    if (!root.restoringNavigation) root.resetCurrentTabScroll()
+  }
+
+  function navigationAnchorItem() {
+    if (root.activeTab === "overview") return overviewTab.navigationItem(root.openCommits)
+    if (root.activeTab === "configs") return configsTab.navigationItem(root.openRow, root.openCards)
+    if (root.activeTab === "settings") return settingsTab.navigationItem(root.openCards)
+    return restoreTab.navigationItem()
+  }
+
+  function navigationAnchor() {
+    var item = root.navigationAnchorItem()
+    if (!item || !body) return null
+    var point = item.mapToItem(body, 0, 0)
+    return { kind: root.activeTab === "configs" && root.openRow !== "" ? "row" : "card",
+             id: item.navigationId || "", offset: point.y - body.contentY }
+  }
+
+  function rememberCurrentScroll() {
+    if (!body || !root.lastScrollTab) return
+    var next = {}
+    for (var k in root.scrollPositions) next[k] = root.scrollPositions[k]
+    next[root.lastScrollTab] = body.contentY
+    root.scrollPositions = next
+  }
+
+  function captureNavigation() {
+    if (!root.opened || !body) return
+    root.rememberCurrentScroll()
+    root.navigationSnapshot = R.navigationSnapshot({
+      activeTab: root.activeTab,
+      scrollY: root.scrollPositions,
+      openCards: root.openCards,
+      openRow: root.openRow,
+      openCommits: root.openCommits,
+      fileSearch: root.fileSearch,
+      stateFilter: root.stateFilter,
+      settingSearch: root.settingSearch,
+      settingFilter: root.settingFilter,
+      manageMode: root.manageMode,
+      selectedIds: root.selectedIds,
+      selectionAnchor: root.selectionAnchor,
+      anchor: root.navigationAnchor()
+    })
+  }
+
+  function resetCurrentTabScroll() {
+    var next = {}
+    for (var k in root.scrollPositions) next[k] = root.scrollPositions[k]
+    next[root.activeTab] = 0
+    root.scrollPositions = next
+    if (body) body.contentY = 0
+  }
+
+  function applyNavigationSnapshot(snapshot) {
+    if (!snapshot) return
+    root.restoringNavigation = true
+    root.activeTab = snapshot.activeTab
+    root.openCards = snapshot.openCards
+    root.openRow = snapshot.openRow
+    root.openCommits = snapshot.openCommits
+    root.fileSearch = snapshot.fileSearch
+    root.stateFilter = snapshot.stateFilter
+    root.settingSearch = snapshot.settingSearch
+    root.settingFilter = snapshot.settingFilter
+    root.manageMode = snapshot.manageMode
+    root.selectedIds = snapshot.selectedIds
+    root.selectionAnchor = snapshot.selectionAnchor
+    root.scrollPositions = snapshot.scrollY
+    root.lastScrollTab = snapshot.activeTab
+    root.restoringNavigation = false
+  }
+
+  function restoreNavigation() {
+    if (!root.navigationSnapshot || !body) return
+    var snapshot = root.navigationSnapshot
+    root.applyNavigationSnapshot(snapshot)
+    root.navigationRestorePending = true
+    Qt.callLater(function() {
+      if (!root.navigationRestorePending || !body) return
+      var item = root.navigationAnchorItem()
+      var target = R.navigationScroll(snapshot, root.activeTab, body.contentHeight - body.height)
+      if (item && snapshot.anchor) {
+        var point = item.mapToItem(body, 0, 0)
+        target = Math.max(0, Math.min(point.y - snapshot.anchor.offset, body.contentHeight - body.height))
+      }
+      body.contentY = target
+      var next = {}
+      for (var k in root.scrollPositions) next[k] = root.scrollPositions[k]
+      next[root.activeTab] = target
+      root.scrollPositions = next
+      root.navigationRestorePending = false
+    })
+  }
   function showOlder() { root.logCount = Math.min(40, root.logCount + 8); root.loadLog() }
 
   // The key catcher takes every key before the item that has focus, so while
@@ -128,14 +249,11 @@ Panel {
   // ── in-flight state ───────────────────────────────────────────────────────
   // A scope change is not here on purpose: it shows at once and runs in its
   // own queue (setScope), so it never greys out the rest of the panel.
-  readonly property bool busy: saveProc.running || setProc.running || pullProc.running
-                            || backupProc.running || fileSaveProc.running || dangerProc.running
-                            || checkProc.running || undoProc.running || trackProc.running
-                            || updateProc.running || bulkProc.running
-  readonly property bool saving: saveProc.running
-  readonly property bool pulling: pullProc.running
-  readonly property bool checking: doctorProc.running
-  readonly property bool updateChecking: updateCheckProc.running
+  readonly property bool busy: controller.busy
+  readonly property bool saving: controller.isRunning("save")
+  readonly property bool pulling: controller.isRunning("pull")
+  readonly property bool checking: controller.isRunning("doctor")
+  readonly property bool updateChecking: controller.isRunning("update-check")
   property string busyLabel: ""
 
   readonly property color fg: bar ? bar.foreground : Color.foreground
@@ -148,6 +266,7 @@ Panel {
   readonly property string mono: "monospace"
 
   readonly property bool ready: !!(repoState && repoState.initialized === true)
+  ReplicantController { id: controller; cli: root.cli }
 
   // ── icons ─────────────────────────────────────────────────────────────────
   // Held as Material Design Icon CODE POINTS, not as pasted glyphs. Two reasons:
@@ -240,6 +359,8 @@ Panel {
   readonly property int nIncoming: root.everyRow.filter(function(r) { return r.sync_state === "incoming" }).length
   readonly property int nOff: root.everyRow.filter(function(r) { return r.sync_state === "off" }).length
   readonly property int nMissing: root.everyRow.filter(function(r) { return r.sync_state === "missing" }).length
+  readonly property int nLocked: root.everyRow.filter(function(r) { return r.sync_state === "locked" || r.locked === true }).length
+  readonly property int nLarge: root.everyRow.filter(function(r) { return Number(r.size || 0) >= 1024 * 1024 }).length
   readonly property int nChanged: root.everyRow.filter(function(r) { return R.needsAttention(r.sync_state) }).length
   readonly property int nAhead: repoState.ahead || 0
   readonly property int nBehind: repoState.behind || 0
@@ -327,10 +448,14 @@ Panel {
   function rowsFor(categoryId) { return R.rowsFor(root.repoState, categoryId, root.fileSearch, root.stateFilter) }
   readonly property bool filtering: root.fileSearch !== "" || root.stateFilter !== "all"
   readonly property var filterOptions: [
-    { value: "all", label: "All  " + root.nTracked, tooltip: "Every tracked file" },
-    { value: "changed", label: "Changed  " + root.nChanged,
+    { value: "all", label: "All", tooltip: "Every tracked file" },
+    { value: "changed", label: "Changed",
       tooltip: "Unsaved, to restore, to push, or gone from this machine: the rows with a button to press" },
-    { value: "off", label: "Off  " + root.nOff, tooltip: "Switched off: never saved from here, never restored onto here" }
+    { value: "incoming", label: "Incoming", tooltip: "Rows saved by another machine and waiting to be restored" },
+    { value: "missing", label: "Missing", tooltip: "Tracked rows that are not on this machine" },
+    { value: "locked", label: "Locked", tooltip: "Secrets that need the encryption key" },
+    { value: "large", label: "Large", tooltip: "Files and trees of at least 1 MB" },
+    { value: "off", label: "Off", tooltip: "Switched off: never saved from here, never restored onto here" }
   ]
 
   // Categories that actually have something in them, with their counts. An
@@ -340,6 +465,7 @@ Panel {
     var out = []
     for (var i = 0; i < cats.length; i++) {
       var rows = root.rowsFor(cats[i].id)
+      var total = R.rowsFor(root.repoState, cats[i].id, "", "all").length
       if (rows.length === 0) continue
       // Counted from the same states the badges render, not a separate word.
       var changed = 0, off = 0, incoming = 0
@@ -351,7 +477,7 @@ Panel {
       out.push({
         id: cats[i].id, icon: cats[i].icon, label: cats[i].label,
         description: cats[i].description, method: cats[i].method,
-        rows: rows, count: rows.length, changed: changed, off: off, incoming: incoming
+        rows: rows, count: rows.length, total: total, changed: changed, off: off, incoming: incoming
       })
     }
     return out
@@ -413,7 +539,7 @@ Panel {
   }
 
   // ── actions ───────────────────────────────────────────────────────────────
-  function refresh() { if (hostWidget) hostWidget.refresh(true); root.loadLog() }
+  function refresh() { root.captureNavigation(); if (hostWidget) hostWidget.refresh(true); root.loadLog() }
   function shellQuote(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'" }
   function clean(s) { return String(s || "").replace(/\x1b\[[0-9;]*m/g, "").replace(/\n{3,}/g, "\n\n").trim() }
 
@@ -422,16 +548,15 @@ Panel {
   // deliberately leaves config and secrets copied-in-but-uncommitted so a human
   // can write one commit per change explaining why — and this panel has nowhere
   // to type that why.
-  function doSavegame() { root.busyLabel = "Saving to GitHub…"; saveProc.command = [root.cli, "savegame", "--auto"]; saveProc.running = true }
-  function doPull()     { root.busyLabel = "Pulling from GitHub…"; pullProc.command = [root.cli, "pull"]; pullProc.running = true }
-  function doBackup()   { root.busyLabel = "Copying files into the repo…"; backupProc.command = [root.cli, "backup"]; backupProc.running = true }
-  function doDoctor()   { root.busyLabel = "Running the health check…"; doctorProc.command = [root.cli, "doctor"]; doctorProc.running = true }
+  function doSavegame() { root.busyLabel = "Saving to GitHub…"; controller.run("save", [root.cli, "savegame", "--auto"], { label: "Save" }) }
+  function doPull()     { root.busyLabel = "Pulling from GitHub…"; controller.run("pull", [root.cli, "pull"], { label: "Pull" }) }
+  function doBackup()   { root.busyLabel = "Copying files into the repo…"; controller.run("backup", [root.cli, "backup"], { label: "Copy" }) }
+  function doDoctor()   { root.busyLabel = "Running the health check…"; controller.run("doctor", [root.cli, "doctor"], { label: "Health check" }) }
 
-  function loadShortcuts() { shortcutsProc.command = [root.cli, "shortcuts", "--json"]; shortcutsProc.running = true }
+  function loadShortcuts() { controller.run("shortcuts", [root.cli, "shortcuts", "--json"], { busy: false }) }
   function loadLog() {
-    if (logProc.running) return
-    logProc.command = [root.cli, "log", "--json", "-n", String(root.logCount)]
-    logProc.running = true
+    if (controller.running) return
+    controller.run("log", [root.cli, "log", "--json", "-n", String(root.logCount)], { busy: false })
   }
 
   // Open the editor. Deliberately NOT through
@@ -441,8 +566,8 @@ Panel {
   // editor is closed, same tab and same open cards. Only some editors can be
   // waited on, so the CLI says whether it actually waited.
   function doEdit(id) {
-    editProc.command = [root.cli, "edit", id, "--wait"]
-    editProc.running = true
+    root.captureNavigation()
+    controller.run("edit", [root.cli, "edit", id, "--wait"], { busy: false })
     root.lastOk = true
     root.lastOutput = "Opening " + id + " in your editor…"
     root.close()
@@ -451,15 +576,31 @@ Panel {
   // Diffs are read, not interacted with, so they belong in the panel next to
   // the file they describe rather than in a terminal that has to be dismissed.
   function doDiff(id) {
+    root.captureNavigation()
+    root.viewerRowId = id
     root.openViewer(id, "Loading…", "diff")
-    diffProc.command = [root.cli, "diff", id]
-    diffProc.running = true
+    controller.run("diff", [root.cli, "diff", id], { busy: false })
+  }
+
+  function moveDiff(delta) {
+    if (!root.viewerOpen || root.viewerKind !== "diff" || root.diffRows.length === 0) return
+    var index = -1
+    for (var i = 0; i < root.diffRows.length; i++) {
+      if (root.diffRows[i].id === root.viewerRowId) { index = i; break }
+    }
+    if (index < 0) index = 0
+    index = (index + delta + root.diffRows.length) % root.diffRows.length
+    root.doDiff(root.diffRows[index].id)
   }
 
   function doSaveFile(id) {
     root.busyLabel = "Saving " + id + "…"
-    fileSaveProc.command = [root.cli, "save-file", id, "-m", "config: update " + id]
-    fileSaveProc.running = true
+    controller.run("save-file", [root.cli, "save-file", id, "-m", "config: update " + id], { label: "Save file" })
+  }
+  function copyPath(path, secret) {
+    if (secret === true || String(path || "") === "") return
+    root.busyLabel = "Copying path…"
+    controller.run("copy-path", ["sh", "-c", "printf '%s' \"$1\" | wl-copy", "replicant-copy", String(path)], { label: "Copy path" })
   }
   function executeBulk(action) {
     if (root.selectedIds.length === 0 || root.bulkActions.indexOf(action) < 0) return
@@ -477,8 +618,7 @@ Panel {
     }
     cmd.push("--"); for (var i = 0; i < targets.length; i++) cmd.push(targets[i])
     root.busyLabel = "Applying bulk change…"
-    bulkProc.bulkAction = action
-    bulkProc.command = cmd; bulkProc.running = true
+    controller.run("bulk", cmd, { label: "Bulk change", bulkAction: action })
     if (action.indexOf("scope-") === 0) {
       var next = {}; for (var k in root.scopeOverrides) next[k] = root.scopeOverrides[k]
       var optimistic = action.slice(6)
@@ -500,14 +640,12 @@ Panel {
 
   function doSetSetting(id, value) {
     root.busyLabel = "Saving " + id + "…"
-    setProc.command = [root.cli, "set", id, String(value)]
-    setProc.running = true
+    controller.run("setting", [root.cli, "set", id, String(value)], { label: "Setting" })
   }
 
   function doRevert(id, to) {
     root.busyLabel = "Reverting " + id + "…"
-    setProc.command = [root.cli, "revert", id, "--to", to]
-    setProc.running = true
+    controller.run("setting", [root.cli, "revert", id, "--to", to], { label: "Setting" })
   }
 
   function askRestoreFile(row) {
@@ -545,7 +683,7 @@ Panel {
     var q = root.scopeQueue.filter(function(j) { return j.id !== id })
     q.push({ id: id, scope: scope })
     root.scopeQueue = q
-    if (!scopeProc.running) root.runNextScope()
+    if (!controller.running) root.runNextScope()
   }
   function runNextScope() {
     if (root.scopeQueue.length === 0) {
@@ -555,9 +693,7 @@ Panel {
     }
     var job = root.scopeQueue[0]
     root.scopeQueue = root.scopeQueue.slice(1)
-    scopeProc.jobId = job.id
-    scopeProc.command = [root.cli, "scope", job.id, job.scope]
-    scopeProc.running = true
+    controller.run("scope", [root.cli, "scope", job.id, job.scope], { jobId: job.id, label: "Sync" })
   }
   function dropScopeOverride(id) {
     var next = {}
@@ -567,7 +703,8 @@ Panel {
   // A full status built after the last change finished is the truth. A brief
   // one carries no rows, so it cannot confirm anything.
   onRepoStateChanged: {
-    if (root.scopeAwaitingStatus && !scopeProc.running && root.scopeQueue.length === 0
+    if (root.navigationSnapshot) root.restoreNavigation()
+    if (root.scopeAwaitingStatus && !controller.running && root.scopeQueue.length === 0
         && root.repoState && root.repoState.brief !== true) {
       root.scopeOverrides = ({})
       root.scopeAwaitingStatus = false
@@ -581,8 +718,7 @@ Panel {
   property var suggestions: []
   property bool suggestLoaded: false
   function loadSuggestions() {
-    suggestProc.command = [root.cli, "suggest", "--json"]
-    suggestProc.running = true
+    controller.run("suggest", [root.cli, "suggest", "--json"], { busy: false })
   }
   property string addMode: "suggest"
   function setAddMode(m) {
@@ -590,12 +726,11 @@ Panel {
     if (m === "browse" && !root.browseData.dir) root.browseTo(root.repoState.home || "~")
   }
   property var browseData: ({})
-  property bool browseLoading: browseProc.running
+  property bool browseLoading: controller.isRunning("browse")
   property string browsePending: ""
   function browseTo(dir) {
-    if (browseProc.running) { root.browsePending = dir; return }
-    browseProc.command = [root.cli, "browse-json", dir]
-    browseProc.running = true
+    if (controller.running) { root.browsePending = dir; return }
+    controller.run("browse", [root.cli, "browse-json", dir], { busy: false })
   }
   function browseUp() { if (root.browseData.parent) root.browseTo(root.browseData.parent) }
   // A path typed in. One that is not absolute starts at the folder shown.
@@ -610,13 +745,11 @@ Panel {
     root.busyLabel = "Tracking " + root.pretty(path) + "…"
     var cmd = [root.cli, "track", path]
     if (kind === "secret") cmd.push("--secret")
-    trackProc.command = cmd
-    trackProc.running = true
+    controller.run("track", cmd, { label: "Track" })
   }
   function doUntrack(id) {
     root.busyLabel = "Untracking " + id + "…"
-    trackProc.command = [root.cli, "untrack", id]
-    trackProc.running = true
+    controller.run("track", [root.cli, "untrack", id], { label: "Track" })
   }
 
   // ── the safety net, made visible ──────────────────────────────────────────
@@ -626,30 +759,26 @@ Panel {
   property var backups: []
   property bool backupsLoaded: false
   function loadBackups() {
-    backupsProc.command = [root.cli, "backups-json"]
-    backupsProc.running = true
+    controller.run("backups", [root.cli, "backups-json"], { busy: false })
   }
   // Newest per id (replicant.js, backupRows): undo takes the newest, so a row
   // per id is a row per button.
   readonly property var backupRows: R.backupRows(root.backups)
   function doUndo(id) {
     root.busyLabel = "Undoing " + id + "…"
-    undoProc.command = [root.cli, "undo", id, "--apply"]
-    undoProc.running = true
+    controller.run("undo", [root.cli, "undo", id, "--apply"], { label: "Undo" })
   }
   function doPruneBackups() {
     root.busyLabel = "Removing backups…"
-    undoProc.command = [root.cli, "backups", "--prune", "--apply"]
-    undoProc.running = true
+    controller.run("undo", [root.cli, "backups", "--prune", "--apply"], { label: "Undo" })
   }
 
   // Copies that left the repo, by the commit that removed them. Git history
   // kept them, and one button undoes one commit's deletions.
   property var deletedList: []
   function loadDeleted() {
-    if (deletedProc.running) return
-    deletedProc.command = [root.cli, "deleted", "--json"]
-    deletedProc.running = true
+    if (controller.running) return
+    controller.run("deleted", [root.cli, "deleted", "--json"], { busy: false })
   }
   function askRecover(item) {
     var names = (item.files || []).map(function(f) { return R.repoPathLabel(f).label })
@@ -692,12 +821,11 @@ Panel {
          + (u.installed === true ? "" : "\nThis copy is a development checkout: update it with git pull.")
   }
   function checkUpdates(force) {
-    if (updateCheckProc.running) return
+    if (controller.isRunning("update-check")) return
     root.updateCheckForced = force === true
     root.updateCheckedOnce = true
-    updateCheckProc.command = force === true ? [root.cli, "update-check", "--json", "--fetch"]
-                                             : [root.cli, "update-check", "--json"]
-    updateCheckProc.running = true
+    controller.run("update-check", force === true ? [root.cli, "update-check", "--json", "--fetch"]
+                                                   : [root.cli, "update-check", "--json"], { busy: false })
   }
   function askUpdate() {
     var u = root.updateInfo
@@ -708,6 +836,11 @@ Panel {
              + "\n\nOmarchy's plugin update installs and checks it, and the shell restarts to load it. Your data repo is not touched.",
              "Update")
   }
+  function askMigrationCleanup() {
+    root.ask("migration-confirm", "",
+             "Confirm that you rotated relevant credentials, deleted or secured the legacy remote, and removed or secured the legacy local copy.",
+             "Confirm cleanup")
+  }
 
   // ── confirmations ─────────────────────────────────────────────────────────
   // Every destructive action is confirmed here rather than in a terminal, and
@@ -716,6 +849,7 @@ Panel {
   property string confirmAction: ""
   property string confirmArg: ""
   function ask(action, arg, message, confirmText) {
+    root.captureNavigation()
     root.confirmAction = action
     root.confirmArg = arg || ""
     confirmDialog.message = message
@@ -727,23 +861,24 @@ Panel {
     var a = root.confirmAction, arg = root.confirmArg
     root.confirmAction = ""; root.confirmArg = ""
     confirmDialog.opened = false
-    if (a === "reset-file")        { root.busyLabel = "Resetting " + arg + "…"; dangerProc.command = [root.cli, "reset", arg] }
-    else if (a === "restore-file") { root.busyLabel = "Restoring " + arg + "…"; dangerProc.command = [root.cli, "restore-file", arg] }
-    else if (a === "reset-all")    { root.busyLabel = "Resetting everything…"; dangerProc.command = [root.cli, "reset-all", "--apply", "--yes"] }
-    else if (a === "restore-all")  { root.busyLabel = "Restoring everything…"; dangerProc.command = [root.cli, "restore", "--apply", "--all", "--yes"] }
-    else if (a === "restore-cat")  { root.busyLabel = "Restoring " + arg + "…"; dangerProc.command = [root.cli, "restore", "--apply", "--yes", "--only", arg] }
-    else if (a === "recover")      { root.busyLabel = "Bringing back " + arg.slice(0, 7) + "…"; dangerProc.command = [root.cli, "recover", arg, "--apply"] }
-    else if (a === "install-theme")  { root.busyLabel = "Installing " + arg + "…"; dangerProc.command = [root.cli, "install-theme", arg] }
-    else if (a === "install-plugin") { root.busyLabel = "Installing " + arg + "…"; dangerProc.command = [root.cli, "install-plugin", arg] }
+    var command = null, label = "Restore"
+    if (a === "reset-file")        { root.busyLabel = "Resetting " + arg + "…"; command = [root.cli, "reset", arg]; label = "Reset" }
+    else if (a === "restore-file") { root.busyLabel = "Restoring " + arg + "…"; command = [root.cli, "restore-file", arg] }
+    else if (a === "reset-all")    { root.busyLabel = "Resetting everything…"; command = [root.cli, "reset-all", "--apply", "--yes"]; label = "Reset" }
+    else if (a === "restore-all")  { root.busyLabel = "Restoring everything…"; command = [root.cli, "restore", "--apply", "--all", "--yes"] }
+    else if (a === "restore-cat")  { root.busyLabel = "Restoring " + arg + "…"; command = [root.cli, "restore", "--apply", "--yes", "--only", arg] }
+    else if (a === "recover")      { root.busyLabel = "Bringing back " + arg.slice(0, 7) + "…"; command = [root.cli, "recover", arg, "--apply"]; label = "Bring back" }
+    else if (a === "install-theme")  { root.busyLabel = "Installing " + arg + "…"; command = [root.cli, "install-theme", arg]; label = "Install" }
+    else if (a === "install-plugin") { root.busyLabel = "Installing " + arg + "…"; command = [root.cli, "install-plugin", arg]; label = "Install" }
     else if (a === "untrack")      { root.doUntrack(arg); return }
-    else if (a === "forget")       { root.busyLabel = "Forgetting " + arg + "…"; trackProc.command = [root.cli, "forget", arg]; trackProc.running = true; return }
+    else if (a === "forget")       { root.busyLabel = "Forgetting " + arg + "…"; controller.run("track", [root.cli, "forget", arg], { label: "Track" }); return }
     else if (a === "undo")          { root.doUndo(arg); return }
     else if (a === "prune-backups") { root.doPruneBackups(); return }
-    else if (a === "update")        { root.busyLabel = "Updating Replicant…"; updateProc.command = [root.cli, "update", "--yes", "--restart"]; updateProc.running = true; return }
+    else if (a === "update")        { root.busyLabel = "Updating Replicant…"; controller.run("update", [root.cli, "update", "--yes", "--restart"], { label: "Update" }); return }
+    else if (a === "migration-confirm") { root.busyLabel = "Recording migration confirmation…"; command = [root.cli, "migration-confirm"]; label = "Migration" }
     else if (a.indexOf("bulk:") === 0) { root.executeBulk(a.slice(5)); return }
     else return
-    dangerProc.label = a === "recover" ? "Bring back" : a.indexOf("install") === 0 ? "Install" : a.indexOf("reset") === 0 ? "Reset" : "Restore"
-    dangerProc.running = true
+    if (command) controller.run("danger", command, { label: label })
   }
 
   // ── install, with the marketplace's facts in front of the consent ─────────
@@ -761,8 +896,7 @@ Panel {
     }
     root.pendingInstall = { id: id, message: msg }
     root.busyLabel = "Checking " + id + " in the marketplace…"
-    checkProc.command = [root.cli, "install-plugin", id, "--check"]
-    checkProc.running = true
+    controller.run("market-check", [root.cli, "install-plugin", id, "--check"], { busy: false })
   }
 
   // ── the reader ────────────────────────────────────────────────────────────
@@ -770,229 +904,85 @@ Panel {
   property string viewerTitle: ""
   property string viewerText: ""
   property string viewerKind: "output"
+  property string viewerRowId: ""
+  readonly property var diffRows: root.visibleConfigRows.filter(function(r) { return r.suggestion !== true })
   function openViewer(title, text, kind) {
     root.viewerTitle = title
     root.viewerText = text
     root.viewerKind = kind || "output"
     root.viewerOpen = true
   }
-  function closeViewer() { root.viewerOpen = false }
+  function closeViewer() { root.viewerOpen = false; root.viewerRowId = "" }
   // A dry run, read in full in the reader. It writes nothing.
   function runPreview(title, args) {
-    if (previewProc.running) return
+    if (controller.isRunning("preview")) return
     root.openViewer(title, "Working out what would change…", "output")
-    previewProc.command = [root.cli].concat(args)
-    previewProc.running = true
+    controller.run("preview", [root.cli].concat(args), { busy: false })
   }
 
-  // ── processes ─────────────────────────────────────────────────────────────
-  // Every write refreshes status on exit, so the badges can never drift from
-  // what is actually on disk.
-  component CliProcess: Process {
-    stdout: StdioCollector { waitForEnd: true }
-    stderr: StdioCollector { waitForEnd: true }
-  }
-
-  // The one line of the result bar (replicant.js, resultLine).
-  readonly property string resultLine: R.resultLine(root.lastOutput, root.lastOk)
-
-  function finish(label, code, out, err) {
-    root.busyLabel = ""
-    var text = root.clean(String(out || "") + "\n" + String(err || ""))
-    root.lastOk = code === 0
-    root.lastTitle = label
-    if (code !== 0) text = label + " failed (exit " + code + ")\n" + text
-    else if (text === "") text = label + ": done."
-    root.lastOutput = text.length > 20000 ? "…" + text.slice(-20000) : text
-    root.refresh()
-    // Anything that writes to the machine leaves a new .bak behind it, and
-    // anything that commits can delete a copy: both lists are stale now.
-    root.loadBackups()
-    root.loadDeleted()
-  }
-
-  CliProcess { id: saveProc;     onExited: function(c){ root.finish("Save", c, saveProc.stdout.text, saveProc.stderr.text) } }
-  CliProcess { id: pullProc;     onExited: function(c){ root.finish("Pull", c, pullProc.stdout.text, pullProc.stderr.text) } }
-  CliProcess { id: backupProc;   onExited: function(c){ root.finish("Copy", c, backupProc.stdout.text, backupProc.stderr.text) } }
-  CliProcess { id: setProc;      onExited: function(c){ root.finish("Setting", c, setProc.stdout.text, setProc.stderr.text) } }
-  CliProcess { id: fileSaveProc; onExited: function(c){ root.finish("Save file", c, fileSaveProc.stdout.text, fileSaveProc.stderr.text) } }
-  CliProcess {
-    id: bulkProc
-    property string bulkAction: ""
-    onExited: function(c) {
-      root.finish("Bulk change", c, bulkProc.stdout.text, bulkProc.stderr.text)
-      if (c === 0) {
-        root.scopeOverrides = ({})
-        root.clearSelection()
-      } else if (bulkProc.bulkAction.indexOf("scope-") === 0) {
-        root.scopeOverrides = ({})
-      }
-      bulkProc.bulkAction = ""
-    }
-  }
-  CliProcess {
-    id: dangerProc
-    property string label: "Restore"
-    onExited: function(c){ root.finish(dangerProc.label, c, dangerProc.stdout.text, dangerProc.stderr.text) }
-  }
-  CliProcess { id: undoProc;     onExited: function(c){ root.finish("Undo", c, undoProc.stdout.text, undoProc.stderr.text) } }
-  CliProcess { id: updateProc;   onExited: function(c){ root.finish("Update", c, updateProc.stdout.text, updateProc.stderr.text) } }
-  CliProcess {
-    id: doctorProc
-    onExited: function(c) {
-      root.busyLabel = ""
-      var text = root.clean(doctorProc.stdout.text + "\n" + doctorProc.stderr.text)
-      root.lastTitle = "Health check"
-      root.lastOk = text.indexOf("No problems found.") !== -1
-      root.lastOutput = text
-      root.openViewer("Health check", text, "output")
-    }
-  }
-  CliProcess {
-    id: previewProc
-    onExited: function(c) {
-      var text = root.clean(previewProc.stderr.text + "\n" + previewProc.stdout.text)
-      root.viewerText = text !== "" ? text : "Nothing would change."
-    }
-  }
-  CliProcess {
-    id: scopeProc
-    property string jobId: ""
-    onExited: function(c) {
-      if (c !== 0) {
-        root.lastOk = false
-        root.lastTitle = "Sync"
-        root.lastOutput = root.clean("Sync of " + scopeProc.jobId + " failed (exit " + c + ")\n"
-                                     + scopeProc.stdout.text + "\n" + scopeProc.stderr.text)
-        root.dropScopeOverride(scopeProc.jobId)
-      }
-      root.runNextScope()
-    }
-  }
-  CliProcess {
-    id: checkProc
-    onExited: function(c) {
-      root.busyLabel = ""
-      var p = root.pendingInstall
-      root.pendingInstall = null
-      if (!p) return
-      var facts = root.clean(checkProc.stdout.text + "\n" + checkProc.stderr.text)
-      if (facts === "") facts = "The marketplace check printed nothing."
-      root.ask("install-plugin", p.id, p.message + "\n\n" + facts, "Install")
-    }
-  }
-  Process {
-    id: editProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        // "replicant:waited" is printed only when the CLI genuinely held until
-        // the editor closed. Anything else means it detached and there is no
-        // moment to come back at.
-        if (String(text).indexOf("replicant:waited") !== -1) root.open()
-      }
-    }
-  }
-
-  // Tracking changes the list the rows come from, so the suggestions and the
-  // picker are read again with the status. Otherwise a file you just tracked
-  // stays in "not tracked yet" until the panel is reopened.
-  CliProcess {
-    id: trackProc
-    onExited: function(c) {
-      root.finish("Track", c, trackProc.stdout.text, trackProc.stderr.text)
-      root.loadSuggestions()
-      if (root.browseData.dir) root.browseTo(root.browseData.dir)
-    }
-  }
-
-  Process {
-    id: backupsProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        try { root.backups = JSON.parse(text || "[]") } catch (e) { root.backups = [] }
-        root.backupsLoaded = true
-      }
-    }
-  }
-
-  Process {
-    id: deletedProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: { try { root.deletedList = JSON.parse(text || "[]") } catch (e) { root.deletedList = [] } }
-    }
-  }
-
-  Process {
-    id: suggestProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        try { root.suggestions = JSON.parse(text || "[]") } catch (e) { root.suggestions = [] }
+  // Every write refreshes status on exit, so the badges never drift from disk.
+  Connections {
+    target: controller
+    function onCompleted(job, code, stdoutText, stderrText, meta) {
+      var text = root.clean(stderrText + "\n" + stdoutText)
+      if (job === "log") {
+        try { root.recent = JSON.parse(stdoutText || "[]") } catch (e) { root.recent = [] }
+      } else if (job === "shortcuts") {
+        try { root.shortcuts = JSON.parse(stdoutText || "{}"); root.shortcutsLoaded = true } catch (e) { root.shortcutsLoaded = false }
+      } else if (job === "suggest") {
+        try { root.suggestions = JSON.parse(stdoutText || "[]") } catch (e) { root.suggestions = [] }
         root.suggestLoaded = true
+      } else if (job === "browse") {
+        try { root.browseData = JSON.parse(stdoutText || "{}") } catch (e) { root.browseData = ({ error: "could not be read", entries: [] }) }
+        if (root.browsePending !== "") { var d = root.browsePending; root.browsePending = ""; root.browseTo(d) }
+      } else if (job === "backups") {
+        try { root.backups = JSON.parse(stdoutText || "[]") } catch (e) { root.backups = [] }
+        root.backupsLoaded = true
+      } else if (job === "deleted") {
+        try { root.deletedList = JSON.parse(stdoutText || "[]") } catch (e) { root.deletedList = [] }
+      } else if (job === "diff" || job === "preview") {
+        root.viewerText = text !== "" ? text : (job === "diff" ? "No differences." : "Nothing would change.")
+      } else if (job === "market-check") {
+        root.busyLabel = ""
+        var install = root.pendingInstall
+        root.pendingInstall = null
+        if (install) root.ask("install-plugin", install.id, install.message + "\n\n" + (text || "The marketplace check printed nothing."), "Install")
+      } else if (job === "update-check") {
+        try { root.updateInfo = JSON.parse(stdoutText || "{}") } catch (e) { root.updateInfo = ({}) }
+        if (root.updateCheckForced) {
+          var u = root.updateInfo
+          root.lastTitle = "Check for updates"
+          root.lastOk = u.fetch_failed !== true
+          root.lastOutput = u.fetch_failed === true ? "Could not reach " + (u.origin || "GitHub") + ". Try again later."
+                          : u.checkout !== true ? "This copy of Replicant is not a git checkout, so it cannot update itself."
+                          : u.available === true ? "Replicant " + u.latest + " is available. Press Update in the header."
+                          : "Replicant " + u.current + " is up to date."
+        }
+      } else if (job === "edit") {
+        if (stdoutText.indexOf("replicant:waited") !== -1) root.open()
+      } else if (job === "scope") {
+        if (code !== 0) {
+          root.lastOk = false; root.lastTitle = "Sync"
+          root.lastOutput = root.clean("Sync of " + (meta.jobId || "entry") + " failed (exit " + code + ")\n" + stdoutText + "\n" + stderrText)
+          root.dropScopeOverride(meta.jobId || "")
+        }
+        root.runNextScope()
+      } else if (job === "bulk") {
+        root.finish(meta.label || "Bulk change", code, stdoutText, stderrText)
+        if (code === 0) { root.scopeOverrides = ({}); root.clearSelection() }
+        else if (String(meta.bulkAction || "").indexOf("scope-") === 0) root.scopeOverrides = ({})
+      } else if (job === "doctor") {
+        root.busyLabel = ""; root.lastTitle = "Health check"; root.lastOk = text.indexOf("No problems found.") !== -1
+        root.lastOutput = text; root.openViewer("Health check", text, "output")
+      } else if (job === "copy-path") {
+        root.busyLabel = ""
+        root.lastTitle = "Copy path"
+        root.lastOk = code === 0
+        root.lastOutput = code === 0 ? "Copied the path to the clipboard." : "Could not copy the path. Is wl-copy available?"
+      } else if (job !== "") {
+        root.finish(meta.label || job, code, stdoutText, stderrText)
+        if (job === "track") { root.loadSuggestions(); if (root.browseData.dir) root.browseTo(root.browseData.dir) }
       }
-    }
-  }
-
-  Process {
-    id: browseProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: { try { root.browseData = JSON.parse(text || "{}") } catch (e) { root.browseData = ({ error: "could not be read", entries: [] }) } }
-    }
-    onExited: function(c) {
-      if (root.browsePending !== "") {
-        var d = root.browsePending
-        root.browsePending = ""
-        root.browseTo(d)
-      }
-    }
-  }
-
-  Process {
-    id: updateCheckProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        try { root.updateInfo = JSON.parse(text || "{}") } catch (e) { root.updateInfo = ({}) }
-        if (!root.updateCheckForced) return
-        var u = root.updateInfo
-        root.lastTitle = "Check for updates"
-        root.lastOk = u.fetch_failed !== true
-        root.lastOutput = u.fetch_failed === true ? "Could not reach " + (u.origin || "GitHub") + ". Try again later."
-                        : u.checkout !== true ? "This copy of Replicant is not a git checkout, so it cannot update itself."
-                        : u.available === true ? "Replicant " + u.latest + " is available. Press Update in the header."
-                        : "Replicant " + u.current + " is up to date."
-      }
-    }
-  }
-
-  Process {
-    id: shortcutsProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        try { root.shortcuts = JSON.parse(text || "{}"); root.shortcutsLoaded = true } catch (e) { root.shortcutsLoaded = false }
-      }
-    }
-  }
-
-  Process {
-    id: diffProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.viewerText = text && text.trim() !== "" ? text : "No differences."
-    }
-    stderr: StdioCollector { waitForEnd: true; onStreamFinished: if (text && text.trim() !== "") root.viewerText = text }
-  }
-
-  Process {
-    id: logProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: { try { root.recent = JSON.parse(text || "[]") } catch (e) { root.recent = [] } }
     }
   }
 
@@ -1022,7 +1012,7 @@ Panel {
     root.loadDeleted()
     if (!root.updateCheckedOnce) root.checkUpdates(false)
   }
-  function close() { root.opened = false; root.viewerOpen = false; confirmDialog.opened = false; root.focusedField = null }
+  function close() { root.opened = false; root.viewerOpen = false; root.keyboardHelpOpen = false; confirmDialog.opened = false; root.focusedField = null }
   function toggle() { root.opened ? root.close() : root.open() }
   // Open straight onto one tab. The keys 1-4 already do this for someone
   // looking at the panel; this is the same jump for a keybinding or a script,
@@ -1033,7 +1023,13 @@ Panel {
     root.activeTab = name
     return true
   }
-  onActiveTabChanged: body.contentY = 0
+  onActiveTabChanged: {
+    root.rememberCurrentScroll()
+    root.lastScrollTab = root.activeTab
+    var y = root.scrollPositions[root.activeTab] || 0
+    if (body) body.contentY = Math.max(0, Math.min(y, body.contentHeight - body.height))
+    if (!root.restoringNavigation) Qt.callLater(root.restoreNavigation)
+  }
 
   KeyboardPanel {
     id: panel
@@ -1065,11 +1061,16 @@ Panel {
         }
       }
       onCloseRequested: {
-        if (root.viewerOpen) root.closeViewer()
+        if (root.keyboardHelpOpen) root.keyboardHelpOpen = false
+        else if (root.viewerOpen) root.closeViewer()
         else if (confirmDialog.opened) confirmDialog.opened = false
         else root.close()
       }
       onTextKey: function(t) {
+        if (t === "?" && !root.viewerOpen && !confirmDialog.opened) {
+          root.keyboardHelpOpen = !root.keyboardHelpOpen; return
+        }
+        if (root.keyboardHelpOpen) return
         if (root.viewerOpen || confirmDialog.opened) return
         if (t === "1") root.activeTab = "overview"
         else if (t === "2") root.activeTab = "configs"
@@ -1089,6 +1090,8 @@ Panel {
           if (!root.isOpen("__suggest")) root.toggleCard("__suggest")
         }
         else if (t === "m" && root.activeTab === "configs") root.toggleManage()
+        else if (t === "j" && root.manageMode) root.moveManageCursor(1)
+        else if (t === "k" && root.manageMode) root.moveManageCursor(-1)
         // "/" filters where you already are.
         else if (t === "/") {
           if (root.activeTab === "settings") settingsTab.focusSearch()
@@ -1096,8 +1099,7 @@ Panel {
         }
       }
       onMoveRequested: function(dx, dy) {
-        if (!root.manageMode || root.activeTab !== "configs" || root.visibleConfigRows.length === 0) return
-        root.manageCursor = Math.max(0, Math.min(root.visibleConfigRows.length - 1, root.manageCursor + dy))
+        root.moveManageCursor(dy)
       }
       onActivateRequested: {
         if (root.manageMode && root.activeTab === "configs" && root.visibleConfigRows.length > 0)
@@ -1251,6 +1253,34 @@ Panel {
         cancelText: "Cancel"
         onCanceled: { confirmDialog.opened = false; root.confirmAction = "" }
         onConfirmed: root.runConfirmed()
+      }
+
+      BorderSurface {
+        id: keyboardHelp
+        visible: root.keyboardHelpOpen
+        anchors.centerIn: parent
+        width: Math.min(parent.width, Style.space(500))
+        implicitHeight: helpColumn.implicitHeight + Style.space(24)
+        z: 70
+        color: Color.popups.background
+        borderSpec: Border.controlSpec("focus", root.fg, Color.accent)
+        radius: Style.cornerRadius
+        Column {
+          id: helpColumn
+          anchors.fill: parent
+          anchors.margins: Style.space(12)
+          spacing: Style.space(8)
+          Text {
+            text: "Keyboard help"
+            color: root.fg; font.family: root.ff; font.pixelSize: Style.font.title; font.bold: true
+          }
+          Text {
+            text: "1-4 tabs   (j) next   (k) previous   arrows move   Enter opens\n"
+                  + "m manages   / filters   r refreshes   Esc closes   (?) help"
+            color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+        }
       }
     }
   }

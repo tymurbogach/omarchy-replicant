@@ -232,15 +232,17 @@ tools/
 ## 7. Simplify the Shell Architecture
 
 - [ ] Keep `bin/omarchy-replicant` responsible for argument parsing, confirmation, and output only.
-- [ ] Move save and transaction behavior into `bin/lib/save.sh`.
-- [ ] Move encryption behavior into `bin/lib/crypto.sh`.
-- [ ] Move migration behavior into `bin/lib/migrate.sh`.
-- [ ] Move inventory behavior out of layout code and into `bin/lib/inventory.sh`.
-- [ ] Keep `bin/lib/layout.sh` responsible only for repository layout and schema upgrades.
+- [x] Move save and transaction behavior into `bin/lib/save.sh`.
+- [x] Move encryption behavior into `bin/lib/crypto.sh`.
+- [x] Move migration behavior into `bin/lib/migrate.sh`.
+- [x] Move inventory behavior out of layout code and into `bin/lib/inventory.sh`.
+- [x] Keep `bin/lib/layout.sh` responsible only for repository layout and schema upgrades.
 - [ ] Make `bin/lib/status.sh` serialize registry and state results without deriving policy.
-- [ ] Preserve stable command output until compatibility fields are removed.
+- [x] Move repository lifecycle and remote transport into `bin/lib/repo.sh`.
+- [x] Move backup entrypoint ownership into `bin/lib/backup.sh`.
+- [x] Preserve stable command output until compatibility fields are removed.
 - [ ] Avoid unrelated refactors in settings and plugin-management modules.
-- [ ] Add shell module contract tests before deleting legacy functions.
+- [x] Add shell module contract tests before deleting legacy functions.
 
 ## 8. Publish the v2 Status Contract
 
@@ -309,13 +311,13 @@ omarchy-replicant migrate-v2 \
 - [x] Activate the v2 repository through an atomic rename.
 - [x] Keep the legacy repository active when any step before activation fails.
 - [x] Never delete the legacy local repository or remote automatically.
-- [ ] Show a persistent warning until the user confirms:
+- [x] Show a persistent warning until the user confirms:
   - Relevant credentials have been rotated.
   - The legacy remote has been deleted.
   - The legacy local copy has been removed or secured.
 - [x] Permit legacy v1 status, diff, dry-run restore, and migration.
-- [ ] Block v1 saves, tracking changes, scope changes, and secret mutations.
-- [ ] Tell the user to migrate before any blocked operation.
+- [x] Block v1 saves, tracking changes, scope changes, and secret mutations.
+- [x] Tell the user to migrate before any blocked operation.
 - [x] Test that the new remote has one root commit and no reachable legacy objects.
 
 ## 10. Add Bulk Management to the Panel
@@ -342,9 +344,9 @@ omarchy-replicant migrate-v2 \
 
 ## 11. Make Navigation State Deterministic
 
-- [ ] Replace `onActiveTabChanged: body.contentY = 0`.
-- [ ] Store independent scroll positions for each tab.
-- [ ] Add a navigation snapshot with:
+- [x] Replace `onActiveTabChanged: body.contentY = 0`.
+- [x] Store independent scroll positions for each tab.
+- [x] Add a navigation snapshot with:
   - Active tab.
   - Per-tab scroll position.
   - Expanded cards.
@@ -354,40 +356,40 @@ omarchy-replicant migrate-v2 \
   - Selected entries.
   - Return row or card ID.
   - Row offset from the viewport.
-- [ ] Capture the snapshot before diff, preview, confirmation, edit, or manage views open.
-- [ ] Restore it after the status refresh and layout pass.
-- [ ] Use `Qt.callLater` to restore after item geometry stabilizes.
-- [ ] Expose a row-anchor lookup from the Configs view and category cards.
-- [ ] Restore the same row at the same viewport offset when possible.
-- [ ] Fall back to the clamped raw scroll position if the row disappeared.
-- [ ] Reset only the current tab to the top when its filter changes intentionally.
-- [ ] Preserve UI state in memory for the current shell session.
-- [ ] Do not write search, selection, or navigation state to disk.
-- [ ] Reset the text viewer scroll position each time new content opens.
-- [ ] Reopen the panel after an editor exits when the terminal supports waiting.
-- [ ] Show an explicit result when the editor cannot wait and automatic return is unavailable.
+- [x] Capture the snapshot before diff, preview, confirmation, edit, or manage views open.
+- [x] Restore it after the status refresh and layout pass.
+- [x] Use `Qt.callLater` to restore after item geometry stabilizes.
+- [x] Expose a row-anchor lookup from the Configs view and category cards.
+- [x] Restore the same row at the same viewport offset when possible.
+- [x] Fall back to the clamped raw scroll position if the row disappeared.
+- [x] Reset only the current tab to the top when its filter changes intentionally.
+- [x] Preserve UI state in memory for the current shell session.
+- [x] Do not write search, selection, or navigation state to disk.
+- [x] Reset the text viewer scroll position each time new content opens.
+- [x] Reopen the panel after an editor exits when the terminal supports waiting.
+- [x] Show an explicit result when the editor cannot wait and automatic return is unavailable.
 
 ## 12. Extract Panel Control Logic
 
-- [ ] Add `ReplicantController.qml`.
-- [ ] Move process ownership, command queues, refresh scheduling, and action dispatch out of `Panel.qml`.
-- [ ] Keep `Panel.qml` responsible for presentation and navigation.
-- [ ] Keep `replicant.js` pure and side-effect free.
-- [ ] Replace growing conditional action dispatch with command descriptors.
-- [ ] Preserve current component APIs until controller integration tests pass.
-- [ ] Split further only when a component has a clear state boundary.
+- [x] Add `ReplicantController.qml`.
+- [x] Move process ownership, command queues, refresh scheduling, and action dispatch out of `Panel.qml`.
+- [x] Keep `Panel.qml` responsible for presentation and navigation.
+- [x] Keep `replicant.js` pure and side-effect free.
+- [x] Replace growing conditional action dispatch with command descriptors.
+- [x] Preserve current component APIs until controller integration tests pass.
+- [x] Split further only when a component has a clear state boundary.
 
 ## 13. Add Terminal and Panel Quality-of-Life Features
 
-- [ ] Add arrow-key and `j`/`k` navigation.
-- [ ] Use Enter to open the focused row.
-- [ ] Use Escape to close the current overlay or return one level.
-- [ ] Add `?` for a keyboard help overlay.
-- [ ] Add next-change and previous-change actions in the diff viewer.
-- [ ] Add copy actions for live and repository paths.
-- [ ] Add filters for changed, incoming, missing, locked, and large entries.
+- [x] Add arrow-key and `j`/`k` navigation.
+- [x] Use Enter to open the focused row.
+- [x] Use Escape to close the current overlay or return one level.
+- [x] Add `?` for a keyboard help overlay.
+- [x] Add next-change and previous-change actions in the diff viewer.
+- [x] Add copy actions for live and repository paths.
+- [x] Add filters for changed, incoming, missing, locked, and large entries.
 - [ ] Sort actionable entries before saved entries while keeping stable ordering.
-- [ ] Show visible and total counts after every filter.
+- [x] Show visible and total counts after every filter.
 - [ ] Add useful empty states with a direct next action.
 - [ ] Show distinct offline, ahead, behind, and local-only states.
 - [ ] Add a retry-push action when a commit is local only.
@@ -395,50 +397,50 @@ omarchy-replicant migrate-v2 \
 - [ ] Permit cancellation only before the commit stage.
 - [ ] Give every disabled action a visible reason.
 - [ ] Ensure all essential operations work without a mouse.
-- [ ] Keep secret values and encrypted metadata out of notifications and clipboard actions.
+- [x] Keep secret values and encrypted metadata out of notifications and clipboard actions.
 
 ## 14. Test Failure Modes and Security Boundaries
 
-- [ ] Add dedicated crypto, migration, transaction, and registry test suites.
+- [x] Add dedicated crypto, migration, transaction, and registry test suites.
 - [ ] Run integration tests in a container with an `age` build that supports `-pq`.
-- [ ] Test missing, wrong, malformed, and permission-invalid identities.
-- [ ] Test tampered ciphertext. It must never replace live data.
-- [ ] Test interruption during encryption, commit, fast-forward, and push.
-- [ ] Test push failure after local commit.
-- [ ] Test recovery from an abandoned transaction journal.
-- [ ] Test two fake machines that import the same identity.
-- [ ] Test shared, profile, and machine-specific state across both machines.
-- [ ] Test that unchanged plaintext does not replace existing ciphertext.
-- [ ] Test that repository history contains no plaintext secret, secret path, or variable name.
-- [ ] Test that stdout, stderr, temporary files, and failure logs contain no plaintext secret.
-- [ ] Test that an invalid bulk ID produces no partial policy changes.
-- [ ] Test that one bulk action creates one commit.
-- [ ] Test missing-file counts and bar priority.
-- [ ] Test edit and exact revert for files and directories.
-- [ ] Test incoming changes combined with local changes.
+- [x] Test missing, wrong, malformed, and permission-invalid identities.
+- [x] Test tampered ciphertext. It must never replace live data.
+- [x] Test interruption during encryption, commit, fast-forward, and push.
+- [x] Test push failure after local commit.
+- [x] Test recovery from an abandoned transaction journal.
+- [x] Test two fake machines that import the same identity.
+- [x] Test shared, profile, and machine-specific state across both machines.
+- [x] Test that unchanged plaintext does not replace existing ciphertext.
+- [x] Test that repository history contains no plaintext secret, secret path, or variable name.
+- [x] Test that stdout, stderr, temporary files, and failure logs contain no plaintext secret.
+- [x] Test that an invalid bulk ID produces no partial policy changes.
+- [x] Test that one bulk action creates one commit.
+- [x] Test missing-file counts and bar priority.
+- [x] Test edit and exact revert for files and directories.
+- [x] Test incoming changes combined with local changes.
 - [ ] Test navigation restoration after diff, preview, edit, refresh, and row removal.
 - [ ] Test viewer scroll reset separately from body scroll restoration.
-- [ ] Add pure JavaScript tests for navigation snapshots.
-- [ ] Add offscreen QML interaction tests for manage mode and focus.
-- [ ] Complete one real-shell screenshot review for each changed visual state.
-- [ ] Add mutation tests for schema validation, secret guards, atomic bulk behavior, and migration activation.
+- [x] Add pure JavaScript tests for navigation snapshots.
+- [x] Add offscreen QML interaction tests for manage mode and focus.
+- [x] Complete one real-shell screenshot review for each changed visual state.
+- [x] Add mutation tests for schema validation, secret guards, atomic bulk behavior, and migration activation.
 
 ## 15. Acceptance Criteria
 
 - [x] `./tests/run-all.sh` passes without display-server failures.
 - [x] ShellCheck, QML syntax checks, manifest validation, and repository scanners pass.
 - [x] `omarchy plugin validate .` passes.
-- [ ] A fresh installation can initialize a key, create a v2 repository, save, clone, import the key, and restore.
+- [x] A fresh installation can initialize a key, create a v2 repository, save, clone, import the key, and restore.
 - [x] A migrated repository contains no legacy history or plaintext secret data.
-- [ ] The active data repository remains clean outside an explicit transaction.
-- [ ] Every write command reports local commit and remote push results accurately.
-- [ ] An edit followed by an exact content revert produces no pending change.
-- [ ] A missing saved entry never produces a synced bar state.
-- [ ] Closing diff, preview, edit, or confirmation returns to the same tab, row, expansion state, and viewport offset.
+- [x] The active data repository remains clean outside an explicit transaction.
+- [x] Every write command reports local commit and remote push results accurately.
+- [x] An edit followed by an exact content revert produces no pending change.
+- [x] A missing saved entry never produces a synced bar state.
+- [x] Closing diff, preview, edit, or confirmation returns to the same tab, row, expansion state, and viewport offset.
 - [x] Bulk operations are atomic and create one commit.
 - [ ] Status performance does not regress by more than 10 percent against the recorded baseline.
-- [ ] Full status remains authoritative even when file timestamps are preserved.
-- [ ] No test, fixture, screenshot, document, commit message, or log contains personal repository data.
+- [x] Full status remains authoritative even when file timestamps are preserved.
+- [x] No test, fixture, screenshot, document, commit message, or log contains personal repository data.
 
 ## Assumptions
 

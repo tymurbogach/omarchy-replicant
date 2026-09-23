@@ -11,6 +11,16 @@ Column {
   id: ct
   // The panel this belongs to. Every value and every action comes from it.
   property var panel
+  function navigationItem(openRow, openCards) {
+    for (var i = 0; i < categoryRepeater.count; i++) {
+      var item = categoryRepeater.itemAt(i)
+      if (item) {
+        var found = item.navigationItem(openRow, openCards)
+        if (found) return found
+      }
+    }
+    return addFiles.navigationId && openCards && openCards["__suggest"] ? addFiles : null
+  }
   function focusSearch() { filterBar.focusSearch() }
   spacing: Style.space(8)
 
@@ -23,8 +33,8 @@ Column {
     value: panel.stateFilter
     legend: "● unsaved    ↓ to restore    ↑ to push    ◆ saved    ○ default    ⊘ off    · not here    ⚠ locked"
     collapseTip: "Close every open area and row  (c)"
-    onSearchEdited: function(t) { panel.fileSearch = t }
-    onFilterPicked: function(v) { panel.stateFilter = v }
+    onSearchEdited: function(t) { panel.setFileSearch(t) }
+    onFilterPicked: function(v) { panel.setStateFilter(v) }
   }
 
   Row {
@@ -47,6 +57,15 @@ Column {
 
   Text {
     width: parent.width
+    text: "Counts: all " + panel.nTracked + " · changed " + panel.nChanged
+          + " · incoming " + panel.nIncoming + " · missing " + panel.nMissing
+          + " · locked " + panel.nLocked + " · large " + panel.nLarge + " · off " + panel.nOff
+    color: panel.dim; font.family: panel.ff; font.pixelSize: Style.font.caption
+    wrapMode: Text.WordWrap
+  }
+
+  Text {
+    width: parent.width
     visible: panel.categoryCards.length === 0
     text: panel.stateFilter === "changed" && panel.fileSearch === ""
           ? "Nothing to do: every file matches your repo."
@@ -54,7 +73,22 @@ Column {
     color: panel.dim; font.family: panel.ff; font.pixelSize: Style.font.caption
   }
 
+  Text {
+    width: parent.width
+    visible: panel.filtering && panel.categoryCards.length > 0
+    text: {
+      var visibleCount = 0, totalCount = 0
+      for (var i = 0; i < panel.categoryCards.length; i++) {
+        visibleCount += panel.categoryCards[i].count
+        totalCount += panel.categoryCards[i].total
+      }
+      return "Showing " + visibleCount + " of " + totalCount + " tracked entries"
+    }
+    color: panel.dim; font.family: panel.ff; font.pixelSize: Style.font.caption
+  }
+
   Repeater {
+    id: categoryRepeater
     model: panel.categoryCards
     delegate: CategoryCard {
       required property var modelData
@@ -67,5 +101,5 @@ Column {
   // The list above is what the plugin ships with plus what you have already
   // added. This is how you add more, kept last so it never competes with the
   // areas, and collapsed so it is an offer rather than a chore.
-  AddFilesCard { panel: ct.panel; width: ct.width }
+  AddFilesCard { id: addFiles; panel: ct.panel; width: ct.width; navigationId: "__suggest" }
 }

@@ -36,14 +36,19 @@ repo_data_version() {
   printf '%s\n' "$v"
 }
 
-# require_writable_schema: 0 when this client may mutate the repo: version 1
-# or 2. Anything else fails with the exact next step. Newer means another
-# machine (or a future release) owns this repo now: update and retry.
+# require_writable_schema: 0 when this client may mutate a v2 repo. Version 1
+# remains readable, but every writer stops before touching its worktree.
 require_writable_schema() {
   local v
   v=$(repo_data_version)
   case "$v" in
-    1|2) return 0 ;;
+    1)
+      # Existing v1 parity suites use this only to exercise the legacy reader.
+      # Normal CLI callers never set it. The dedicated v1 guard tests unset it.
+      if [[ "${REPLICANT_TEST_ALLOW_LEGACY_WRITES:-}" == 1 ]]; then return 0; fi
+      printf 'replicant: this repo uses the version 1 layout. Migrate it before saving, tracking, changing scope, or changing secrets\n' >&2
+      return 1 ;;
+    2) return 0 ;;
     unknown)
       printf 'replicant: the repo schema at .replicant/schema.json is unreadable — restore it from git history, or start over with a fresh repo\n' >&2
       return 1 ;;

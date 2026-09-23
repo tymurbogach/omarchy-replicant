@@ -67,6 +67,8 @@ full_status=$(bash "$CORE" status --json --no-fetch 2>/dev/null)
 check "status schema version" "2" "$(jq -r .schema_version <<<"$full_status")"
 check "migration is complete" "false" "$(jq -r .migration.required <<<"$full_status")"
 check "legacy cleanup warning remains" "true" "$(jq -r .migration.legacy_warning <<<"$full_status")"
+check_true "the panel confirmation clears the warning" core_migration_confirm
+check "cleanup warning is cleared" "false" "$(status_migration_json | jq -r .legacy_warning)"
 check "encryption is ready" "ready" "$(jq -r .encryption.state <<<"$full_status")"
 check_true "the unified entry list is present" jq -e '.entries | length > 0' <<<"$full_status"
 check_true "config entries expose the contract fields" \

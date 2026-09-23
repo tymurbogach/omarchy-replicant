@@ -220,6 +220,15 @@ TestCase {
     compare(R.rowsFor(st, "c", "", "all").length, 2)
   }
 
+  function test_specific_filters_keep_only_their_state_or_size() {
+    verify(R.rowMatchesFilter({ sync_state: "incoming" }, "incoming"))
+    verify(!R.rowMatchesFilter({ sync_state: "unsaved" }, "incoming"))
+    verify(R.rowMatchesFilter({ sync_state: "missing" }, "missing"))
+    verify(R.rowMatchesFilter({ sync_state: "locked", locked: true }, "locked"))
+    verify(R.rowMatchesFilter({ sync_state: "saved", size: 1024 * 1024 }, "large"))
+    verify(!R.rowMatchesFilter({ sync_state: "saved", size: 1024 * 1024 - 1 }, "large"))
+  }
+
   function test_wouldRestore_needs_a_differing_copy() {
     verify(R.wouldRestore({ synced: true, saved: true, sync_state: "unsaved" }))
     verify(R.wouldRestore({ synced: true, saved: true, sync_state: "missing" }))
@@ -306,5 +315,44 @@ TestCase {
     compare(summary.selected, 2)
     compare(summary.files, 1)
     compare(summary.bytes, 12)
+  }
+
+  function test_navigation_snapshot_copies_session_state() {
+    var snapshot = R.navigationSnapshot({
+      activeTab: "configs",
+      scrollY: { overview: 12, configs: 240, settings: 4 },
+      openCards: { shell: true, hidden: false },
+      openRow: "hypr/input.lua",
+      openCommits: { abc: true },
+      fileSearch: "input", stateFilter: "changed",
+      settingSearch: "font", settingFilter: "customised",
+      manageMode: true, selectedIds: ["a", "b"], selectionAnchor: "b",
+      anchor: { kind: "row", id: "hypr/input.lua", offset: 18 }
+    })
+    compare(snapshot.activeTab, "configs")
+    compare(snapshot.scrollY.configs, 240)
+    compare(snapshot.openCards.shell, true)
+    compare(snapshot.openRow, "hypr/input.lua")
+    compare(snapshot.selectedIds.join(","), "a,b")
+    compare(snapshot.anchor.kind, "row")
+    compare(snapshot.anchor.offset, 18)
+  }
+
+  function test_navigation_snapshot_does_not_share_mutable_values() {
+    var source = { openCards: { shell: true }, selectedIds: ["a"], scrollY: { configs: 10 } }
+    var snapshot = R.navigationSnapshot(source)
+    source.openCards.shell = false
+    source.selectedIds.push("b")
+    source.scrollY.configs = 99
+    compare(snapshot.openCards.shell, true)
+    compare(snapshot.selectedIds.join(","), "a")
+    compare(snapshot.scrollY.configs, 10)
+  }
+
+  function test_navigation_scroll_is_clamped() {
+    var snapshot = R.navigationSnapshot({ scrollY: { configs: 250 } })
+    compare(R.navigationScroll(snapshot, "configs", 100), 100)
+    compare(R.navigationScroll(snapshot, "settings", 100), 0)
+    compare(R.navigationScroll(snapshot, "configs", -1), 0)
   }
 }

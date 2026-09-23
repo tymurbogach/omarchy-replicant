@@ -13,6 +13,7 @@ import "../replicant.js" as R
 // nothing here is tracked until a Track button is pressed.
 Card {
   id: ac
+  property string navigationId: "__suggest"
   readonly property var items: panel.suggestions || []
   readonly property var entries: (panel.browseData.entries || []).slice(0, 200)
 

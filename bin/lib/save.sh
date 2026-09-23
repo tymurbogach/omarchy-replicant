@@ -588,3 +588,20 @@ core_save() {
   esac
   return 0
 }
+
+# core_init: create the initial savegame commit. The CLI parses the deprecated
+# flags and reports the command result; this function owns repository writes.
+core_init() {
+  require_writable_schema || return 1
+  ensure_repo_layout
+  core_backup
+  git -C "$REPO_DIR" add -A
+  if git -C "$REPO_DIR" diff --cached --quiet; then
+    echo "init: nothing new" >&2
+  else
+    git -C "$REPO_DIR" commit -q -m "replicant: init $(date +%F) $(hostname)" || return 1
+    echo "init commit" >&2
+  fi
+  git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
+  echo "init done at $REPO_DIR (savegame layout: config/secrets/state)" >&2
+}

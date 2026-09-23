@@ -11,6 +11,13 @@ Column {
   id: st
   // The panel this belongs to. Every value and every action comes from it.
   property var panel
+  function navigationItem(openCards) {
+    for (var i = 0; i < groupRepeater.count; i++) {
+      var item = groupRepeater.itemAt(i)
+      if (item && openCards && openCards[item.navigationId]) return item
+    }
+    return null
+  }
   function focusSearch() { filterBar.focusSearch() }
   spacing: Style.space(8)
 
@@ -23,8 +30,8 @@ Column {
     value: panel.settingFilter
     legend: "● yours    ○ default    · not here      A change is applied and saved at once."
     collapseTip: "Close every open group  (c)"
-    onSearchEdited: function(t) { panel.settingSearch = t }
-    onFilterPicked: function(v) { panel.settingFilter = v }
+    onSearchEdited: function(t) { panel.setSettingSearch(t) }
+    onFilterPicked: function(v) { panel.setSettingFilter(v) }
   }
 
   Text {
@@ -37,6 +44,7 @@ Column {
   }
 
   Repeater {
+    id: groupRepeater
     model: panel.settingGroups
     delegate: SettingCard {
       required property var modelData

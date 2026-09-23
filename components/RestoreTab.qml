@@ -17,6 +17,7 @@ Column {
   id: rt
   // The panel this belongs to. Every value and every action comes from it.
   property var panel
+  function navigationItem() { return null }
   spacing: Style.space(10)
 
   // ── from your repo ──────────────────────────────────────────────────────

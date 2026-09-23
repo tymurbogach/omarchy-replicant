@@ -16,6 +16,14 @@ Rectangle {
   property var panel
   visible: panel.viewerOpen
   color: Color.popups.background
+  function resetScroll() {
+    if (scroll) Qt.callLater(function() { scroll.contentY = 0 })
+  }
+  onVisibleChanged: if (visible) tv.resetScroll()
+  Connections {
+    target: tv.panel
+    function onViewerTextChanged() { if (tv.visible) tv.resetScroll() }
+  }
 
   // Clicks stop here, so nothing under the reader is pressed through it.
   MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
@@ -28,12 +36,31 @@ Rectangle {
     height: Style.space(36)
     Text {
       anchors.left: parent.left
-      anchors.right: closeBtn.left
+      anchors.right: nav.left
       anchors.rightMargin: Style.space(8)
       anchors.verticalCenter: parent.verticalCenter
       text: panel.viewerTitle
       color: panel.fg; font.family: panel.ff; font.pixelSize: Style.font.title
       font.bold: true; elide: Text.ElideMiddle
+    }
+    Row {
+      id: nav
+      anchors.right: closeBtn.left
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(2)
+      visible: panel.viewerKind === "diff"
+      Button {
+        text: "Previous"; bordered: false
+        foreground: panel.fg; fontFamily: panel.ff; fontSize: Style.font.caption
+        tooltipText: "Previous changed entry"
+        onClicked: panel.moveDiff(-1)
+      }
+      Button {
+        text: "Next"; bordered: false
+        foreground: panel.fg; fontFamily: panel.ff; fontSize: Style.font.caption
+        tooltipText: "Next changed entry"
+        onClicked: panel.moveDiff(1)
+      }
     }
     Button {
       id: closeBtn

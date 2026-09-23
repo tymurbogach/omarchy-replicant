@@ -14,6 +14,7 @@ Item {
   // The panel this belongs to. Every value and every action comes from it.
   property var panel
   property var commit: ({})
+  readonly property string navigationId: cr.commit.sha || ""
   readonly property int nfiles: cr.commit.nfiles || 0
   readonly property var files: cr.commit.files || []
   readonly property bool expandable: cr.nfiles > 0

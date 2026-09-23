@@ -82,6 +82,16 @@ check_true "the backup imports" key_import "$TMP/key-backup.txt"
 check "…at mode 600" "600" "$(stat -c '%a' "$KEYS" 2>/dev/null)"
 check_contains "status is ready" "ready" "$(key_status 2>&1)"
 check_contains "…through the CLI too" "ready" "$("$CLI" key status 2>&1)"
+cp "$KEYS" "$TMP/identity.good"
+printf 'malformed identity\n' > "$KEYS"
+chmod 600 "$KEYS"
+check_false "a malformed identity is rejected" key_status
+check_contains "…with an import remedy" "re-import" "$(key_status 2>&1 || true)"
+cp "$TMP/identity.good" "$KEYS"
+chmod 000 "$KEYS"
+check_false "an unreadable identity is rejected" key_status
+chmod 600 "$KEYS"
+check_contains "…without exposing the secret" "key" "$(key_status 2>&1 || true)"
 
 section "saving encrypts, resaving preserves"
 core_track "$HOME/.config/notes-private.conf" --secret >/dev/null 2>&1

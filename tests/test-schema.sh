@@ -82,6 +82,14 @@ cp "$TMP/schema.keep" "$REPO_DIR/.replicant/schema.json"
 
 section "v1 repos keep working and gain no v2 files"
 rm -rf "$REPO_DIR/.replicant"
+section "v1 writers stop before mutation"
+guard_out=$(env -u REPLICANT_TEST_ALLOW_LEGACY_WRITES bash -c 'source "$1" 2>/dev/null; core_backup' _ "$CORE" 2>&1)
+check_contains "backup requires migration" "Migrate it before saving" "$guard_out"
+check_false "tracking is blocked" env -u REPLICANT_TEST_ALLOW_LEGACY_WRITES "$CLI" track "$HOME/.config/hypr/input.lua"
+check_false "scope changes are blocked" env -u REPLICANT_TEST_ALLOW_LEGACY_WRITES bash -c 'source "$1" 2>/dev/null; core_scope hypr/input.lua off' _ "$CORE"
+check_false "secret mutations are blocked" env -u REPLICANT_TEST_ALLOW_LEGACY_WRITES bash -c 'source "$1" 2>/dev/null; core_key init' _ "$CORE"
+
+section "v1 remains readable and gains no v2 files"
 core_backup >/dev/null 2>&1
 check_false "no schema marker appears on a v1 repo" test -f "$REPO_DIR/.replicant/schema.json"
 printf 'mine\n' > "$HOME/.config/notes.conf"

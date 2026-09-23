@@ -10,6 +10,7 @@ import qs.Ui
 Card {
   id: sc
   property var group: ({})
+  readonly property string navigationId: sc.group.id || ""
 
   icon: sc.group.icon
   title: sc.group.name

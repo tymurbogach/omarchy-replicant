@@ -76,19 +76,8 @@ cmd_status() { ensure_core; bash "$CORE" status "$@"; }
 # paths, staged stats, and the selective-save hint. Writes nothing.
 cmd_changes() {
   ensure_core
-  [[ -d "$REPO_DIR/.git" ]] || fail "no repo yet — run 'create' or 'clone' first"
-  local pending; pending=$(git_repo status --short 2>/dev/null | head -n 100)
-  if [[ -z "$pending" ]]; then
-    ok "nothing pending — everything copied in is committed"
-  else
-    printf '%s\n' "$pending"
-  fi
-  local staged; staged=$(git_repo diff --cached --stat 2>/dev/null | head -n 100)
-  [[ -n "$staged" ]] && { echo "--- staged ---" >&2; printf '%s\n' "$staged"; }
-  if [[ -n "$pending$staged" ]]; then
-    echo "To save it: 'save --all -m \"why\"', or 'save --id <id> -m \"why\"' for one entry." >&2
-  fi
-  return 0
+  load_core
+  core_changes
 }
 # backup: read-only alias for changes. The copy pass lives on inside the core
 # for save transactions (backup --for-savegame); the user-facing command only
@@ -117,12 +106,8 @@ cmd_init() {
   # nothing read, which is a promise of a behaviour that does not exist.
   while (( $# )); do shift; done
   ensure_core
-  # always savegame layout
-  bash "$CORE" backup
-  git_repo add -A
-  if git_repo diff --cached --quiet; then ok "init: nothing new"; else git_repo commit -q -m "replicant: init $(date +%F) $(hostname)"; ok "init commit"; fi
-  git_repo config core.hooksPath .githooks 2>/dev/null || true
-  ok "init done at $REPO_DIR (savegame layout: config/secrets/state)"
+  load_core
+  core_init
 }
 
 cmd_login() {
@@ -192,36 +177,6 @@ cmd_create() {
 # never why, which is honest about what a button is able to know. Paths only:
 # a file's name is not a secret (the panel lists them on screen already), a
 # file's contents are, and those never reach a commit subject.
-auto_commit_subject() {
-  local -a raw=() rels=()
-  local line p kind=config
-  while IFS= read -r line; do
-    [[ -z $line ]] && continue
-    p=${line:3}                 # porcelain is 'XY <path>'
-    p=${p##* -> }               # a rename names both; the new name is the one that matters
-    p=${p#\"}; p=${p%\"}
-    raw+=("$p")
-  # -uall, or a brand-new directory collapses to one entry and the subject says
-  # "secrets: gh/" where the file is gh/hosts.yml. The first thing ever tracked
-  # under a new folder is exactly when the name matters most.
-  done < <(git_repo status --porcelain -uall -- . ':(exclude)state/' 2>/dev/null)
-  (( ${#raw[@]} )) || { printf 'config: save\n'; return; }
-  local all_secret=1
-  for p in "${raw[@]}"; do
-    [[ $p == secrets/* ]] || all_secret=0
-    p=${p#config/}; p=${p#secrets/}; p=${p#profiles/*/config/}
-    rels+=("$p")
-  done
-  (( all_secret )) && kind=secrets
-  local n=${#rels[@]} joined
-  joined=$(printf '%s, ' "${rels[@]}"); joined=${joined%, }
-  if (( ${#joined} <= 60 )); then
-    printf '%s: %s\n' "$kind" "$joined"
-  else
-    printf '%s: %d files — %s, +%d more\n' "$kind" "$n" "${rels[0]}" "$(( n - 1 ))"
-  fi
-}
-
 # save — everything through one transaction and one commit. The work happens
 # in the core (bin/lib/save.sh); this parses and reports the outcome.
 cmd_save() {
@@ -403,43 +358,8 @@ cmd_reset() {
 # rather than quietly deciding on the user's behalf.
 cmd_push() {
   ensure_core
-  if ! git_repo remote get-url origin >/dev/null 2>&1; then
-    ok "nothing to push — there is no remote yet: run 'omarchy-replicant create --push'"
-    return 0
-  fi
-  local branch; branch=$(git_repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)
-  if ! git_repo rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
-    echo "→ First push of $branch to $(git_repo config --get remote.origin.url 2>/dev/null)" >&2
-    local err
-    if err=$(git_repo push -u origin "$branch" 2>&1); then
-      ok "pushed"; return 0
-    else
-      echo "Saved locally, but the push to GitHub failed:" >&2
-      printf '%s\n' "$err" | sed 's/^/    /' >&2
-      echo "Another machine may have saved first. Run 'omarchy-replicant pull', then push again." >&2
-      return 1
-    fi
-  fi
-  local ahead; ahead=$(git_repo log --oneline '@{u}..HEAD' 2>/dev/null | wc -l)
-  if (( ahead == 0 )); then
-    ok "nothing to push"
-    # Uncommitted work is not "nothing to do", and the difference is the whole
-    # reason someone is looking at this command.
-    [[ -n $(git_repo status --porcelain 2>/dev/null) ]] &&
-      echo "  there are uncommitted changes — 'save --auto' commits and pushes them" >&2
-    return 0
-  fi
-  echo "→ Pushing $(plural "$ahead" commit) to $(git_repo config --get remote.origin.url 2>/dev/null)" >&2
-  local err
-  if err=$(git_repo push origin HEAD 2>&1); then
-    ok "pushed"
-    return 0
-  else
-    echo "Saved locally, but the push to GitHub failed:" >&2
-    printf '%s\n' "$err" | sed 's/^/    /' >&2
-    echo "Another machine may have saved first. Run 'omarchy-replicant pull', then push again." >&2
-    return 1
-  fi
+  load_core
+  repo_push
 }
 
 # Bringing down what another machine saved. Three things went wrong here and
@@ -456,75 +376,17 @@ cmd_push() {
 #     you came for — and it is also the only moment anything can know which
 #     DIRECTION a difference points in, which is what record_incoming keeps.
 cmd_pull() {
-  [[ -d "$REPO_DIR/.git" ]] || fail "no repo — clone first"
   ensure_core
-  local dirt
-  dirt=$(git_repo status --porcelain 2>/dev/null || true)
-  if [[ -n "$dirt" ]]; then
-    echo "pull: the repo has uncommitted changes — pull needs a clean worktree:" >&2
-    printf '%s\n' "$dirt" | head -n 20 | sed 's/^/    /' >&2
-    echo "Review them with 'changes' or 'git -C $REPO_DIR diff'." >&2
-    echo "Save them with 'save --all -m \"why\"', or discard the worktree changes, then pull again." >&2
-    return 1
-  fi
-  git_repo fetch --all --prune >/dev/null 2>&1 || warn "could not reach the remote — using what is already here"
-  local before; before=$(git_repo rev-parse HEAD 2>/dev/null || echo "")
-  local br; br=$(git_repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)
-  if ! git_repo pull --rebase --quiet origin "$br" 2>&1; then
-    git_repo rebase --abort >/dev/null 2>&1 || true
-    fail "pull failed — nothing was changed; look at $REPO_DIR"
-  fi
-  local after; after=$(git_repo rev-parse HEAD 2>/dev/null || echo "")
-  if [[ -z "$before" || "$before" == "$after" ]]; then
-    ok "already up to date"
-    return 0
-  fi
-
-  # Which tracked entries moved, mapped back to the rows a person can press a
-  # button on, and written down so the panel can tell an incoming difference
-  # from an outgoing one. The mapping is core business logic, not terminal UX.
-  local moved; moved=$(bash "$CORE" incoming "$before" "$after" 2>/dev/null)
-  invalidate_brief_cache
-  if [[ -z "$moved" ]]; then
-    ok "pulled — nothing of yours changed"
-    return 0
-  fi
-  local n; n=$(printf '%s\n' "$moved" | grep -c .)
-  ok "pulled — $(plural "$n" file) changed on another machine"
-  printf '%s\n' "$moved" | sed 's/^/  /' >&2
-  echo "  'restore --apply' brings them onto this machine; until then they show as ↓ to restore" >&2
+  load_core
+  repo_pull
 }
 
 cmd_clone() {
-  local url="${1:-}"; [[ -n "$url" ]] || { if [[ -t 0 ]]; then url=$(gum input --prompt "Git URL (private): " 2>/dev/null || true); fi; [[ -n "$url" ]] || fail "usage: clone <git-url>"; }
-  # Omarchy's check refuses a URL that names a git transport helper, which is
-  # how `ext::` runs a command at clone time. Its answer used to be ignored.
-  if command -v omarchy-git-url-check >/dev/null 2>&1; then
-    omarchy-git-url-check "$url" || fail "refusing to clone '$url': it does not name a repository"
-  fi
-  [[ -d "$REPO_DIR/.git" ]] && fail "$REPO_DIR already exists — pull or remove it"
-  mkdir -p "$(dirname "$REPO_DIR")"
-  git clone -- "$url" "$REPO_DIR" 2>&1 || fail "clone failed (private repo without gh auth?)"
-  git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
-  # A clone can succeed and check out nothing — git says "remote HEAD refers to
-  # nonexistent ref" and leaves an empty directory, which happens whenever the
-  # remote's default branch is not the one the commits are on. Left unsaid,
-  # every restore afterwards reports "nothing to change" for every category:
-  # a restore tool announcing success while restoring nothing.
-  if ! git -C "$REPO_DIR" rev-parse HEAD >/dev/null 2>&1; then
-    warn "the clone worked but checked out nothing — the remote's default branch has no commits."
-    local branches
-    branches=$(git -C "$REPO_DIR" branch -r --format='%(refname:short)' 2>/dev/null | sed 's|^origin/||' | grep -v '^HEAD' | paste -sd' ' -)
-    if [[ -n "$branches" ]]; then
-      warn "branches that do have them: $branches"
-      warn "check one out: git -C $REPO_DIR checkout <branch>"
-    else
-      warn "the remote is empty — run 'create' on your first machine before cloning here"
-    fi
-    fail "nothing to restore from yet"
-  fi
-  invalidate_brief_cache
-  ok "cloned into $REPO_DIR — run omarchy-replicant restore --dry-run"
+  local url="${1:-}"
+  [[ -n "$url" ]] || { if [[ -t 0 ]]; then url=$(gum input --prompt "Git URL (private): " 2>/dev/null || true); fi; }
+  ensure_core
+  load_core
+  repo_clone "$url"
 }
 
 cmd_migrate_v2() {
@@ -534,6 +396,13 @@ cmd_migrate_v2() {
   (( has_yes )) || fail "migrate-v2 requires --yes after reviewing the migration summary"
   load_core
   core_migrate_v2 "$@" || exit 1
+  invalidate_brief_cache
+}
+
+cmd_migration_confirm() {
+  ensure_core
+  load_core
+  core_migration_confirm || exit 1
   invalidate_brief_cache
 }
 
@@ -1507,7 +1376,7 @@ cmd_backups() {
     esac
   done
   local -a paths=()
-  local rel src b epoch state line n=0
+  local rel src b epoch state n=0
   while IFS=$'\t' read -r rel src b epoch state; do
     [[ -n "$rel" ]] || continue
     paths+=("$b")
@@ -1931,6 +1800,13 @@ main() {
   if [[ "${2:-}" == "-h" || "${2:-}" == "--help" ]]; then
     if [[ -n "${HELP[$cmd]:-}" ]]; then printf '%s\n' "${HELP[$cmd]}"; else usage; fi
     exit 0
+  fi
+  # Internal panel action. Keep it outside the public dispatcher so it does
+  # not become a documented CLI command or part of the stable command surface.
+  if [[ "$cmd" == "migration-confirm" ]]; then
+    acquire_repo_lock
+    cmd_migration_confirm "$@"
+    exit $?
   fi
   # Anything that writes to the repo takes the lock first; read-only commands
   # (status/get/diff/edit) stay lock-free so the panel's polling never blocks.

@@ -24,10 +24,13 @@ section "every button runs a command the CLI has"
 known=$(grep -oE '^[[:space:]]+[a-z][a-z-]*\) (shift|ensure_core)' "$CLI" |
         sed -E 's/^[[:space:]]+([a-z-]+)\).*/\1/' | sort -u)
 used=$(grep -ohE '(root|panel)\.cli, "[a-z][a-z-]*"' "${QML[@]}" | sed -E 's/.*"(.*)"/\1/' | sort -u)
+internal=$(grep -ohE '(root|panel)\.cli, "migration-confirm"' "${QML[@]}" | sed -E 's/.*"(.*)"/\1/' | sort -u)
+used=$(grep -v '^migration-confirm$' <<<"$used")
 check_true "the panel calls the CLI at all" test -n "$used"
 for cmd in $used; do
   check_true "the CLI answers '$cmd'" grep -qx "$cmd" <<<"$known"
 done
+check_true "the panel keeps migration confirmation internal" grep -qx migration-confirm <<<"$internal"
 
 section "every key the panel answers is named where a person can find it"
 # The keys work whether or not anybody knows them. `a` (straight to "Add more

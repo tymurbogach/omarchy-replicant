@@ -8,6 +8,15 @@ migration_error() {
   return 1
 }
 
+# core_migration_confirm records the user's acknowledgement outside the data
+# repository. The panel calls this internal operation after its confirmation.
+core_migration_confirm() {
+  local marker="$REPLICANT_HOME/migration-warning"
+  [[ -f "$marker" ]] || { migration_error "no legacy cleanup warning is pending"; return 1; }
+  rm -f -- "$marker" || { migration_error "could not clear the legacy cleanup warning"; return 1; }
+  printf 'migration: legacy cleanup confirmed\n' >&2
+}
+
 migration_safe_backup_path() {
   local dest="$1" parent
   [[ "$dest" == /* ]] || { migration_error "identity backup must be an absolute path"; return 1; }

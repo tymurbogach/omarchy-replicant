@@ -84,13 +84,13 @@ BorderSurface {
     Row {
       spacing: Style.space(8)
       Button {
-        text: "Save to GitHub"; iconText: panel.icPush; bordered: true
+        text: panel.remoteState === "ahead" ? "Retry push" : "Save to GitHub"; iconText: panel.icPush; bordered: true
         foreground: panel.nDirty > 0 || panel.nAhead > 0 ? Color.accent : panel.fg
         accent: Color.accent; fontFamily: panel.ff
         iconSpinning: panel.saving
         enabled: panel.ready && !panel.busy
-        tooltipText: "Copy this machine into the repo, commit and push  (s)"
-        onClicked: panel.doSavegame()
+        tooltipText: panel.remoteState === "ahead" ? "Retry publishing the local commits" : "Copy this machine into the repo, commit and push  (s)"
+        onClicked: panel.remoteState === "ahead" && panel.nDirty === 0 ? panel.doRetryPush() : panel.doSavegame()
       }
       Button {
         text: "Pull"; iconText: panel.icPull; bordered: true
@@ -101,6 +101,12 @@ BorderSurface {
         tooltipText: "Bring down what another machine saved  (p)"
         onClicked: panel.doPull()
       }
+    }
+
+    Text {
+      text: panel.remoteStateText
+      color: panel.stateColor(panel.remoteState === "local-only" ? "off" : panel.remoteState === "synced" ? "saved" : "incoming")
+      font.family: panel.ff; font.pixelSize: Style.font.caption
     }
 
     Flow {

@@ -50,6 +50,25 @@ function stateRole(st) {
   return "dim"
 }
 
+// The transport state is separate from a file state. It tells the panel which
+// remote action is available without changing the per-file compatibility field.
+function remoteStateWord(st) {
+  if (st === "local-only") return "No remote"
+  if (st === "offline") return "Remote offline"
+  if (st === "ahead") return "Local commits not pushed"
+  if (st === "behind") return "Remote commits pending"
+  if (st === "diverged") return "Branches diverged"
+  if (st === "synced") return "Remote synced"
+  return "Remote status unknown"
+}
+
+function remoteStateRole(st) {
+  if (st === "offline" || st === "behind" || st === "diverged") return "warn"
+  if (st === "ahead") return "accent"
+  if (st === "synced") return "ok"
+  return "dim"
+}
+
 function stateWord(st) {
   // "off", the word the scope button, the legend and the card already use.
   // This said "not synced": two words for one state, two tabs apart.
@@ -386,7 +405,19 @@ function rowsFor(repoState, categoryId, search, filter) {
     })
   }
   if (filter && filter !== "all") out = out.filter(function(r) { return rowMatchesFilter(r, filter) })
-  out.sort(function(a, b) { return String(a.label).localeCompare(String(b.label)) })
+  // Actionable rows stay above saved rows. The original index is the final
+  // key, so equal labels retain the registry order.
+  out = out.map(function(r, i) { return { row: r, index: i } })
+  out.sort(function(a, b) {
+    var aa = needsAttention(a.row.sync_state) ? 0 : 1
+    var bb = needsAttention(b.row.sync_state) ? 0 : 1
+    if (aa !== bb) return aa - bb
+    var label = String(a.row.label).localeCompare(String(b.row.label))
+    if (label !== 0) return label
+    var id = String(a.row.id).localeCompare(String(b.row.id))
+    return id !== 0 ? id : a.index - b.index
+  })
+  out = out.map(function(v) { return v.row })
   return out
 }
 

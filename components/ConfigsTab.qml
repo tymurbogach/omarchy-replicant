@@ -64,6 +64,26 @@ Column {
     wrapMode: Text.WordWrap
   }
 
+  Row {
+    visible: panel.categoryCards.length === 0
+    spacing: Style.space(8)
+    Button {
+      visible: panel.filtering
+      text: "Clear filter"; bordered: true
+      foreground: panel.fg; accent: Color.accent; fontFamily: panel.ff
+      tooltipText: "Show every tracked entry"
+      onClicked: { panel.setFileSearch(""); panel.setStateFilter("all") }
+    }
+    Button {
+      visible: !panel.filtering
+      text: panel.suggestions.length > 0 ? "Review suggestions" : "Refresh"
+      bordered: true
+      foreground: panel.fg; accent: Color.accent; fontFamily: panel.ff
+      tooltipText: panel.suggestions.length > 0 ? "Review files that are not tracked" : "Refresh the repository status"
+      onClicked: panel.suggestions.length > 0 ? panel.toggleCard("__suggest") : panel.refresh()
+    }
+  }
+
   Text {
     width: parent.width
     visible: panel.categoryCards.length === 0

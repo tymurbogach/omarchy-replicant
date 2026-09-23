@@ -121,6 +121,30 @@ current_profile() {
   guess_profile
 }
 
+# profile_report prints the profile view. The CLI delegates this read-only
+# presentation to the scopes module and keeps only command parsing outside it.
+profile_report() {
+  local want="${1:-}" cur pr n
+  if [[ -z "$want" || "$want" == list ]]; then
+    cur=$(current_profile)
+    printf 'This machine (%s) is in the "%s" profile.\n\n' "$MACHINE" "$cur"
+    printf 'Profiles in this repo:\n'
+    while IFS= read -r pr; do
+      [[ -n "$pr" ]] || continue
+      n=$(find "$REPO_DIR/profiles/$pr/config" -type f 2>/dev/null | wc -l || true)
+      if [[ "$pr" == "$cur" ]]; then
+        printf '  * %-14s %-12s <- this machine\n' "$pr" "$(plural "$n" file)"
+      else
+        printf '    %-14s %s\n' "$pr" "$(plural "$n" file)"
+      fi
+    done < <(list_profiles)
+    printf '\nMachines:\n'
+    read_profile_map | sed 's/^/    /'
+    return 0
+  fi
+  core_profile_set "$want"
+}
+
 # core_profile_set <name> — assign this machine to a profile, creating it.
 core_profile_set() {
   require_writable_schema || return 1

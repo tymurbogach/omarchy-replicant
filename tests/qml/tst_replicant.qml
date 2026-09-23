@@ -50,6 +50,18 @@ TestCase {
     compare(R.stateRole("default"), "dim")
   }
 
+  function test_remote_states_have_clear_words_and_roles() {
+    compare(R.remoteStateWord("local-only"), "No remote")
+    compare(R.remoteStateWord("offline"), "Remote offline")
+    compare(R.remoteStateWord("ahead"), "Local commits not pushed")
+    compare(R.remoteStateWord("behind"), "Remote commits pending")
+    compare(R.remoteStateWord("diverged"), "Branches diverged")
+    compare(R.remoteStateWord("synced"), "Remote synced")
+    compare(R.remoteStateRole("ahead"), "accent")
+    compare(R.remoteStateRole("behind"), "warn")
+    compare(R.remoteStateRole("synced"), "ok")
+  }
+
   function test_locked_needs_a_key_not_a_button() {
     compare(R.stateRole("locked"), "warn")
     verify(R.rowMatchesFilter({ sync_state: "locked" }, "changed"))
@@ -94,6 +106,16 @@ TestCase {
     compare(sec.length, 1)
     verify(sec[0].secret)
     compare(sec[0].scope, "off")
+  }
+
+  function test_rowsFor_puts_actionable_rows_first() {
+    var st = { configs: [
+      { id: "saved", label: "a", category: "shell", sync_state: "saved" },
+      { id: "changed", label: "z", category: "shell", sync_state: "unsaved" },
+      { id: "incoming", label: "b", category: "shell", sync_state: "incoming" }
+    ] }
+    var rows = R.rowsFor(st, "shell", "", "all")
+    compare(rows.map(function(r) { return r.id }).join(","), "incoming,changed,saved")
   }
 
   function test_entries_are_the_primary_status_shape() {

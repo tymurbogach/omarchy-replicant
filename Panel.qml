@@ -32,6 +32,9 @@ Panel {
   // up on PATH. Service.qml says why.
   readonly property string cli: String(Qt.resolvedUrl("bin/omarchy-replicant")).replace(/^file:\/\//, "")
   property var repoState: ({ initialized: false, configs: [], secrets: [], settings: [], categories: [], setting_groups: [], machines: [] })
+  readonly property string remoteState: String(root.repoState.remote_state || (root.repoState.remote ? "synced" : "local-only"))
+  readonly property string remoteStateText: R.remoteStateWord(root.remoteState)
+  readonly property bool controllerCancelAllowed: controller.cancelAllowed
   // True once a real status response has come back at least once. Gates the
   // "no repo yet — create one" screen: showing it before we know the state let
   // a stray click re-point an already-configured remote (a real incident).
@@ -548,7 +551,9 @@ Panel {
   // deliberately leaves config and secrets copied-in-but-uncommitted so a human
   // can write one commit per change explaining why — and this panel has nowhere
   // to type that why.
-  function doSavegame() { root.busyLabel = "Saving to GitHub…"; controller.run("save", [root.cli, "savegame", "--auto"], { label: "Save" }) }
+  function doSavegame() { root.busyLabel = "Saving to GitHub…"; controller.run("save", [root.cli, "savegame", "--auto"], { label: "Save", cancelable: true }) }
+  function cancelSave() { if (controller.cancel()) root.busyLabel = "Cancelling save…" }
+  function doRetryPush() { root.busyLabel = "Publishing local commits…"; controller.run("push", [root.cli, "push"], { label: "Retry push" }) }
   function doPull()     { root.busyLabel = "Pulling from GitHub…"; controller.run("pull", [root.cli, "pull"], { label: "Pull" }) }
   function doBackup()   { root.busyLabel = "Copying files into the repo…"; controller.run("backup", [root.cli, "backup"], { label: "Copy" }) }
   function doDoctor()   { root.busyLabel = "Running the health check…"; controller.run("doctor", [root.cli, "doctor"], { label: "Health check" }) }

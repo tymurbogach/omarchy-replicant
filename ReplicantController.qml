@@ -10,10 +10,14 @@ Item {
   property string currentJob: ""
   property var currentMeta: ({})
   property var queue: []
+  property string stage: "idle"
+  readonly property bool cancelAllowed: process.running && currentMeta.cancelable === true
+                                          && ["scanning", "encrypting"].indexOf(stage) >= 0
   readonly property bool running: process.running
   readonly property bool busy: process.running && currentMeta.busy !== false
 
   signal completed(string job, int code, string stdoutText, string stderrText, var meta)
+  signal stageChanged(string job, string value)
 
   function run(job, command, meta) {
     var details = meta || ({})
@@ -31,8 +35,17 @@ Item {
   function start(job, command, meta) {
     controller.currentJob = job
     controller.currentMeta = meta || ({})
+    controller.stage = controller.currentMeta.stage || (job === "save" ? "scanning" : "running")
+    controller.stageChanged(job, controller.stage)
     process.command = command
     process.running = true
+  }
+
+  function cancel() {
+    if (!controller.cancelAllowed) return false
+    controller.stage = "cancelled"
+    process.running = false
+    return true
   }
 
   function isRunning(job) { return process.running && controller.currentJob === job }
@@ -46,6 +59,11 @@ Item {
       var meta = controller.currentMeta
       var out = String(process.stdout.text || "")
       var err = String(process.stderr.text || "")
+      var combined = out + "\n" + err
+      if (combined.indexOf("stage: committed") >= 0 || combined.indexOf("stage: publishing") >= 0)
+        controller.stage = "committed"
+      else if (combined.indexOf("stage: encrypting") >= 0) controller.stage = "encrypting"
+      else if (combined.indexOf("stage: scanning") >= 0) controller.stage = "scanning"
       controller.currentJob = ""
       controller.currentMeta = ({})
       controller.completed(job, code, out, err, meta)

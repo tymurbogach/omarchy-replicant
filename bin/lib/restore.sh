@@ -3,6 +3,73 @@
 # Sourced by replicant-core.sh, which sets the paths it uses. It defines
 # functions and data and runs nothing. Other modules read its data.
 
+core_restore_command() {
+  local dry="$1" all="$2" yes="$3" only="$4" cat centry label changed total_changed=0
+  local -a pending=()
+  [[ -d "$REPO_DIR/.git" ]] || { echo "no repo" >&2; return 1; }
+  if [[ -n "$only" ]] && ! find_category "$only" >/dev/null; then
+    echo "unknown area: $only" >&2; return 1
+  fi
+  for cat in "${CATEGORY_ORDER[@]}"; do
+    [[ -n "$only" && "$only" != "$cat" ]] && continue
+    centry=$(find_category "$cat") || continue
+    label=$(category_field "$centry" 3)
+    printf '\n== %s · %s\n' "$cat" "$label" >&2
+    restore_area_extras "$cat" "$dry"
+    mapfile -t pending < <(restore_pending "$cat")
+    (( ${#pending[@]} )) || { echo "· nothing to change" >&2; continue; }
+    restore_preview "${pending[@]}"
+    if (( dry )); then echo "· dry-run: untouched. Repeat with --apply" >&2; continue; fi
+    if (( ! all && ! yes )); then
+      [[ -r /dev/tty ]] || { echo "$cat needs --yes" >&2; continue; }
+      local resp
+      read -rp "  apply $cat? [y/N] " resp </dev/tty 2>&1 || resp=""
+      [[ "$resp" == [yY] ]] || { echo "· $cat skipped" >&2; continue; }
+    fi
+    changed=$(restore_apply "$cat" "${pending[@]}")
+    total_changed=$((total_changed + changed))
+  done
+  if (( dry )); then echo "Dry-run; repeat with --apply" >&2
+  else briefcache_invalidate; echo "restore complete; $total_changed file(s) written" >&2
+  fi
+}
+
+core_reset_command() {
+  local apply="$1" yes="$2" entry src rel crel resp failures=0 i
+  local -a candidates=() rels=()
+  for entry in "${TRACKED[@]}"; do
+    src="${entry%%:*}"; rel="${entry##*:}"
+    is_dir_entry "$rel" && continue
+    [[ -f "$src" ]] || continue
+    default_for_src "$src" >/dev/null || continue
+    is_default_file "$src" && continue
+    crel=$(config_rel_for_src "$src") || continue
+    candidates+=("$rel"); rels+=("$crel")
+  done
+  (( ${#candidates[@]} )) || { echo "reset-all: nothing to reset" >&2; return 0; }
+  echo "reset-all: ${#candidates[@]} non-default file(s)" >&2
+  (( apply )) || { echo "Dry-run; repeat with --apply" >&2; return 0; }
+  if (( ! yes )); then
+    read -rp "Restore files to Omarchy defaults? [y/N] " resp </dev/tty 2>&1 || resp=""
+    [[ "$resp" == [yY] ]] || { echo "reset-all cancelled" >&2; return 0; }
+  fi
+  for i in "${!rels[@]}"; do omarchy refresh config "${rels[$i]}" >/dev/null 2>&1 || failures=$((failures + 1)); done
+  (( failures == 0 )) || { echo "reset-all: $failures failure(s)" >&2; return 1; }
+  echo "reset-all complete" >&2
+}
+
+core_reset_one() {
+  local id="$1" src rel
+  [[ -n "$id" ]] || { echo "usage: reset <id>" >&2; return 1; }
+  src=$(resolve_manifest_src "$id") || { echo "unknown id: $id" >&2; return 1; }
+  is_dir_entry "$id" && { echo "$id is a directory; use restore-file" >&2; return 1; }
+  default_for_src "$src" >/dev/null || { echo "$id has no Omarchy default" >&2; return 1; }
+  rel=$(config_rel_for_src "$src") || { echo "$id is outside ~/.config" >&2; return 1; }
+  command -v omarchy >/dev/null 2>&1 || { echo "omarchy not found" >&2; return 1; }
+  omarchy refresh config "$rel" 2>&1 || return 1
+  echo "reset $rel; previous version kept as .bak.<epoch>" >&2
+}
+
 # ─── Restore planning — derived from MANIFEST, never hand-listed ────────────
 # The restore plan used to be a second, hand-written copy of the manifest inside
 # the CLI. Adding a file to MANIFEST then silently did not restore it, which is

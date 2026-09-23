@@ -21,7 +21,28 @@ GIT_UNPUSHED_SET=""
 # process — which is exactly what the test suite is — must not see the first
 # one's answer after the second has committed.
 GIT_HAS_UPSTREAM=0
+REMOTE_FETCH_OK=1
+REMOTE_STATE=local-only
 invalidate_git_cache() { GIT_CACHE_READY=0; GIT_DIRTY_SET=""; GIT_UNPUSHED_SET=""; GIT_HAS_UPSTREAM=0; }
+
+# remote_state_for <remote> <fetch-ok> <ahead> <behind> returns the transport
+# state exposed by status v2.
+remote_state_for() {
+  local remote="$1" fetch_ok="$2" ahead="$3" behind="$4"
+  if [[ -z "$remote" ]]; then
+    printf '%s\n' local-only
+  elif [[ "$fetch_ok" != true ]]; then
+    printf '%s\n' offline
+  elif (( ahead > 0 && behind > 0 )); then
+    printf '%s\n' diverged
+  elif (( ahead > 0 )); then
+    printf '%s\n' ahead
+  elif (( behind > 0 )); then
+    printf '%s\n' behind
+  else
+    printf '%s\n' synced
+  fi
+}
 load_git_cache() {
   (( GIT_CACHE_READY )) && return 0
   GIT_CACHE_READY=1

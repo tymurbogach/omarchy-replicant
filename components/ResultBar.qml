@@ -58,6 +58,13 @@ Item {
       anchors.verticalCenter: parent.verticalCenter
       spacing: 0
       Button {
+        visible: rb.running && panel.controllerCancelAllowed
+        text: "Cancel"; bordered: true
+        fontSize: Style.font.caption; foreground: panel.warnColor; fontFamily: panel.ff
+        tooltipText: "Cancel before the save commit"
+        onClicked: panel.cancelSave()
+      }
+      Button {
         visible: !rb.running && panel.lastOutput.indexOf("\n") !== -1
         text: "Details"; bordered: false
         fontSize: Style.font.caption; foreground: panel.dim; fontFamily: panel.ff

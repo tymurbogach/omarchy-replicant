@@ -130,37 +130,8 @@ cmd_create() {
   [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || fail "invalid name: $name"
   cmd_login
   ensure_core
-  if [[ ! -d "$REPO_DIR/.git" ]]; then cmd_init; else bash "$CORE" backup; fi
-  local gh_user
-  gh_user=$(gh api user --jq .login 2>/dev/null || gh auth status 2>&1 | grep -oP 'account \K\w+' | head -n1)
-  [[ -n "$gh_user" ]] || fail "no gh user"
-  info "creating github.com/$gh_user/$name --private ..."
-  if gh repo view "$gh_user/$name" >/dev/null 2>&1; then
-    local vis
-    vis=$(gh repo view "$gh_user/$name" --json visibility --jq .visibility 2>/dev/null || echo "")
-    if [[ "$vis" == "PUBLIC" ]]; then
-      warn "repo already exists and is PUBLIC — switch it to private: gh repo edit $gh_user/$name --visibility private"
-    else warn "repo already exists — linking remote"; fi
-  else
-    gh repo create "$name" --private --description "Omarchy replicant — private savegame (config+secrets+state)" 2>&1 || fail "gh create failed"
-  fi
-  local url="https://github.com/$gh_user/$name.git"
-  local current_url; current_url=$(git_repo remote get-url origin 2>/dev/null || echo "")
-  if [[ -n "$current_url" && "$current_url" != "$url" ]]; then
-    warn "$REPO_DIR is already pointed at $current_url"
-    read -rp "Re-point it to $url instead? This does NOT touch what's already pushed there, but future savegame/push go to the new remote [y/N] " resp </dev/tty 2>&1 || resp=""
-    [[ $resp == [yY] ]] || fail "create cancelled — remote left pointing at $current_url"
-    git_repo remote set-url origin "$url"
-  elif [[ -z "$current_url" ]]; then
-    git_repo remote add origin "$url"
-  fi
-  git_repo branch -M main 2>/dev/null || true
-  git_repo add -A
-  if ! git_repo diff --cached --quiet; then git_repo commit -m "replicant: create $name $(date -Is)" || true; fi
-  if (( do_push )) || { command -v gum >/dev/null 2>&1 && gum confirm "Push now to $url?"; }; then
-    git_repo push -u origin main 2>&1 || git_repo push -u origin HEAD 2>&1
-    ok "pushed to $url (private)"
-  else info "remote $url — run omarchy-replicant save --auto to push"; fi
+  load_core
+  repo_create "$name" "$do_push" || fail "create failed"
 }
 
 # savegame — system -> repo -> GitHub (ported from savegame.sh)
@@ -324,23 +295,7 @@ cmd_reset() {
   local id="${1:-}"
   [[ -n "$id" ]] || fail "usage: reset <id>  (restores the default via omarchy refresh)"
   load_core
-  local src
-  src=$(resolve_manifest_src "$id") || fail "unknown id: $id"
-  # `omarchy refresh config` restores one FILE. A tracked directory has no
-  # single default to go back to, and today the only reason one is never
-  # offered is that Omarchy happens to ship no default for the directories
-  # people track — luck, not design.
-  is_dir_entry "$id" && fail "$id is a directory — reset restores one file; use restore-file to bring the tree back from your repo"
-  # Only a file Omarchy actually ships a default for can be reset, and the
-  # refresh path is derived from the real file rather than from the repo
-  # layout — the two only coincide by accident (repo "home/bashrc" is
-  # ~/.bashrc, not ~/.config/home/bashrc).
-  default_for_src "$src" >/dev/null || fail "$id has no Omarchy default — it is entirely yours, nothing to reset to"
-  local rel
-  rel=$(config_rel_for_src "$src") || fail "$id lives outside ~/.config — reset only handles Omarchy's own config files"
-  command -v omarchy >/dev/null 2>&1 || fail "omarchy not found"
-  omarchy refresh config "$rel" 2>&1 || fail "omarchy refresh config $rel failed"
-  ok "reset $rel → previous version kept as .bak.<epoch>"
+  core_reset_one "$id" || fail "reset failed: $id"
 }
 
 # `push` means push.
@@ -929,24 +884,10 @@ cmd_profile() {
   load_core
   local want="${1:-}"
   if [[ -z "$want" || "$want" == "list" ]]; then
-    local cur; cur=$(current_profile)
-    printf 'This machine (%s) is in the "%s" profile.\n\n' "$MACHINE" "$cur"
-    printf 'Profiles in this repo:\n'
-    local pr n
-    while IFS= read -r pr; do
-      [[ -n "$pr" ]] || continue
-      # `find` on a profile directory that does not exist yet exits non-zero,
-      # and under `set -o pipefail` that fails the whole assignment and, with
-      # `set -e`, this function — the same trap as `grep -q` in a pipeline.
-      n=$(find "$REPO_DIR/profiles/$pr/config" -type f 2>/dev/null | wc -l || true)
-      if [[ "$pr" == "$cur" ]]; then printf '  * %-14s %-12s <- this machine\n' "$pr" "$(plural "$n" file)"
-      else printf '    %-14s %s\n' "$pr" "$(plural "$n" file)"; fi
-    done < <(list_profiles)
-    printf '\nMachines:\n'
-    read_profile_map | sed 's/^/    /'
-    return 0
+    profile_report
+    return $?
   fi
-  core_profile_set "$want" || exit 1
+  profile_report "$want" || exit 1
   commit_repo_shape "profile: $MACHINE is now '$want'" .replicant-profiles
   echo "Files scoped to a profile will now be saved and restored from profiles/$want/." >&2
 }

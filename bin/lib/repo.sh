@@ -3,6 +3,44 @@
 # Sourced by replicant-core.sh. Functions return status and write diagnostics;
 # the CLI owns command parsing, confirmation, and presentation.
 
+repo_create() {
+  local name="$1" do_push="${2:-0}" gh_user current_url url vis resp
+  [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "invalid name: $name" >&2; return 1; }
+  if [[ ! -d "$REPO_DIR/.git" ]]; then core_init; else core_backup; fi
+  gh_user=$(gh api user --jq .login 2>/dev/null || gh auth status 2>&1 | grep -oP 'account \K\w+' | head -n1)
+  [[ -n "$gh_user" ]] || { echo "no gh user" >&2; return 1; }
+  echo "creating github.com/$gh_user/$name --private ..." >&2
+  if gh repo view "$gh_user/$name" >/dev/null 2>&1; then
+    vis=$(gh repo view "$gh_user/$name" --json visibility --jq .visibility 2>/dev/null || echo "")
+    [[ "$vis" != PUBLIC ]] || echo "repo already exists and is PUBLIC; switch it to private" >&2
+  else
+    gh repo create "$name" --private --description "Omarchy replicant private savegame" >/dev/null 2>&1 || {
+      echo "gh create failed" >&2; return 1;
+    }
+  fi
+  url="https://github.com/$gh_user/$name.git"
+  current_url=$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null || true)
+  if [[ -n "$current_url" && "$current_url" != "$url" ]]; then
+    echo "repository already points at $current_url" >&2
+    read -rp "Re-point it to $url? [y/N] " resp </dev/tty 2>&1 || resp=""
+    [[ "$resp" == [yY] ]] || { echo "create cancelled" >&2; return 1; }
+    git -C "$REPO_DIR" remote set-url origin "$url"
+  elif [[ -z "$current_url" ]]; then
+    git -C "$REPO_DIR" remote add origin "$url"
+  fi
+  git -C "$REPO_DIR" branch -M main 2>/dev/null || true
+  git -C "$REPO_DIR" add -A
+  if ! git -C "$REPO_DIR" diff --cached --quiet; then
+    git -C "$REPO_DIR" commit -m "replicant: create $name $(date -Is)" || return 1
+  fi
+  if (( do_push )); then
+    git -C "$REPO_DIR" push -u origin main 2>&1 || git -C "$REPO_DIR" push -u origin HEAD 2>&1 || return 1
+    echo "pushed to $url (private)" >&2
+  else
+    echo "remote $url; run omarchy-replicant save --auto to push" >&2
+  fi
+}
+
 repo_push() {
   [[ -e "$REPO_DIR/.git" ]] || { echo "no repo — clone first" >&2; return 1; }
   local remote branch ahead err

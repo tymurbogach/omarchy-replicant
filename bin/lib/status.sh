@@ -179,10 +179,10 @@ build_entries_json() {
       [[ "$source" == auto ]] && label="${AUTO_LABEL[$id]:-$id}"
       mapped_source=user
       [[ "$source" != user ]] && mapped_source=override
-      printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+      printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
         "$id" "$label" "$live" "$kind" "$mapped_source" "$category" "$scope" \
         "$exists" "$saved" "$is_default" "$dirty" "$unpushed" "$incoming" "$sync_state" \
-        "$is_dir" "$nfiles" "$size" "$locked"
+        "$is_dir" "$nfiles" "$size" "$locked" "$REMOTE_STATE"
     done
   } | jq -Rsc '
     def flag: . == "true";
@@ -192,7 +192,8 @@ build_entries_json() {
        scope:$r[6], exists:($r[7]|flag), saved:($r[8]|flag), is_default:($r[9]|flag),
        dirty:($r[10]|flag), unpushed:($r[11]|flag), incoming:($r[12]|flag),
        sync_state:$r[13], is_dir:($r[14]|flag), nfiles:(($r[15]|tonumber?) // 0),
-       size:(($r[16]|tonumber?) // 0), locked:(($r[17]|flag) or $r[13] == "locked")}
+       size:(($r[16]|tonumber?) // 0), locked:(($r[17]|flag) or $r[13] == "locked"),
+       remote_state:$r[18]}
       | if .kind == "secret" and .locked then del(.src) else . end;
     split("\n") | map(select(length > 0 and . != "false") | row)'
 }
@@ -323,7 +324,11 @@ core_status() {
   # Never blocks when there is no network, and never runs more often than
   # FETCH_MAX_AGE unless explicitly asked.
   if (( force_fetch >= 0 )) && { (( force_fetch == 1 )) || should_fetch; }; then
-    timeout 3 git -C "$REPO_DIR" fetch --quiet 2>/dev/null || true
+    if timeout 3 git -C "$REPO_DIR" fetch --quiet 2>/dev/null; then
+      REMOTE_FETCH_OK=1
+    else
+      REMOTE_FETCH_OK=0
+    fi
     date +%s > "$REPLICANT_HOME/.last-fetch" 2>/dev/null || true
   fi
   local branch remote dirty untracked ahead behind
@@ -341,6 +346,7 @@ core_status() {
   fi
   [[ "$ahead" =~ ^[0-9]+$ ]] || ahead=0
   [[ "$behind" =~ ^[0-9]+$ ]] || behind=0
+  REMOTE_STATE=$(remote_state_for "$remote" "$([[ "$REMOTE_FETCH_OK" == 1 ]] && echo true || echo false)" "$ahead" "$behind")
   # Content, not git: what is on this machine that the repo has not got, and
   # which of those differences came down from another machine. Both the bar icon
   # and the panel header read these, so they can never disagree. The brief path
@@ -441,6 +447,7 @@ core_status() {
     last_subject=$(git -C "$REPO_DIR" log -1 --format='%s' 2>/dev/null || true)
     plugin_version=$(jq -r '.version // ""' "$PLUGIN_DIR/manifest.json" 2>/dev/null || true)
     jq -nc --arg branch "$branch" --arg remote "$remote" --arg remote_name "$remote_name" \
+      --arg remote_state "$REMOTE_STATE" \
       --arg repo_dir "$REPO_DIR" --arg machine "$MACHINE" --arg plugin_version "$plugin_version" \
       --arg home "$HOME" \
       --arg last_save "$last_save" --arg last_subject "$last_subject" \
@@ -455,7 +462,7 @@ core_status() {
       --argjson setting_groups "$groups_json" --argjson machines "$machines_json" \
       --arg profile "$(current_profile)" --argjson profiles "$profiles_json" \
       --argjson pending_reinstalls "$pending_reinstalls_json" --argjson plugins "$plugins_json" \
-      '{initialized:true, schema_version:2, branch:$branch, remote:$remote, remote_name:$remote_name,
+      '{initialized:true, schema_version:2, branch:$branch, remote:$remote, remote_name:$remote_name, remote_state:$remote_state,
         repo_dir:$repo_dir, machine:$machine, plugin_version:$plugin_version, home:$home,
         profile:$profile, profiles:$profiles,
         last_save:$last_save, last_subject:$last_subject,

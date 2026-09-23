@@ -393,6 +393,7 @@ core_save() {
     saverepo="$txdir/repo"
     mkdir -p -- "$txdir" || { echo "save: cannot create a transaction directory" >&2; return 1; }
     tx_meta_write "$txdir" started "$base" "$scope" "$msg" ${ids[@]+"${ids[@]}"}
+    echo "stage: scanning" >&2
     echo "→ save: snapshotting into a transaction worktree" >&2
     git -C "$REPO_DIR" worktree add --detach -- "$saverepo" "$base" >/dev/null 2>&1 || {
       echo "save: cannot create the transaction worktree" >&2
@@ -400,6 +401,7 @@ core_save() {
       return 1
     }
   else
+    echo "stage: scanning" >&2
     echo "→ save: snapshotting into the repo (no commits yet)" >&2
   fi
 
@@ -438,6 +440,7 @@ core_save() {
     return 1
   fi
   (( txmode )) && tx_meta_write "$txdir" snapshotted "$base" "$scope" "$msg" ${ids[@]+"${ids[@]}"}
+  echo "stage: encrypting" >&2
 
   # What the transaction holds determines the commit: everything, the
   # inventory, or exactly the named entries.
@@ -522,6 +525,7 @@ core_save() {
     # The hook scans the staged content as well when it is installed; the
     # explicit scan above already passed, so a hook failure here is about the
     # hook setup, not the content, and it must still stop the save.
+    echo "stage: committing" >&2
     git -C "$saverepo" commit -q -m "$subject" || {
       echo "save: the commit failed — nothing was committed" >&2
       (( txmode )) && tx_remove "$txdir"
@@ -566,6 +570,7 @@ core_save() {
   fi
 
   local PUSHED="" PUSH_ERR=""
+  echo "stage: publishing" >&2
   save_push "$push"
   tx_meta_field "$txdir" push "$PUSHED"
   if [[ "$PUSHED" == "failed" ]]; then

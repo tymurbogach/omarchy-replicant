@@ -3,6 +3,31 @@
 # Sourced by replicant-core.sh. Functions return status and write diagnostics;
 # the CLI owns command parsing, confirmation, and presentation.
 
+commit_repo_shape() {
+  local msg="$1"; shift
+  [[ -d "$REPO_DIR/.git" ]] || return 0
+  local -a paths=()
+  local p
+  for p in "$@"; do
+    if [[ -e "$REPO_DIR/${p%/}" || -n "$(git_repo ls-files -- "$p" 2>/dev/null)" ]]; then paths+=("$p"); fi
+  done
+  (( ${#paths[@]} )) || return 0
+  git_repo add -A -- "${paths[@]}" >/dev/null 2>&1 || true
+  if ! git_repo diff --cached --quiet -- "${paths[@]}" 2>/dev/null; then
+    git_repo commit -q -m "$msg" -- "${paths[@]}" >/dev/null 2>&1 || true
+    local push_err
+    if ! push_err=$(git_repo push -q 2>&1); then
+      echo "Saved locally, but the push to GitHub failed:" >&2
+      printf '%s\n' "$push_err" | sed 's/^/    /' >&2
+      echo "Another machine may have saved first. Run 'omarchy-replicant pull', then push again." >&2
+      echo "The next save (or an explicit push) retries it." >&2
+      invalidate_brief_cache
+      return 1
+    fi
+  fi
+  invalidate_brief_cache
+}
+
 repo_create() {
   local name="$1" do_push="${2:-0}" gh_user current_url url vis resp
   [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "invalid name: $name" >&2; return 1; }

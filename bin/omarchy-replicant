@@ -536,40 +536,6 @@ cmd_settings() {
     ""'
 }
 
-# Both the scope list and the profile map are part of the repo's shape, so a
-# change to either is committed like any other decision — otherwise the second
-# machine never learns about it, which is the whole point of keeping them here.
-#
-# Only the paths that exist, on disk or in the index, reach git. `git add` stops
-# at the first path that matches nothing and stages none of the others. Untrack
-# names both places a copy can live, and one of them never exists, so an untrack
-# was never committed: the list and the removed copy stayed pending until the
-# next save swept them into a commit about something else.
-commit_repo_shape() {
-  local msg="$1"; shift
-  [[ -d "$REPO_DIR/.git" ]] || return 0
-  local -a paths=()
-  local p
-  for p in "$@"; do
-    if [[ -e "$REPO_DIR/${p%/}" || -n "$(git_repo ls-files -- "$p" 2>/dev/null)" ]]; then paths+=("$p"); fi
-  done
-  (( ${#paths[@]} )) || return 0
-  git_repo add -A -- "${paths[@]}" >/dev/null 2>&1 || true
-  if ! git_repo diff --cached --quiet -- "${paths[@]}" 2>/dev/null; then
-    git_repo commit -q -m "$msg" -- "${paths[@]}" >/dev/null 2>&1 || true
-    local push_err
-    if ! push_err=$(git_repo push -q 2>&1); then
-      echo "Saved locally, but the push to GitHub failed:" >&2
-      printf '%s\n' "$push_err" | sed 's/^/    /' >&2
-      echo "Another machine may have saved first. Run 'omarchy-replicant pull', then push again." >&2
-      echo "The next save (or an explicit push) retries it." >&2
-      invalidate_brief_cache
-      return 1
-    fi
-  fi
-  invalidate_brief_cache
-}
-
 cmd_sync() {
   local id="${1:-}" want="${2:-}"
   [[ -n "$id" && -n "$want" ]] || fail "usage: omarchy-replicant sync <id> on|off"
@@ -1732,6 +1698,11 @@ Dry-run by default, like everything here that writes.
   The legacy repository remains at legacy-repo-<epoch>."
 )
 
+
+# Restore and reset are implemented by the core modules. Keep these wrappers
+# near dispatch so the public CLI only forwards arguments and returns status.
+cmd_restore() { ensure_core; bash "$CORE" restore "$@"; }
+cmd_reset_all() { ensure_core; bash "$CORE" reset-all "$@"; }
 
 main() {
   local cmd="${1:-}"; [[ -z "$cmd" ]] && { usage; exit 0; }

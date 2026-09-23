@@ -79,6 +79,8 @@ case "${1:-}" in
   sync)               core_sync "${2:-}" "${3:-}" ;;
   revert)             core_revert "${2:-}" "${3:-default}" ;;
   restore-file)       core_restore_file "${2:-}" ;;
+  restore)             shift; core_restore_cli "$@" ;;
+  reset-all)           shift; core_reset_cli "$@" ;;
   scope)              core_scope "${2:-}" "${3:-}" ;;
   policy-scope)       shift; core_scope_bulk "$@" ;;
   bulk-apply)         shift; bulk_apply "$@" ;;

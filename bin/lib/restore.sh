@@ -34,6 +34,27 @@ core_restore_command() {
   fi
 }
 
+# Parse the public restore options in the core so the CLI only forwards them.
+core_restore_cli() {
+  local dry=1 all=0 yes=0 only="" arg
+  while (( $# )); do
+    arg="$1"; shift
+    case "$arg" in
+      --apply) dry=0 ;;
+      --dry-run) dry=1 ;;
+      --all) all=1 ;;
+      --yes|-y) yes=1 ;;
+      --only) [[ $# -gt 0 ]] || { echo "--only needs an area" >&2; return 2; }; only="$1"; shift ;;
+      *) echo "unknown option: $arg" >&2; return 2 ;;
+    esac
+  done
+  if [[ -n "$only" ]] && ! find_category "$only" >/dev/null; then
+    echo "unknown area: $only (areas: ${CATEGORY_ORDER[*]})" >&2
+    return 1
+  fi
+  core_restore_command "$dry" "$all" "$yes" "$only"
+}
+
 core_reset_command() {
   local apply="$1" yes="$2" entry src rel crel resp failures=0 i
   local -a candidates=() rels=()
@@ -56,6 +77,20 @@ core_reset_command() {
   for i in "${!rels[@]}"; do omarchy refresh config "${rels[$i]}" >/dev/null 2>&1 || failures=$((failures + 1)); done
   (( failures == 0 )) || { echo "reset-all: $failures failure(s)" >&2; return 1; }
   echo "reset-all complete" >&2
+}
+
+core_reset_cli() {
+  local apply=0 yes=0 arg
+  while (( $# )); do
+    arg="$1"; shift
+    case "$arg" in
+      --apply) apply=1 ;;
+      --dry-run) apply=0 ;;
+      --yes|-y) yes=1 ;;
+      *) echo "unknown option: $arg" >&2; return 2 ;;
+    esac
+  done
+  core_reset_command "$apply" "$yes"
 }
 
 core_reset_one() {

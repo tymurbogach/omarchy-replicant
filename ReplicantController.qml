@@ -17,8 +17,6 @@ Item {
   readonly property bool busy: process.running && currentMeta.busy !== false
 
   signal completed(string job, int code, string stdoutText, string stderrText, var meta)
-  signal stageChanged(string job, string value)
-
   function run(job, command, meta) {
     var details = meta || ({})
     if (process.running) {
@@ -36,7 +34,6 @@ Item {
     controller.currentJob = job
     controller.currentMeta = meta || ({})
     controller.stage = controller.currentMeta.stage || (job === "save" ? "scanning" : "running")
-    controller.stageChanged(job, controller.stage)
     process.command = command
     process.running = true
   }

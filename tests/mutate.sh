@@ -83,10 +83,10 @@ from: [[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
 to: :
 why: the core's dispatcher runs only when the core is executed
 ---
-file: bin/omarchy-replicant
+file: bin/lib/restore.sh
 suite: test-cli.sh
-from: fail "unknown area: $ONLY (areas: ${CATEGORY_ORDER[*]})"
-to: :
+from:     echo "unknown area: $only (areas: ${CATEGORY_ORDER[*]})" >&2
+to:     :
 why: restore refuses an unknown area
 ---
 file: bin/lib/backup.sh
@@ -143,7 +143,7 @@ from: printf -v "$1" '%s' "${SCOPE_OF[$2]:-shared}"
 to: printf -v "$1" '%s' shared
 why: the fork-free scope lookup gives the real scope
 ---
-file: bin/omarchy-replicant
+file: bin/lib/repo.sh
 suite: test-cli.sh
 from: if [[ -e "$REPO_DIR/${p%/}" || -n "$(git_repo ls-files -- "$p" 2>/dev/null)" ]]; then paths+=("$p"); fi
 to: paths+=("$p")
@@ -383,7 +383,7 @@ from:     echo "nothing to push — there is no remote yet: run 'omarchy-replica
 to:     :
 why: push names the next step when there is no remote
 ---
-file: bin/omarchy-replicant
+file: bin/lib/repo.sh
 suite: test-save.sh
 from:     if ! push_err=$(git_repo push -q 2>&1); then
 to:     if false; then

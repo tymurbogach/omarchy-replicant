@@ -501,6 +501,13 @@ key_init() {
   }
   recf=$(vault_recipient_file)
   printf '%s\n' "$rec" > "$recf"
+  # A save transaction requires the active worktree to be clean. Record the
+  # public recipient here so key setup does not leave an unsaveable worktree.
+  git -C "$REPO_DIR" add -A -- .replicant/recipient.txt
+  git -C "$REPO_DIR" commit -q -m "replicant: record encryption recipient" || {
+    printf 'key: could not record the repository recipient\n' >&2
+    return 1
+  }
   briefcache_invalidate
   printf 'key: identity created at keys/identity.txt (0600), recipient %s recorded — run savegame to encrypt your secrets\n' "$rec" >&2
 }

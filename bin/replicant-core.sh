@@ -12,7 +12,10 @@ PLUGIN_DIR="$(cd -- "$(dirname -- "$REAL_CORE")/.." && pwd)"
 source "$PLUGIN_DIR/bin/lib/common.sh" || { echo "replicant-core.sh: bin/lib/common.sh is missing" >&2; exit 1; }
 # User's target repo (separate from the plugin's own code): private, savegame layout
 REPLICANT_HOME="${OMARCHY_REPLICANT_HOME:-$HOME/.local/share/omarchy-replicant}"
-REPO_DIR="$REPLICANT_HOME/repo"
+# A save transaction snapshots into a detached worktree: the snapshot half
+# re-runs the copy passes with the repo paths redirected there, so the active
+# worktree stays untouched until the fast-forward. Only save.sh sets this.
+REPO_DIR="${REPLICANT_TX_REPO:-$REPLICANT_HOME/repo}"
 CONFIG_DIR="$REPO_DIR/config"
 SECRETS_DIR="$REPO_DIR/secrets"
 # One repo, several machines. state/ is an inventory OF A MACHINE — its
@@ -47,7 +50,7 @@ GITHOOKS_DIR="$REPO_DIR/.githooks"
 # The logic lives in modules under bin/lib/. Each defines functions and data
 # and runs nothing. The two calls after the loop load the tracked lists, so
 # every module is defined before they run.
-for _module in manifest categories scopes track suggest incoming backups tree layout gitstate discover settings status restore plugins history update; do
+for _module in manifest categories scopes track suggest incoming backups tree layout gitstate discover settings status restore plugins history update schema crypto registry state briefcache save migrate bulk; do
   # shellcheck disable=SC1090
   source "$PLUGIN_DIR/bin/lib/$_module.sh" || { echo "replicant-core.sh: bin/lib/$_module.sh is missing" >&2; exit 1; }
 done
@@ -64,6 +67,11 @@ load_auto_manifest
 # nothing for one and exited 0, which a caller reads as success.
 case "${1:-}" in
   backup)             core_backup "${2:-}" ;;
+  save)               shift; core_save "$@" ;;
+  snapshot-one)       snapshot_one "${2:-}" ;;
+  tx-list)            core_tx_list ;;
+  tx-discard)         shift; core_tx_discard "$@" ;;
+  tx-resume)          shift; core_tx_resume "$@" ;;
   status)             shift; core_status "$@" ;;
   diff)               core_diff "${2:-}" "${3:-auto}" ;;
   log)                core_log "${2:-8}" ;;
@@ -72,6 +80,9 @@ case "${1:-}" in
   revert)             core_revert "${2:-}" "${3:-default}" ;;
   restore-file)       core_restore_file "${2:-}" ;;
   scope)              core_scope "${2:-}" "${3:-}" ;;
+  policy-scope)       shift; core_scope_bulk "$@" ;;
+  bulk-apply)         shift; bulk_apply "$@" ;;
+  bulk-scan)          save_scan_tx "${1:-}" ;;
   profile-set)        core_profile_set "${2:-}" ;;
   profile-get)        current_profile ;;
   profile-list)       list_profiles ;;
@@ -92,5 +103,8 @@ case "${1:-}" in
   backups-json)       build_backups_json ;;
   undo)               core_undo "${2:-}" ;;
   machine)            printf '%s\n' "$MACHINE" ;;
+  schema-gate)        require_writable_schema ;;
+  key)                shift; core_key "$@" ;;
+  migrate-v2)         shift; core_migrate_v2 "$@" ;;
   *)                  echo "replicant-core.sh: unknown command '${1:-}'" >&2; exit 2 ;;
 esac

@@ -21,10 +21,28 @@ Column {
     placeholder: "Filter by name or path…   (/)"
     options: panel.filterOptions
     value: panel.stateFilter
-    legend: "● unsaved    ↓ to restore    ↑ to push    ◆ saved    ○ default    ⊘ off    · not here"
+    legend: "● unsaved    ↓ to restore    ↑ to push    ◆ saved    ○ default    ⊘ off    · not here    ⚠ locked"
     collapseTip: "Close every open area and row  (c)"
     onSearchEdited: function(t) { panel.fileSearch = t }
     onFilterPicked: function(v) { panel.stateFilter = v }
+  }
+
+  Row {
+    width: parent.width
+    spacing: Style.space(8)
+    Button {
+      text: panel.manageMode ? "Done" : "Manage"
+      bordered: true
+      foreground: panel.fg; accent: Color.accent; fontFamily: panel.ff
+      tooltipText: "Select several entries  (m)"
+      onClicked: panel.toggleManage()
+    }
+    Text {
+      visible: panel.manageMode
+      anchors.verticalCenter: parent.verticalCenter
+      text: "Space select · Shift range · Ctrl+A visible"
+      color: panel.dim; font.family: panel.ff; font.pixelSize: Style.font.caption
+    }
   }
 
   Text {

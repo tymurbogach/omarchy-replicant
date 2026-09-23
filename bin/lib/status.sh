@@ -8,97 +8,38 @@ build_configs_json() {
   # One jq for the whole list. Same reason as build_settings_json: this runs on
   # every panel refresh and there are forty-odd rows.
   local entry src rel label category exists is_default has_default default_src config_rel
-  local dirty unpushed sync_state saved synced source scope repo_path git_rel unsaved is_dir nfiles incoming
-  # Build the scope map and the profile HERE, in this shell, once. The loop
-  # below reads both without a fork for each row.
-  local prof
-  SCOPE_MAP_READY=0; load_scope_map
-  prof=$(current_profile)
+  local dirty unpushed sync_state saved synced source scope unsaved is_dir nfiles size incoming
+  local regrow ev
+  # Every row below comes from the registry and the one evaluator: the scope,
+  # the repo path, the comparison and the precedence live there, not here.
+  registry_build
   {
   for entry in "${TRACKED[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"; label="$rel"
-    category=$(category_for_rel "$rel")
-    is_dir=false; nfiles=0
+    regrow=$(registry_row_for "$rel") || { printf 'registry: no row for %s\n' "$rel" >&2; continue; }
+    ev=$(state_eval "$regrow")
+    local -a vf=()
+    mapfile -t vf < <(row_split "$ev" 17)
+    category="${vf[3]}"; scope="${vf[4]}"
+    exists="${vf[9]}"; saved="${vf[10]}"; is_default="${vf[11]}"
+    dirty="${vf[12]}"; unsaved="${vf[13]}"; unpushed="${vf[14]}"; incoming="${vf[15]}"
+    sync_state="${vf[16]}"
+    is_dir=false; nfiles=0; size=0
     is_dir_entry "$rel" && is_dir=true
-    if [[ "$is_dir" == true ]]; then
-      [[ -d "${src%/}" ]] && exists=true || exists=false
-      [[ "$exists" == true ]] && nfiles=$(tree_count "$src")
-    else
-      [[ -f "$src" ]] && exists=true || exists=false
+    if [[ "$exists" == true ]]; then
+      if [[ "$is_dir" == true ]]; then
+        nfiles=$(tree_count "$src")
+        size=$(find "${src%/}" -type f -printf '%s\n' 2>/dev/null | awk '{s+=$1} END{print s+0}')
+      else
+        size=$(stat -c '%s' -- "$src" 2>/dev/null || echo 0)
+      fi
     fi
     has_default=false; default_src=""
     if [[ "$is_dir" == false ]] && default_src=$(default_for_src "$src" 2>/dev/null) && [[ -n "$default_src" ]]; then has_default=true; fi
     config_rel=""
     [[ "$is_dir" == false ]] && config_rel=$(config_rel_for_src "$src" 2>/dev/null || true)
-    if [[ "$exists" == true && "$has_default" == true ]] && cmp -s "$src" "$default_src" 2>/dev/null; then
-      is_default=true
-    else
-      is_default=false
-    fi
-    scope_into scope "$rel"
-    repo_path_into repo_path "$rel" "$prof"
-    git_rel="${repo_path#"$REPO_DIR"/}"
-    saved=false
-    if [[ "$is_dir" == true ]]; then
-      [[ -d "${repo_path%/}" ]] && saved=true
-    else
-      [[ -f "$repo_path" ]] && saved=true
-    fi
-    # "Unsaved" is a question about CONTENT: does the file on this machine differ
-    # from the copy the repo holds? Asking git instead only ever sees files
-    # core_backup has already copied in, so a file edited on the machine and
-    # never saved reported itself as "saved on GitHub" — a backup tool claiming
-    # a change was safe when it was nowhere.
-    #
-    # Comparing content is also what makes the warning self-healing: edit a file
-    # and put it back, and cmp matches again, so the badge clears on its own with
-    # no flag to go stale.
-    #
-    # A directory answers the same question the same way, file by file:
-    # tree_same is cmp over the whole tree, so adding, editing or deleting
-    # anything inside a tracked directory shows up, and undoing it clears.
-    unsaved=false
-    entry_differs "$src" "$repo_path" "$is_dir" && unsaved=true
-    # Copied into the repo but not committed is unsaved too — same word, same
-    # button. Content and git each catch a case the other misses.
-    dirty=false
-    path_dirty "$git_rel" && dirty=true
-    [[ "$dirty" == true ]] && unsaved=true
-    unpushed=false
-    path_unpushed "$git_rel" && unpushed=true
-    # The same difference, pointing the other way. Only meaningful while the
-    # file still differs, which is what makes it clear itself once the entry is
-    # restored — or once the user knowingly saves over it.
-    incoming=false
-    [[ "$unsaved" == true ]] && is_incoming_rel "$rel" && incoming=true
     synced=true
     [[ "$scope" == "off" ]] && synced=false
-    # off > missing > incoming > unsaved > default > unpushed > saved.
-    #
-    # incoming MUST outrank unsaved, and it is the only ordering that is about
-    # safety rather than tidiness. Both mean "this file and its copy differ";
-    # unsaved asks for Save and incoming asks for Restore, and pressing the
-    # wrong one commits over work another machine did. When the direction is
-    # known, it wins.
-    #
-    # unsaved MUST outrank default. Putting a customised file back to Omarchy's
-    # default is itself a change that still needs saving, and it used to show the
-    # calm "default" badge while the repo still held the old customised version —
-    # the pending change hidden behind the tidiest-looking state.
-    #
-    # default outranks unpushed the other way round, and deliberately. Before the
-    # first push nothing is on GitHub, so every untouched default file would
-    # light up as "to push" and drown the handful of rows that actually changed.
-    # Pushing is a repo-level act the header already prompts for; per file, what
-    # matters is whether THIS machine has something the repo does not.
-    if [[ "$synced" == false ]]; then sync_state="off"
-    elif [[ "$exists" == false ]]; then sync_state="missing"
-    elif [[ "$incoming" == true ]]; then sync_state="incoming"
-    elif [[ "$unsaved" == true ]]; then sync_state="unsaved"
-    elif [[ "$is_default" == true ]]; then sync_state="default"
-    elif [[ "$unpushed" == true ]]; then sync_state="unpushed"
-    else sync_state="saved"
-    fi
     # A shipped entry this machine has never had, and the repo has never held,
     # is not a row worth drawing. The core list is written for every Omarchy
     # user, so any one machine is expected to be missing part of it — showing
@@ -112,10 +53,10 @@ build_configs_json() {
     if is_user_entry "$rel"; then source=user
     elif is_auto_entry "$rel"; then source=auto; label="${AUTO_LABEL[$rel]}"; fi
     if [[ "$source" != user && "$exists" == false && "$saved" == false ]]; then continue; fi
-    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
       "$rel" "$label" "$src" "$category" "$exists" "$is_default" "$has_default" \
       "$config_rel" "$dirty" "$unpushed" "$sync_state" "$saved" "$synced" "$source" "$scope" "$unsaved" \
-      "$is_dir" "$nfiles" "$incoming"
+      "$is_dir" "$nfiles" "$size" "$incoming"
   done
   } | jq -Rsc '
     def flag: . == "true";
@@ -126,23 +67,34 @@ build_configs_json() {
       config_rel: .[7], dirty: (.[8]|flag), unpushed: (.[9]|flag),
       sync_state: .[10], saved: (.[11]|flag), synced: (.[12]|flag),
       source: .[13], scope: .[14], unsaved: (.[15]|flag),
-      is_dir: (.[16]|flag), nfiles: (.[17]|tonumber? // 0),
-      incoming: (.[18]|flag)
+      is_dir: (.[16]|flag), nfiles: (.[17]|tonumber? // 0), size: (.[18]|tonumber? // 0),
+      incoming: (.[19]|flag)
     })'
 }
 
 # Secrets get their own shape, and deliberately never their own content. What
 # the panel needs is "is it here, is it saved, are the permissions right" — a
 # preview of an SSH private key on screen is a way to leak it over a shoulder or
-# a screen share, so the only thing read out of an env file is the NAMES of the
-# variables it defines.
+# a screen share. In version 1 the panel also read the NAMES of variables in an
+# env file. In version 2 even the names stay inside the vault: the JSON carries
+# only a count, never names or values.
 build_secrets_json() {
   invalidate_git_cache
-  local entry src rel exists mode kind dirty unpushed saved synced sync_state vars nvars unsaved incoming
+  local entry src rel exists mode kind dirty unpushed saved synced sync_state vars nvars unsaved incoming locked
+  local regrow ev
+  local -a vf=()
+  # The verdict comes from the one evaluator; only names, counts and modes
+  # stay here, since they never leave the live file for the JSON.
+  registry_build
   {
   for entry in "${TRACKED_SECRETS[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"
-    [[ -f "$src" ]] && exists=true || exists=false
+    regrow=$(registry_row_for "$rel") || { printf 'registry: no row for %s\n' "$rel" >&2; continue; }
+    ev=$(state_eval "$regrow")
+    mapfile -t vf < <(row_split "$ev" 17)
+    exists="${vf[9]}"; saved="${vf[10]}"
+    dirty="${vf[12]}"; unsaved="${vf[13]}"; unpushed="${vf[14]}"; incoming="${vf[15]}"
+    sync_state="${vf[16]}"; locked="${vf[8]}"
     mode=""
     [[ "$exists" == true ]] && mode=$(stat -c '%a' "$src" 2>/dev/null || echo "")
     case "$rel" in
@@ -159,32 +111,23 @@ build_secrets_json() {
              | sed -e 's/^[[:space:]]*//' -e 's/^export[[:space:]]*//' -e 's/=$//' | sort -u | paste -sd, - || true)
       [[ -n "$vars" ]] && nvars=$(printf '%s' "$vars" | tr ',' '\n' | grep -c .)
     fi
-    saved=false
-    [[ -f "$SECRETS_DIR/$rel" ]] && saved=true
-    # Same content-first rule as the config rows. cmp reads both files but says
-    # only whether they differ — no secret is read INTO a variable, printed, or
-    # put in the JSON. Comparing is not revealing.
-    unsaved=false
-    entry_differs "$src" "$SECRETS_DIR/$rel" false && unsaved=true
-    dirty=false
-    path_dirty "secrets/$rel" && dirty=true
-    [[ "$dirty" == true ]] && unsaved=true
-    unpushed=false
-    path_unpushed "secrets/$rel" && unpushed=true
-    incoming=false
-    [[ "$unsaved" == true ]] && is_incoming_rel "$rel" && incoming=true
+    # Version 2 never reports variable names. The count stays: it says how
+    # many entries an env file holds without naming any of them. A locked
+    # row reports no count either, since even the live names are not shown
+    # without the key.
+    if [[ "$(repo_data_version 2>/dev/null)" == 2 ]]; then
+      if [[ "$locked" == "true" ]]; then
+        vars=""; nvars=0
+      else
+        vars=""
+      fi
+    fi
     synced=true
     is_excluded "$rel" && synced=false
-    if [[ "$synced" == false ]]; then sync_state="off"
-    elif [[ "$exists" == false ]]; then sync_state="missing"
-    elif [[ "$incoming" == true ]]; then sync_state="incoming"
-    elif [[ "$unsaved" == true ]]; then sync_state="unsaved"
-    elif [[ "$unpushed" == true ]]; then sync_state="unpushed"
-    else sync_state="saved"
-    fi
-    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+    [[ "$synced" == false ]] && sync_state="off"
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
       "$rel" "$src" "$exists" "$mode" "$kind" "$dirty" "$unpushed" "$saved" \
-      "$synced" "$sync_state" "$vars" "$nvars" "$incoming"
+      "$synced" "$sync_state" "$vars" "$nvars" "$incoming" "$locked"
   done
   } | jq -Rsc '
     def flag: . == "true";
@@ -194,8 +137,83 @@ build_secrets_json() {
       synced: (.[8]|flag), sync_state: .[9],
       vars: (if .[10] == "" then [] else (.[10]|split(",")) end),
       var_count: ((.[11]|tonumber?) // 0),
-      incoming: (.[12]|flag)
+      incoming: (.[12]|flag), locked: (.[13]|flag)
     })'
+}
+
+# build_entries_json: the version 2 wire contract. The compatibility arrays
+# above remain for one release, but new consumers read this single list.
+# Secret paths stay private while the vault is locked.
+build_entries_json() {
+  invalidate_git_cache
+  registry_build
+  local row ev id kind source category scope live repo locked exists saved is_default
+  local dirty unpushed incoming sync_state is_dir nfiles size label mapped_source
+  local -a vf=()
+  {
+    for row in ${REGISTRY[@]+"${REGISTRY[@]}"}; do
+      id=$(registry_field "$row" 1); kind=$(registry_field "$row" 2)
+      source=$(registry_field "$row" 3); category=$(registry_field "$row" 4)
+      scope=$(registry_field "$row" 5); live=$(registry_field "$row" 6)
+      repo=$(registry_field "$row" 7); locked=$(registry_field "$row" 9)
+      ev=$(state_eval "$row")
+      mapfile -t vf < <(row_split "$ev" 17)
+      exists="${vf[9]}"; is_default="${vf[11]}"; dirty="${vf[12]}"
+      unpushed="${vf[14]}"; incoming="${vf[15]}"; sync_state="${vf[16]}"
+      [[ "$sync_state" == locked ]] && locked=true
+      is_dir=false; nfiles=0; size=0
+      [[ "$kind" == dir ]] && is_dir=true
+      if [[ "$is_dir" == true && "$exists" == true ]]; then
+        nfiles=$(tree_count "$live" 2>/dev/null || echo 0)
+        size=$(find "${live%/}" -type f -printf '%s\n' 2>/dev/null | awk '{s+=$1} END{print s+0}')
+      elif [[ "$exists" == true && "$kind" != secret ]]; then
+        size=$(stat -c '%s' -- "$live" 2>/dev/null || echo 0)
+      fi
+      # state_eval cannot inspect an encrypted index without the key. The
+      # index itself still proves that a locked v2 secret has a saved copy.
+      saved="${vf[10]}"
+      if [[ "$kind" == secret && "$locked" == true && -f "$REPO_DIR/vault/index.age" ]]; then
+        saved=true
+      fi
+      label="$id"
+      [[ "$source" == auto ]] && label="${AUTO_LABEL[$id]:-$id}"
+      mapped_source=user
+      [[ "$source" != user ]] && mapped_source=override
+      printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+        "$id" "$label" "$live" "$kind" "$mapped_source" "$category" "$scope" \
+        "$exists" "$saved" "$is_default" "$dirty" "$unpushed" "$incoming" "$sync_state" \
+        "$is_dir" "$nfiles" "$size" "$locked"
+    done
+  } | jq -Rsc '
+    def flag: . == "true";
+    def row:
+      split("\u001f") as $r |
+      {id:$r[0], label:$r[1], src:$r[2], kind:$r[3], source:$r[4], category:$r[5],
+       scope:$r[6], exists:($r[7]|flag), saved:($r[8]|flag), is_default:($r[9]|flag),
+       dirty:($r[10]|flag), unpushed:($r[11]|flag), incoming:($r[12]|flag),
+       sync_state:$r[13], is_dir:($r[14]|flag), nfiles:(($r[15]|tonumber?) // 0),
+       size:(($r[16]|tonumber?) // 0), locked:(($r[17]|flag) or $r[13] == "locked")}
+      | if .kind == "secret" and .locked then del(.src) else . end;
+    split("\n") | map(select(length > 0 and . != "false") | row)'
+}
+
+status_encryption_json() {
+  local state=unconfigured v
+  v=$(repo_data_version 2>/dev/null || echo 1)
+  if [[ "$v" == 2 && -f "$REPO_DIR/.replicant/recipient.txt" ]]; then
+    if vault_unlocked; then state=ready; else state=locked; fi
+  fi
+  jq -nc --arg state "$state" '{format:"age-pq-v1",state:$state}'
+}
+
+status_migration_json() {
+  local v required=false warning=false data_version=null
+  v=$(repo_data_version 2>/dev/null || echo unknown)
+  [[ "$v" =~ ^[0-9]+$ ]] && data_version="$v"
+  [[ "$v" == 1 ]] && required=true
+  [[ -f "$REPLICANT_HOME/migration-warning" ]] && warning=true
+  jq -nc --argjson data_version "$data_version" --argjson required "$required" --argjson warning "$warning" \
+    '{data_version:$data_version,required:$required,legacy_warning:$warning}'
 }
 
 # core_shortcuts — the keyboard, in two halves. Omarchy's model is "defaults,
@@ -273,7 +291,7 @@ core_status() {
       --brief) brief=1 ;;
     esac
   done
-  if [[ ! -d "$REPO_DIR/.git" ]]; then
+  if [[ ! -e "$REPO_DIR/.git" ]]; then
     if (( json )); then echo '{"initialized":false}'; else echo "not initialized: run 'omarchy-replicant create --push', or 'clone <url>' for a repo you already have"; fi
     return 0
   fi
@@ -297,11 +315,30 @@ core_status() {
     ahead=$(git -C "$REPO_DIR" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)
     behind=$(git -C "$REPO_DIR" rev-list --count 'HEAD..@{u}' 2>/dev/null || echo 0)
   fi
+  [[ "$ahead" =~ ^[0-9]+$ ]] || ahead=0
+  [[ "$behind" =~ ^[0-9]+$ ]] || behind=0
   # Content, not git: what is on this machine that the repo has not got, and
   # which of those differences came down from another machine. Both the bar icon
-  # and the panel header read these, so they can never disagree.
-  local n_unsaved n_incoming
-  read -r n_unsaved n_incoming < <(count_changes)
+  # and the panel header read these, so they can never disagree. The brief path
+  # below reuses the metadata cache; the full payload always evaluates bytes
+  # directly and stays authoritative.
+  local n_unsaved n_incoming n_locked n_missing needs_action=false
+  # The cache serves the brief poll only: the condition short-circuits before
+  # the read when this is a full status, so full evaluation never touches it.
+  local cached_na=false
+  if (( brief )) && read -r n_unsaved n_incoming n_locked n_missing cached_na < <(briefcache_read 2>/dev/null); then
+    n_locked=${n_locked:-0}
+    n_missing=${n_missing:-0}
+    [[ "$cached_na" == "true" ]] && needs_action=true
+  else
+    read -r n_unsaved n_incoming n_locked n_missing < <(count_changes)
+    n_locked=${n_locked:-0}
+    n_missing=${n_missing:-0}
+    # One flag for "anything asks for an action", so the bar and the panel test
+    # one boolean instead of reimplementing the priority each.
+    (( n_unsaved > 0 || n_incoming > 0 || n_locked > 0 || n_missing > 0 )) && needs_action=true
+    (( brief )) && briefcache_write "$n_unsaved" "$n_incoming" "$n_locked" "$n_missing" "$needs_action" 2>/dev/null || true
+  fi
   local pending_groups=""
   path_dirty "config/"  && pending_groups="$pending_groups config"
   path_dirty "secrets/" && pending_groups="$pending_groups secrets"
@@ -312,21 +349,38 @@ core_status() {
       --argjson ahead "$ahead" --argjson behind "$behind" \
       --arg pending "$pending_groups" \
       --argjson unsaved "$n_unsaved" --argjson incoming "$n_incoming" \
+      --argjson locked "$n_locked" --argjson missing "$n_missing" \
+      --argjson needs_action "$needs_action" \
       '{initialized:true, brief:true, branch:$branch, remote:$remote,
         dirty:$dirty, untracked:$untracked, ahead:$ahead, behind:$behind,
-        unsaved:$unsaved, incoming:$incoming,
+        unsaved:$unsaved, incoming:$incoming, locked:$locked, missing:$missing,
+        needs_action:$needs_action,
         pending:$pending}'
     return 0
   fi
   if (( json )); then
-    local configs_json secrets_json settings_json categories_json groups_json machines_json pending_reinstalls_json plugins_json
+    local configs_json secrets_json entries_json settings_json categories_json groups_json machines_json pending_reinstalls_json plugins_json
     configs_json=$(build_configs_json)
     secrets_json=$(build_secrets_json)
+    entries_json=$(build_entries_json)
     settings_json=$(build_settings_json)
     categories_json=$(build_categories_json)
     groups_json=$(build_setting_groups_json)
     pending_reinstalls_json=$(build_pending_reinstalls_json)
     plugins_json=$(build_plugins_json)
+    local counts_json encryption_json migration_json
+    counts_json=$(jq -nc --argjson entries "$entries_json" \
+      '{unsaved:([$entries[] | select(.sync_state == "unsaved")]|length),
+        incoming:([$entries[] | select(.sync_state == "incoming")]|length),
+        locked:([$entries[] | select(.sync_state == "locked")]|length),
+        missing:([$entries[] | select(.sync_state == "missing")]|length),
+        unpushed:([$entries[] | select(.unpushed == true)]|length),
+        needs_action:([$entries[] | select(.sync_state == "unsaved" or .sync_state == "incoming" or .sync_state == "locked" or .sync_state == "missing" or .sync_state == "unpushed")]|length) > 0,
+        ahead:0, behind:0}')
+    counts_json=$(jq -nc --argjson c "$counts_json" --argjson a "$ahead" --argjson b "$behind" \
+      '$c + {ahead:$a,behind:$b}')
+    encryption_json=$(status_encryption_json)
+    migration_json=$(status_migration_json)
     # Every machine that has ever saved into this repo, newest first. With one
     # machine it is a footnote; with two it is the answer to "did the desktop
     # actually push?", which is the whole reason the repo exists.
@@ -368,18 +422,23 @@ core_status() {
       --arg last_save "$last_save" --arg last_subject "$last_subject" \
       --argjson dirty "$dirty" --argjson untracked "$untracked" --argjson ahead "$ahead" --argjson behind "$behind" \
       --argjson unsaved "$n_unsaved" --argjson incoming "$n_incoming" \
+      --argjson locked "$n_locked" --argjson missing "$n_missing" \
+      --argjson needs_action "$needs_action" --argjson entries "$entries_json" \
+      --argjson counts "$counts_json" --argjson encryption "$encryption_json" \
+      --argjson migration "$migration_json" \
       --arg pending "$pending_groups" --argjson configs "$configs_json" --argjson secrets "$secrets_json" \
       --argjson settings "$settings_json" --argjson categories "$categories_json" \
       --argjson setting_groups "$groups_json" --argjson machines "$machines_json" \
       --arg profile "$(current_profile)" --argjson profiles "$profiles_json" \
       --argjson pending_reinstalls "$pending_reinstalls_json" --argjson plugins "$plugins_json" \
-      '{initialized:true, branch:$branch, remote:$remote, remote_name:$remote_name,
+      '{initialized:true, schema_version:2, branch:$branch, remote:$remote, remote_name:$remote_name,
         repo_dir:$repo_dir, machine:$machine, plugin_version:$plugin_version, home:$home,
         profile:$profile, profiles:$profiles,
         last_save:$last_save, last_subject:$last_subject,
         dirty:$dirty, untracked:$untracked, ahead:$ahead, behind:$behind, pending:$pending,
-        unsaved:$unsaved, incoming:$incoming,
-        configs:$configs, secrets:$secrets, settings:$settings,
+        unsaved:$unsaved, incoming:$incoming, locked:$locked, missing:$missing,
+        needs_action:$needs_action, counts:$counts, encryption:$encryption, migration:$migration,
+        entries:$entries, configs:$configs, secrets:$secrets, settings:$settings,
         categories:$categories, setting_groups:$setting_groups, machines:$machines,
         pending_reinstalls:$pending_reinstalls, plugins:$plugins}'
   else
@@ -390,6 +449,8 @@ core_status() {
     # and the button each one asks for.
     (( n_unsaved > 0 ))  && echo "$(plural "$n_unsaved" file) changed here and not saved — 'savegame --auto'"
     (( n_incoming > 0 )) && echo "$(plural "$n_incoming" file) came from another machine — 'restore --apply'"
+    (( n_locked > 0 )) && echo "$(plural "$n_locked" secret) locked — 'key import <source>' or 'key status'"
+    (( n_missing > 0 )) && echo "$(plural "$n_missing" file) saved in your repo but not on this machine — 'restore --apply' or 'forget <id>'"
     if (( dirty > 0 )); then git -C "$REPO_DIR" status --short 2>/dev/null | head -n 30; fi
   fi
 }
@@ -401,16 +462,40 @@ core_status() {
 core_diff() {
   local id="$1" against="${2:-auto}" src repo_copy def
   src=$(resolve_manifest_src "$id") || { echo "unknown id: $id"; return 1; }
-  # A diff is rendered in the panel, on screen, possibly while sharing it. An
-  # SSH private key or a file of API tokens has no business being drawn there,
-  # so secrets report whether they changed and never what changed. Public keys
+  # The verdict is the evaluator's; this function only renders it. A diff is
+  # rendered in the panel, on screen, possibly while sharing it. An SSH
+  # private key or a file of API tokens has no business being drawn there, so
+  # secrets report whether they changed and never what changed. Public keys
   # are fine.
   # Not a name test. A user can track any file as a secret, under any name, and
   # the refusal has to follow the entry rather than the spelling.
   if [[ "$id" != *.pub ]] && is_secret_rel "$id"; then
+    registry_build
+    local regrow facts same_v locked_v repo_v
+    same_v=false; locked_v=false; repo_v=false
+    if regrow=$(registry_row_for "$id" 2>/dev/null); then
+      local line k v
+      while IFS='=' read -r k v; do
+        case "$k" in
+          same) same_v="$v" ;; locked) locked_v="$v" ;; repo) repo_v="$v" ;;
+        esac
+      done < <(state_facts "$regrow")
+    fi
+    if [[ "$(repo_data_version)" == 2 ]]; then
+      case "$locked_v:$same_v" in
+        *:true) echo "identical to the copy in your repo"; return 0 ;;
+        true:*) echo "This secret is locked on this machine: import the key to compare it." ;;
+        *) echo "This file differs from the copy in your repo." ;;
+      esac
+      echo
+      echo "Its contents are not shown: it holds a key or a token, and a diff"
+      echo "on screen is a diff on any screen share or over any shoulder."
+      echo "Open it yourself if you need to see it."
+      return 0
+    fi
     repo_copy=$(repo_copy_for_rel "$id")
     if [[ ! -f "$repo_copy" ]]; then echo "not saved in your repo yet"; return 0; fi
-    if cmp -s "$src" "$repo_copy" 2>/dev/null; then
+    if [[ "$same_v" == true ]]; then
       echo "identical to the copy in your repo"
     else
       echo "This file differs from the copy in your repo."
@@ -424,10 +509,20 @@ core_diff() {
   # A directory's "diff" is which files moved, not which bytes: a tree is too
   # big to render in the panel, and the useful answer is the file list.
   if is_dir_entry "$id"; then
+    registry_build
+    local live_v=false repo_v=false same_v=false
     repo_copy=$(repo_copy_for_rel "$id")
-    [[ -d "${src%/}" ]] || { echo "$src does not exist on this machine"; return 0; }
-    [[ -d "${repo_copy%/}" ]] || { echo "not saved in the repo yet — press Save to GitHub to add it"; return 0; }
-    if tree_same "$repo_copy" "$src"; then
+    if regrow=$(registry_row_for "$id" 2>/dev/null); then
+      local line k v
+      while IFS='=' read -r k v; do
+        case "$k" in
+          live) live_v="$v" ;; repo) repo_v="$v" ;; same) same_v="$v" ;;
+        esac
+      done < <(state_facts "$regrow")
+    fi
+    [[ "$live_v" == true ]] || { echo "$src does not exist on this machine"; return 0; }
+    [[ "$repo_v" == true ]] || { echo "not saved in the repo yet — press Save to GitHub to add it"; return 0; }
+    if [[ "$same_v" == true ]]; then
       echo "identical to the copy in your repo — $(tree_count "$src") files"; return 0
     fi
     echo "# what is in your repo, next to what is on this machine"
@@ -440,7 +535,17 @@ core_diff() {
   def=$(default_for_src "$src" 2>/dev/null || true)
 
   if [[ "$against" == "auto" ]]; then
-    if [[ -f "$repo_copy" ]] && ! cmp -s "$src" "$repo_copy"; then against="repo"; else against="default"; fi
+    if [[ -f "$repo_copy" ]]; then
+      registry_build
+      if regrow=$(registry_row_for "$id" 2>/dev/null) \
+        && [[ "$(state_facts "$regrow" | grep -c '^same=true$' || true)" == 0 ]]; then
+        against="repo"
+      else
+        against="default"
+      fi
+    else
+      against="default"
+    fi
   fi
 
   case "$against" in
@@ -461,7 +566,7 @@ core_diff() {
 # core_log [n] — recent saves as JSON, for the panel's activity list.
 core_log() {
   local n="${1:-8}"
-  [[ -d "$REPO_DIR/.git" ]] || { echo '[]'; return 0; }
+  [[ -e "$REPO_DIR/.git" ]] || { echo '[]'; return 0; }
   # Runs of the same subject collapse into one row with a count. A save writes
   # an inventory commit whenever a package list moved, so four of the six rows
   # said "state: … inventory" and the two that recorded a decision the user

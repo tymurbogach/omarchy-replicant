@@ -33,6 +33,7 @@ Item {
   readonly property bool needsWords: R.needsAttention(frow.syncState)
                                   || frow.syncState === "off" || frow.syncState === "pending"
   readonly property bool expanded: panel.isRowOpen(frow.config.id)
+  readonly property bool selected: panel.selectedIds.indexOf(frow.config.id) !== -1
 
   // The head has a fixed height, and the details sit under it at a fixed y.
   implicitHeight: head.height + (frow.expanded ? details.implicitHeight + Style.space(10) : 0)
@@ -56,7 +57,7 @@ Item {
       anchors.fill: parent
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
-      onClicked: panel.toggleRow(frow.config.id)
+      onClicked: panel.manageMode ? panel.toggleSelected(frow.config.id, false) : panel.toggleRow(frow.config.id)
     }
 
     Row {
@@ -66,6 +67,16 @@ Item {
       anchors.leftMargin: Style.spacing.rowPaddingX
       anchors.rightMargin: Style.spacing.rowPaddingX
       spacing: Style.space(10)
+
+      Text {
+        visible: panel.manageMode
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(20)
+        text: frow.selected ? "[x]" : "[ ]"
+        color: frow.selected ? Color.accent : panel.dim
+        font.family: panel.ff; font.pixelSize: Style.font.caption
+        horizontalAlignment: Text.AlignHCenter
+      }
 
       Text {
         anchors.verticalCenter: parent.verticalCenter

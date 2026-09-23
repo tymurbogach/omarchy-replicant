@@ -23,6 +23,10 @@ fail=0
 while IFS= read -r file; do
   [[ -f $file ]] || continue
   [[ $file == secrets/* ]] && continue
+  # Vault blobs and the encrypted index are random bytes by design: the
+  # scanner skips binaries on its own, and naming them here keeps that fast
+  # path obvious instead of incidental.
+  [[ $file == *.age ]] && continue
   git show ":$file" 2>/dev/null | "$SCAN" --stdin "$file" || fail=1
 done <<<"$files"
 if (( fail )); then
@@ -92,8 +96,13 @@ ensure_repo_layout() {
 **/Cache/
 GI
   fi
-  # git init if needed
-  if [[ ! -d "$REPO_DIR/.git" ]]; then
+  # git init if needed. A repo born here is born v2: the schema marks the
+  # format every writer after it must understand. A repo that already has
+  # history keeps whatever it has: v1 stays v1 until the section 9 migration,
+  # and a v2 clone only refreshes this machine's own metadata below.
+  # -e, not -d: a save transaction works in a linked worktree, whose .git is
+  # a file pointing at the main repo. Re-running init there would break it.
+  if [[ ! -e "$REPO_DIR/.git" ]]; then
     git -C "$REPO_DIR" init -q -b main
     git -C "$REPO_DIR" config init.defaultBranch main 2>/dev/null || true
     # $USER is not set everywhere (a container, a systemd unit). Under set -u its
@@ -103,12 +112,30 @@ GI
     git -C "$REPO_DIR" config user.name  "${GIT_AUTHOR_NAME:-$(git config --global user.name 2>/dev/null || echo "$who")}"
     git -C "$REPO_DIR" config user.email "${GIT_AUTHOR_EMAIL:-$(git config --global user.email 2>/dev/null || echo "$who@omarchy-replicant")}"
     git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
+    ensure_v2_layout
   else
     git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
+    if [[ "$(repo_data_version)" == 2 ]]; then machine_metadata_write; fi
   fi
 }
 
+# ensure_v2_layout: the v2 skeleton for a repo born here: the schema marker,
+# an empty entry registry, and this machine's metadata. It never overwrites:
+# schema.json and entries.json belong to the migration once written.
+ensure_v2_layout() {
+  local rdir="$REPO_DIR/.replicant"
+  mkdir -p "$rdir/machines" "$REPO_DIR/vault/blobs"
+  if [[ ! -f "$rdir/schema.json" ]]; then
+    jq -nc --argjson v "$SCHEMA_VERSION" --arg f "$SCHEMA_FORMAT" \
+      '{dataVersion: $v, secretFormat: $f}' > "$rdir/schema.json"
+  fi
+  [[ -f "$rdir/entries.json" ]] || printf '{}\n' > "$rdir/entries.json"
+  machine_metadata_write
+}
+
 core_backup() {
+  require_writable_schema || return 1
+  briefcache_invalidate
   # Bash scopes dynamically, and the CLI sources this file, so a name assigned
   # here without `local` leaked into the caller: src, rel, entry and twelve more.
   local entry src rel dst f d copied=0 missing=0 scopied=0 known name \
@@ -123,13 +150,23 @@ core_backup() {
   local skipped=0 held=0
   local -a held_rels=()
   read_incoming
+  # The loop order is the tracked order, so the messages below read the way
+  # they always did. What changed is where each answer comes from: the scope,
+  # the live and repo paths resolve in the registry, and the hold decision is
+  # the evaluator's membership-plus-difference.
+  registry_build
+  local regrow rscope rlive rrepo isdir
+  local -a rf=()
   for entry in "${TRACKED[@]}"; do
-    src=${entry%%:*}
     rel="${entry##*:}"
-    dst=$(repo_path_for "$rel")
+    regrow=$(registry_row_for "$rel") || continue
+    mapfile -t rf < <(row_split "$regrow" 9)
+    rscope="${rf[4]}"; rlive="${rf[5]}"; rrepo="${rf[6]}"
+    src="$rlive"
+    dst="$rrepo"
     # Switched off in .replicant-sync: not copied from here, and (see the
     # prune pass below) whatever the repo already holds is left alone.
-    if is_excluded "$rel"; then
+    if [[ "$rscope" == "off" ]]; then
       skipped=$((skipped + 1))
       continue
     fi
@@ -142,7 +179,8 @@ core_backup() {
     # match again, so the next save treats it like any other row. The escape
     # hatch, for the day this machine's version really should win, is naming it:
     # `save-file <id>` saves one file the user asked for by name.
-    if [[ -n "${INCOMING[$rel]:-}" ]] && entry_differs "$src" "$dst" "$(is_dir_entry "$rel" && echo true || echo false)"; then
+    isdir=false; is_dir_entry "$rel" && isdir=true
+    if is_incoming_rel "$rel" && entry_differs "$rlive" "$rrepo" "$isdir"; then
       held=$((held + 1)); held_rels+=("$rel")
       continue
     fi
@@ -191,11 +229,14 @@ core_backup() {
     echo "    nothing was pruned — upgrade this machine so it can see everything the other one tracks" >&2
   else
   local -a expected=()
-  local _e
+  local _e _row
+  local -a _rf=()
   for entry in "${TRACKED[@]}"; do
     _e="${entry##*:}"
-    is_excluded "$_e" && continue
-    expected+=("$(repo_path_for "$_e")")
+    _row=$(registry_row_for "$_e" 2>/dev/null) || continue
+    mapfile -t _rf < <(row_split "$_row" 9)
+    [[ "${_rf[4]}" == "off" ]] && continue
+    expected+=("${_rf[6]}")
   done
   local pruned=0 found e
   # Only this profile's tree is swept. Another machine's profile directory is
@@ -231,6 +272,12 @@ core_backup() {
   fi
 
   echo "→ Copying secrets (private repo, 600)" >&2
+  if [[ "$(repo_data_version)" == 2 ]]; then
+    # Encrypted per secret into vault/, never as plaintext. The key check
+    # inside fails the backup before anything mutates when this machine has
+    # no usable key: a save that silently skipped secrets would lose backups.
+    vault_save_all || return 1
+  else
   install -d -m 700 "$SECRETS_DIR" 2>/dev/null || true
   scopied=0
   for entry in "${TRACKED_SECRETS[@]}"; do
@@ -251,6 +298,7 @@ core_backup() {
     fi
   done
   echo "  $(plural "$scopied" secret) copied" >&2
+  fi
 
   echo "→ Regenerating state/ inventory" >&2
   mkdir -p "$STATE_DIR"
@@ -345,8 +393,10 @@ core_backup() {
   # and packages.txt — from before the plugin was published, so no user's repo
   # can contain them and no upgrade path leads through them. One of them was
   # also the only Spanish string left in the source.
+  # defined-secrets.txt joins them here: version 2 keeps secret metadata only
+  # inside the encrypted vault index, so even variable names never land in state/.
   local _retired
-  for _retired in system.txt mise.txt npm-global.txt containers.txt system-services.txt; do
+  for _retired in system.txt mise.txt npm-global.txt containers.txt system-services.txt defined-secrets.txt; do
     rm -f "$STATE_DIR/$_retired"
   done
 
@@ -367,9 +417,6 @@ core_backup() {
       done
   } > "$STATE_DIR/user-services.txt" || true
   grep -E '[[:space:]]cifs[[:space:]]' /etc/fstab > "$STATE_DIR/cifs-mounts.txt" 2>/dev/null || true
-  if [[ -r $HOME/.config/environment.d/60-secrets.conf ]]; then
-    { echo "# Names of the defined variables. VALUES are not tracked."; grep -oE '^[A-Z_]+' "$HOME/.config/environment.d/60-secrets.conf" | sort; } > "$STATE_DIR/defined-secrets.txt"
-  fi
   NOISE='^(chromium|fcitx5|systemd|omarchy|elephant|environment\.d|btop)$'
   {
     echo "# Files under ~/.config that differ from Omarchy's default."

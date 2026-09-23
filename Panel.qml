@@ -44,6 +44,40 @@ Panel {
   property string stateFilter: "all"
   property string settingSearch: ""
   property string settingFilter: "all"
+  property bool manageMode: false
+  property var selectedIds: []
+  property string selectionAnchor: ""
+  readonly property var visibleConfigRows: R.visibleRows(root.repoState, root.categoryCards, root.suggestions,
+                                                        root.fileSearch, root.stateFilter)
+  readonly property var selectedRows: root.everyRow.concat((root.suggestions || []).map(function(s) {
+    return { id: s.id, path: s.path, kind: s.kind, size: s.size || 0, nfiles: s.nfiles || 1,
+             suggestion: true, secret: s.kind === "secret" }
+  })).filter(function(r) { return root.selectedIds.indexOf(r.id) !== -1 })
+  readonly property var bulkActions: R.validBulkActions(root.selectedRows)
+  readonly property var selectionSummary: R.selectionSummary(root.selectedRows)
+  property int manageCursor: 0
+  function toggleManage() {
+    root.manageMode = !root.manageMode
+    if (!root.manageMode) root.selectedIds = []
+    else if (root.suggestions.length > 0 && !root.isOpen("__suggest")) root.toggleCard("__suggest")
+  }
+  function clearSelection() { root.selectedIds = []; root.selectionAnchor = "" }
+  function invertSelection() {
+    var next = root.visibleConfigRows.filter(function(r) { return root.selectedIds.indexOf(r.id) === -1 }).map(function(r) { return r.id })
+    root.selectedIds = next
+  }
+  function selectVisible() { root.selectedIds = root.visibleConfigRows.map(function(r) { return r.id }) }
+  function toggleSelected(id, extend) {
+    var next = root.selectedIds.slice()
+    var ids = extend && root.selectionAnchor !== ""
+        ? R.rangeIds(root.visibleConfigRows, root.selectionAnchor, id) : [id]
+    if (extend) {
+      for (var i = 0; i < ids.length; i++) if (next.indexOf(ids[i]) < 0) next.push(ids[i])
+    } else {
+      var p = next.indexOf(id); if (p < 0) next.push(id); else next.splice(p, 1)
+    }
+    root.selectedIds = next; root.selectionAnchor = id
+  }
   property var recent: []
   property int logCount: 6
   property var shortcuts: ({ own: [], active: [], own_count: 0, active_count: 0 })
@@ -97,7 +131,7 @@ Panel {
   readonly property bool busy: saveProc.running || setProc.running || pullProc.running
                             || backupProc.running || fileSaveProc.running || dangerProc.running
                             || checkProc.running || undoProc.running || trackProc.running
-                            || updateProc.running
+                            || updateProc.running || bulkProc.running
   readonly property bool saving: saveProc.running
   readonly property bool pulling: pullProc.running
   readonly property bool checking: doctorProc.running
@@ -194,7 +228,8 @@ Panel {
   // ── derived summaries ─────────────────────────────────────────────────────
   readonly property string profileName: root.repoState.profile || "this machine"
   // Every row, secrets included, in the one shape the Configs tab draws.
-  readonly property var everyRow: (root.repoState.configs || []).concat(R.secretRows(root.repoState))
+  readonly property var everyRow: R.allRows(root.repoState)
+  readonly property var configRows: root.everyRow.filter(function(r) { return r.secret !== true })
   function idsWhere(pred) { return root.everyRow.filter(pred).map(function(r) { return r.id }) }
   readonly property int nTracked: root.everyRow.length
   // Counted from the rows themselves, not from repoState.dirty. The badges and
@@ -231,7 +266,7 @@ Panel {
   // each with the names behind it, and each one a click away from them.
   readonly property var chips: {
     var out = []
-    var nConfigs = (root.repoState.configs || []).length
+    var nConfigs = root.configRows.length
     out.push({ id: "tracked", text: root.nTracked + " tracked", tone: "normal",
                tooltip: "Everything Replicant backs up: " + R.plural(nConfigs, "config") + " and "
                         + R.plural(root.nTracked - nConfigs, "secret") + ".\nClick to see them." })
@@ -425,6 +460,42 @@ Panel {
     root.busyLabel = "Saving " + id + "…"
     fileSaveProc.command = [root.cli, "save-file", id, "-m", "config: update " + id]
     fileSaveProc.running = true
+  }
+  function executeBulk(action) {
+    if (root.selectedIds.length === 0 || root.bulkActions.indexOf(action) < 0) return
+    var cmd = [root.cli, "bulk", action]
+    var targets = root.selectedRows.map(function(r) { return r.suggestion ? r.path : r.id })
+    if (action === "scope-shared" || action === "scope-profile" || action === "scope-off") {
+      var scope = action.slice(6)
+      cmd = [root.cli, "bulk", "scope", "--scope", scope]
+      if (scope === "off") cmd.push("--yes")
+    } else if (action === "track-secret" || action === "track-config") {
+      var trackKind = action === "track-secret" ? "secret" : "config"
+      cmd = [root.cli, "bulk", "track", "--kind", trackKind, "--yes"]
+    } else if (action === "convert-secret" || action === "untrack") {
+      cmd.push("--yes")
+    }
+    cmd.push("--"); for (var i = 0; i < targets.length; i++) cmd.push(targets[i])
+    root.busyLabel = "Applying bulk change…"
+    bulkProc.bulkAction = action
+    bulkProc.command = cmd; bulkProc.running = true
+    if (action.indexOf("scope-") === 0) {
+      var next = {}; for (var k in root.scopeOverrides) next[k] = root.scopeOverrides[k]
+      var optimistic = action.slice(6)
+      for (var j = 0; j < root.selectedIds.length; j++) next[root.selectedIds[j]] = optimistic
+      root.scopeOverrides = next
+    }
+  }
+  function doBulk(action) {
+    if (["scope-off", "convert-secret", "untrack"].indexOf(action) >= 0) {
+      var names = root.selectedIds.slice(0, 12).join("\n  ")
+      var more = root.selectedIds.length > 12 ? "\n  +" + (root.selectedIds.length - 12) + " more" : ""
+      root.ask("bulk:" + action, "", "Apply '" + action + "' to " + root.selectedIds.length
+               + " entries?\n\n  " + names + more + "\n\n"
+               + root.selectionSummary.files + " files · " + R.sizeText(root.selectionSummary.bytes), "Apply")
+      return
+    }
+    root.executeBulk(action)
   }
 
   function doSetSetting(id, value) {
@@ -669,6 +740,7 @@ Panel {
     else if (a === "undo")          { root.doUndo(arg); return }
     else if (a === "prune-backups") { root.doPruneBackups(); return }
     else if (a === "update")        { root.busyLabel = "Updating Replicant…"; updateProc.command = [root.cli, "update", "--yes", "--restart"]; updateProc.running = true; return }
+    else if (a.indexOf("bulk:") === 0) { root.executeBulk(a.slice(5)); return }
     else return
     dangerProc.label = a === "recover" ? "Bring back" : a.indexOf("install") === 0 ? "Install" : a.indexOf("reset") === 0 ? "Reset" : "Restore"
     dangerProc.running = true
@@ -744,6 +816,20 @@ Panel {
   CliProcess { id: backupProc;   onExited: function(c){ root.finish("Copy", c, backupProc.stdout.text, backupProc.stderr.text) } }
   CliProcess { id: setProc;      onExited: function(c){ root.finish("Setting", c, setProc.stdout.text, setProc.stderr.text) } }
   CliProcess { id: fileSaveProc; onExited: function(c){ root.finish("Save file", c, fileSaveProc.stdout.text, fileSaveProc.stderr.text) } }
+  CliProcess {
+    id: bulkProc
+    property string bulkAction: ""
+    onExited: function(c) {
+      root.finish("Bulk change", c, bulkProc.stdout.text, bulkProc.stderr.text)
+      if (c === 0) {
+        root.scopeOverrides = ({})
+        root.clearSelection()
+      } else if (bulkProc.bulkAction.indexOf("scope-") === 0) {
+        root.scopeOverrides = ({})
+      }
+      bulkProc.bulkAction = ""
+    }
+  }
   CliProcess {
     id: dangerProc
     property string label: "Restore"
@@ -959,13 +1045,25 @@ Panel {
     contentWidth: panel.fittedContentWidth(Style.space(580))
     contentHeight: panel.fittedContentHeight(
       header.implicitHeight + Style.space(10) + body.implicitHeight
-        + (footer.visible ? footer.implicitHeight + Style.space(6) : 0),
+        + (footer.visible ? footer.implicitHeight + Style.space(6) : 0)
+        + (bulkFooter.visible ? bulkFooter.implicitHeight + Style.space(6) : 0),
       Style.space(900))
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
       blocked: root.focusedField !== null
+      Keys.onPressed: function(event) {
+        if (!root.focusedField && root.manageMode && root.activeTab === "configs"
+            && event.key === Qt.Key_A && (event.modifiers & Qt.ControlModifier)) {
+          root.selectVisible(); event.accepted = true
+        }
+        if (!root.focusedField && root.manageMode && root.activeTab === "configs"
+            && event.key === Qt.Key_Space && (event.modifiers & Qt.ShiftModifier)
+            && root.visibleConfigRows.length > 0) {
+          root.toggleSelected(root.visibleConfigRows[root.manageCursor].id, true); event.accepted = true
+        }
+      }
       onCloseRequested: {
         if (root.viewerOpen) root.closeViewer()
         else if (confirmDialog.opened) confirmDialog.opened = false
@@ -990,11 +1088,20 @@ Panel {
           root.activeTab = "configs"
           if (!root.isOpen("__suggest")) root.toggleCard("__suggest")
         }
+        else if (t === "m" && root.activeTab === "configs") root.toggleManage()
         // "/" filters where you already are.
         else if (t === "/") {
           if (root.activeTab === "settings") settingsTab.focusSearch()
           else { root.activeTab = "configs"; configsTab.focusSearch() }
         }
+      }
+      onMoveRequested: function(dx, dy) {
+        if (!root.manageMode || root.activeTab !== "configs" || root.visibleConfigRows.length === 0) return
+        root.manageCursor = Math.max(0, Math.min(root.visibleConfigRows.length - 1, root.manageCursor + dy))
+      }
+      onActivateRequested: {
+        if (root.manageMode && root.activeTab === "configs" && root.visibleConfigRows.length > 0)
+          root.toggleSelected(root.visibleConfigRows[root.manageCursor].id, false)
       }
 
       // ─────────────────────────────── header (fixed) ────────────────────────
@@ -1051,8 +1158,8 @@ Panel {
         anchors.topMargin: Style.space(10)
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: footer.visible ? footer.top : parent.bottom
-        anchors.bottomMargin: footer.visible ? Style.space(6) : 0
+        anchors.bottom: bulkFooter.visible ? bulkFooter.top : (footer.visible ? footer.top : parent.bottom)
+        anchors.bottomMargin: bulkFooter.visible || footer.visible ? Style.space(6) : 0
         implicitHeight: content.implicitHeight
         contentHeight: content.implicitHeight
         contentWidth: width
@@ -1121,6 +1228,15 @@ Panel {
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         anchors.right: parent.right
+      }
+      BulkFooter {
+        id: bulkFooter
+        panel: root
+        visible: root.manageMode && root.activeTab === "configs"
+        anchors.bottom: footer.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottomMargin: Style.space(6)
       }
 
       // ─────────────────────────────── overlays ──────────────────────────────

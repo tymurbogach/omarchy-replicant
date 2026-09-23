@@ -69,7 +69,22 @@ instead of overwriting each other.
 omarchy-replicant profile              # which profile this machine is in
 omarchy-replicant profile desktop      # put it in another one
 omarchy-replicant scope hypr/input.lua profile
+omarchy-replicant policy set --scope off -- hypr/input.lua hypr/hyprlock.conf
 ```
+
+### Status and migration
+
+Full JSON status uses one `entries` array. The old `configs` and `secrets` arrays remain for one
+compatibility release. A v1 repository reports that migration is required.
+
+```bash
+omarchy-replicant status --json
+omarchy-replicant migrate-v2 --remote /path/to/empty-private-remote \
+  --identity-backup /path/outside/replicant/identity.txt --yes
+```
+
+Migration creates a new encrypted repository, verifies an independent clone, and keeps the old
+repository under `legacy-repo-<epoch>`. It never deletes old local or remote data.
 
 ### Your list, not somebody else's
 
@@ -143,7 +158,7 @@ A plugin with a settings file of its own, `~/.config/omarchy/<name>.json`, also 
 - **Change detection that tells the truth.** Every file is compared by content with its copy in
   your repo. Edit a file and the badge shows it. Put it back and the badge clears by itself.
 - **The badges**, in the panel's own words: **●** unsaved, **↓** to restore, **↑** to push,
-  **◆** saved, **○** default, **⊘** off, **·** not here.
+  **◆** saved, **○** default, **⊘** off, **·** not here, **⚠** locked.
 - **It knows which way a change points.** After a `pull`, a file that another machine changed is
   marked **↓ to restore**, not ● unsaved. So the obvious button never commits over another
   machine's work.
@@ -206,13 +221,14 @@ Your GitHub repo is not touched either way.
 
 ## Requirements
 
-Omarchy 4 (Quattro), and two tools beyond a stock install. `omarchy-replicant doctor` checks both,
-and it names the command that installs a missing one.
+Omarchy 4 (Quattro), and three tools beyond a stock install. `omarchy-replicant doctor` checks
+all three, and it names the command that installs a missing one.
 
 | Tool | Why | Install |
 | --- | --- | --- |
 | `github-cli` (`gh`) | Logs you in and creates the private repo | `omarchy pkg add github-cli` |
 | `jq` | Reads and writes the JSON configs | `omarchy pkg add jq` |
+| `age` | Encrypts secrets with a shared post-quantum key (`age-keygen -pq`) | `omarchy pkg add age` |
 
 `git` is on every Omarchy machine. The plugin pulls in nothing else, and it writes nothing outside
 its own folder and `~/.local/share/omarchy-replicant/`.

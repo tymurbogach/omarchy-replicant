@@ -23,7 +23,7 @@ Card {
   // A filter is a question about the rows, so while one is on, every card
   // that has an answer is open. Filtering and then opening eleven cards to
   // find the three matches was the search doing half its job.
-  expanded: panel.isOpen(cc.card.id) || panel.filtering
+  expanded: panel.manageMode || panel.isOpen(cc.card.id) || panel.filtering
   onToggled: panel.toggleCard(cc.card.id)
 
   // Shortcuts is the one area where the files are not the point: what you

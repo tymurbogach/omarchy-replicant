@@ -25,6 +25,10 @@ function stateGlyph(st) {
   if (st === "unsaved") return "●"
   if (st === "unpushed") return "↑"
   if (st === "default") return "○"
+  // Locked out: the secret is here and so is its vault copy, but without the
+  // key no one can say whether they match. A warning sign, below U+FFFF like
+  // every other badge, so the legend can print it literally.
+  if (st === "locked") return "⚠"
   // Not a state of the core: a scope change the panel has sent and the next
   // status has not confirmed yet.
   if (st === "pending") return "…"
@@ -38,6 +42,9 @@ function stateGlyph(st) {
 // badge must not look like the badge that asks for Save.
 function stateRole(st) {
   if (st === "incoming") return "warn"
+  // Locked asks for a different action (import the key), not for Save, so it
+  // shares incoming's warning colour and never Save's accent.
+  if (st === "locked") return "warn"
   if (st === "unsaved" || st === "unpushed") return "accent"
   if (st === "saved") return "ok"
   return "dim"
@@ -56,6 +63,7 @@ function stateWord(st) {
   if (st === "unsaved") return "not saved yet"
   if (st === "unpushed") return "not pushed yet"
   if (st === "default") return "untouched Omarchy default"
+  if (st === "locked") return "locked, needs key"
   if (st === "pending") return "saving the change…"
   return "saved on GitHub"
 }
@@ -169,7 +177,7 @@ function webUrl(remote) {
 // The row states that have a button worth pressing. A file gone from this
 // machine is one: it asks whether to bring it back or to forget it.
 function needsAttention(st) {
-  return st === "unsaved" || st === "unpushed" || st === "incoming" || st === "missing"
+  return st === "unsaved" || st === "unpushed" || st === "incoming" || st === "missing" || st === "locked"
 }
 
 // Which rows a filter keeps: "all", "changed" or "off".
@@ -202,6 +210,64 @@ function displayState(row, overrides) {
   return row.sync_state === "off" ? "pending" : row.sync_state
 }
 
+// The visible order is global. Cards do not create separate selection ranges.
+function visibleRows(repoState, categoryCards, suggestions, search, filter) {
+  var out = []
+  var cards = categoryCards || []
+  for (var i = 0; i < cards.length; i++) {
+    var rows = cards[i].rows || []
+    for (var j = 0; j < rows.length; j++) {
+      if (rowMatchesFilter(rows[j], filter || "all")
+          && (search === "" || (String(rows[j].label) + " " + String(rows[j].id)).toLowerCase().indexOf(String(search).toLowerCase()) !== -1)) out.push(rows[j])
+    }
+  }
+  var add = suggestions || [], needle = String(search || "").toLowerCase()
+  for (var k = 0; k < add.length; k++) {
+    if ((filter || "all") === "all" && (needle === "" || (String(add[k].pretty) + " " + String(add[k].id)).toLowerCase().indexOf(needle) !== -1)) out.push(add[k])
+  }
+  return out
+}
+
+function rangeIds(rows, anchor, target) {
+  var a = -1, b = -1
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].id === anchor) a = i
+    if (rows[i].id === target) b = i
+  }
+  if (a < 0 || b < 0) return target === undefined ? [] : [target]
+  if (a > b) { var t = a; a = b; b = t }
+  return rows.slice(a, b + 1).map(function(r) { return r.id })
+}
+
+function validBulkActions(rows) {
+  var list = rows || []
+  if (list.length === 0) return []
+  if (list.some(function(r) { return r.locked === true })) return []
+  if (list.every(function(r) { return r.suggestion === true })) {
+    if (list.every(function(r) { return r.kind === "secret" })) return ["track-secret"]
+    if (list.every(function(r) { return r.kind !== "secret" })) return ["track-config", "track-secret"]
+    return []
+  }
+  var canSave = list.every(function(r) {
+    return r.suggestion !== true && r.sync_state !== "incoming" && r.sync_state !== "missing"
+  })
+  var out = canSave ? ["save"] : []
+  if (list.every(function(r) { return r.source === "user" && r.secret !== true })) out.push("convert-secret", "untrack")
+  if (list.every(function(r) { return r.secret !== true })) out.push("scope-shared", "scope-profile", "scope-off")
+  else if (list.every(function(r) { return r.secret === true })) out.push("scope-shared", "scope-off")
+  return out
+}
+
+function selectionSummary(rows) {
+  var list = rows || [], files = 0, bytes = 0
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].secret === true) continue
+    files += Number(list[i].nfiles || (list[i].is_dir ? 0 : 1))
+    bytes += Number(list[i].size || 0)
+  }
+  return { selected: list.length, files: files, bytes: bytes }
+}
+
 // ── rows ────────────────────────────────────────────────────────────────────
 // Secrets live in their own part of the payload because they carry different
 // facts (mode, kind, the NAMES of the variables and never their values), but
@@ -223,24 +289,51 @@ function secretRows(repoState) {
   return out
 }
 
+// Entry rows are the version 2 contract. Keep the old split payload as a
+// fallback so a panel can read a status response from one older core release.
+function entryRows(repoState) {
+  var out = []
+  var list = repoState.entries || []
+  for (var i = 0; i < list.length; i++) {
+    var e = list[i]
+    var secret = e.kind === "secret"
+    out.push({
+      id: e.id, label: e.label || e.id, src: e.src || "", category: e.category || "other",
+      sync_state: e.sync_state, exists: e.exists === true, has_default: false,
+      saved: e.saved === true, is_default: e.is_default === true,
+      synced: e.scope !== "off", scope: e.scope || "shared", source: e.source || "override",
+      is_dir: e.kind === "dir", nfiles: e.nfiles || 0,
+      secret: secret, kind: secret ? "secret" : "", mode: "", vars: [], var_count: 0,
+      locked: e.locked === true, incoming: e.incoming === true, unpushed: e.unpushed === true
+    })
+  }
+  return out
+}
+
+function allRows(repoState) {
+  if (repoState.entries !== undefined && repoState.entries !== null) return entryRows(repoState)
+  return (repoState.configs || []).map(function(c) {
+    return {
+      id: c.id, label: c.label, src: c.src, category: c.category,
+      sync_state: c.sync_state, exists: c.exists, has_default: c.has_default,
+      saved: c.saved === true, is_default: c.is_default === true, synced: c.synced,
+      scope: c.scope || "shared", source: c.source || "override", is_dir: c.is_dir === true,
+      nfiles: c.nfiles || 0, secret: false, kind: "", mode: "", vars: [], var_count: 0
+    }
+  }).concat(secretRows(repoState))
+}
+
 // The rows of one area in one uniform shape, secrets included, filtered by
 // the search text and the state filter (rowMatchesFilter), and sorted by label.
 function rowsFor(repoState, categoryId, search, filter) {
   var out = []
-  var list = repoState.configs || []
+  var list = allRows(repoState)
   var needle = String(search || "").toLowerCase()
   for (var i = 0; i < list.length; i++) {
     var c = list[i]
     if ((c.category || "other") !== categoryId) continue
-    out.push({
-      id: c.id, label: c.label, src: c.src, category: c.category,
-      sync_state: c.sync_state, exists: c.exists, has_default: c.has_default, saved: c.saved === true,
-      is_default: c.is_default === true, synced: c.synced, scope: c.scope || "shared",
-      source: c.source || "manifest", is_dir: c.is_dir === true, nfiles: c.nfiles || 0,
-      secret: false, kind: "", mode: "", vars: [], var_count: 0
-    })
+    out.push(c)
   }
-  if (categoryId === "secrets") out = out.concat(secretRows(repoState))
   if (needle !== "") {
     out = out.filter(function(r) {
       return (String(r.label) + " " + String(r.src)).toLowerCase().indexOf(needle) !== -1

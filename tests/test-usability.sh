@@ -72,6 +72,14 @@ off_chip=$(grep -oE '"⊘ " \+ root\.nOff \+ " [^"]+"' "$PANEL" | sed -E 's/.*" 
 check_contains "the row calls it off"                  "off" "$off_row"
 check_contains "…and so does its chip on the Overview" "off" "$off_chip"
 
+section "the bar names the missing state"
+# Regression test for the missing-file defect (PLAN section 1). A saved file
+# deleted from this machine must move the bar off "in sync", so the bar has to
+# read the missing state the way it reads unsaved and incoming. Comments do
+# not count: only code outside comments moves the icon.
+code=$(grep -vE '^[[:space:]]*//' "$ROOT/BarWidget.qml")
+check_contains "the bar names the missing state" "missing" "$code"
+
 section "a card's subtitle fits its card"
 # A card header elides its subtitle, and the end goes first. The key check above
 # passed while the panel showed "…backing up yet  (…": the "(a)" was in the

@@ -97,8 +97,8 @@ why: savegame reports a push that failed
 ---
 file: bin/lib/layout.sh
 suite: test-journey.sh
-from: if [[ -n "${INCOMING[$rel]:-}" ]] && entry_differs
-to: if false && entry_differs
+from:     if is_incoming_rel "$rel" && entry_differs "$rlive" "$rrepo" "$isdir"; then
+to:     if false; then
 why: saving everything holds back a file another machine changed
 ---
 file: bin/lib/settings.sh
@@ -208,6 +208,198 @@ suite: test-core.sh
 from: recorded: ($mine | length > 0),
 to: recorded: true,
 why: a plugin installed after the last save is not called recorded
+---
+file: bin/lib/schema.sh
+suite: test-schema.sh
+from:     1|2) return 0 ;;
+to:     1|2|99) return 0 ;;
+why: a newer data format blocks writes
+---
+file: bin/lib/schema.sh
+suite: test-schema.sh
+from:   v=$(jq -r '.dataVersion // empty' "$file" 2>/dev/null || true)
+to:   v=1
+why: the write gate reads the version from the schema file
+---
+file: bin/lib/layout.sh
+suite: test-schema.sh
+from:     ensure_v2_layout
+to:     :
+why: a fresh repo is born v2
+---
+file: bin/lib/schema.sh
+suite: test-schema.sh
+from:   dups=$(_v2_top_keys "$file" | sort | uniq -d)
+to:   dups=
+why: a duplicate entry id is rejected
+---
+file: bin/lib/schema.sh
+suite: test-schema.sh
+from:     '{machineId: $id, profile: $profile, clientVersion: $client, schemaVersion: $schema}' > "$dir/$id.json"
+to:     '{machineId: $id, profile: $profile, clientVersion: $client, schemaVersion: $schema, debug: $id}' > "$dir/$id.json"
+why: machine metadata holds exactly four fields
+---
+file: bin/omarchy-replicant
+suite: test-schema.sh
+from:   bash "$CORE" schema-gate || exit 1
+to:   :
+why: savegame stops before the commit on a newer format
+---
+file: bin/lib/crypto.sh
+suite: test-crypto.sh
+from:       if cmp -s "$src" "$plain" 2>/dev/null; then
+to:       if false; then
+why: an unchanged secret keeps its ciphertext byte for byte
+---
+file: bin/lib/state.sh
+suite: test-crypto.sh
+from:   elif [[ "$locked_v" == "true" ]]; then sync_state="locked"
+to:   elif false; then sync_state="locked"
+why: a secret the key cannot read shows as locked
+---
+file: bin/lib/crypto.sh
+suite: test-crypto.sh
+from:   if ! age -d -i "$idf" -o "$plain" "$blobs/$blob.age" 2>/dev/null; then
+to:   if false; then
+why: a tampered blob never replaces live data on restore
+---
+file: bin/lib/crypto.sh
+suite: test-crypto.sh
+from:     if ! age -d -i "$old_idf" -o "$plain" "$blobs/$blob.age" 2>/dev/null; then
+to:     if false; then
+why: rotation re-encrypts every blob from readable plaintext
+---
+file: bin/lib/crypto.sh
+suite: test-crypto.sh
+from:   [[ "$(repo_data_version)" == 2 ]] || {
+to:   :
+why: key init refuses a version 1 repo
+---
+file: bin/lib/status.sh
+suite: test-crypto.sh
+from:         vars=""; nvars=0
+to:         :
+why: a locked secret row carries no variable names or counts
+---
+file: bin/lib/incoming.sh
+suite: test-crypto.sh
+from:   printf '%s %s %s %s\n' "$n_unsaved" "$n_incoming" "$n_locked" "$n_missing"
+to:   printf '%s %s %s\n' "$n_unsaved" "$n_incoming" "$n_locked"
+why: the bar counts locked secrets apart from unsaved ones
+---
+file: bin/lib/layout.sh
+suite: test-crypto.sh
+from:     rm -f "$STATE_DIR/$_retired"
+to:     :
+why: a backup sweeps retired inventories including defined-secrets.txt
+---
+file: bin/omarchy-replicant
+suite: test-crypto.sh
+from:     if key_out=$(bash "$CORE" key status 2>&1); then key_rc=0; else key_rc=$?; fi
+to:     key_rc=0
+why: doctor reports the key remedy when the vault is locked
+---
+file: bin/lib/registry.sh
+suite: test-state.sh
+from:     [[ -n "${r_live[$rel]:-}" ]] && continue
+to:     :
+why: a user entry wins over an auto-discovered one
+---
+file: bin/lib/registry.sh
+suite: test-state.sh
+from:         [[ -z "$vidx" ]] && locked="true"
+to:         :
+why: a secret the key cannot read resolves to locked
+---
+file: bin/lib/registry.sh
+suite: test-state.sh
+from: {for (i = 1; i <= n; i++) print $i}
+to: {print $0}
+why: a row with an empty middle field still parses to nine fields
+---
+file: bin/lib/state.sh
+suite: test-state.sh
+from:   elif [[ "$incoming_v" == true ]]; then sync_state="incoming"
+to:   elif false; then sync_state="incoming"
+why: an incoming entry asks for restore, not for save
+---
+file: bin/lib/incoming.sh
+suite: test-state.sh
+from:       [[ "$repo" == true ]] && n_missing=$(( n_missing + 1 ))
+to:       :
+why: the bar counts a saved entry gone from this machine
+---
+file: bin/lib/status.sh
+suite: test-state.sh
+from:   (( n_unsaved > 0 || n_incoming > 0 || n_locked > 0 || n_missing > 0 )) && needs_action=true
+to:   needs_action=false
+why: any actionable count raises needs_action
+---
+file: bin/lib/briefcache.sh
+suite: test-state.sh
+from:     [[ "$live_sig" == "$clive" ]] || return 1
+to:     :
+why: a live-file change drops the brief cache
+---
+file: bin/lib/incoming.sh
+suite: test-state.sh
+from:   briefcache_invalidate
+to:   :
+why: an incoming record drops the brief cache
+---
+file: bin/lib/status.sh
+suite: test-state.sh
+from:     (( brief )) && briefcache_write "$n_unsaved" "$n_incoming" "$n_locked" "$n_missing" "$needs_action" 2>/dev/null || true
+to:     :
+why: a brief miss stores its counts for the next poll
+---
+file: bin/lib/save.sh
+suite: test-save.sh
+from:     did_commit=1
+to:     did_commit=0
+why: a committed transaction is fast-forwarded into the active repo
+---
+file: bin/lib/save.sh
+suite: test-save.sh
+from:     echo "save: the repo has uncommitted changes — a save needs a clean worktree:" >&2
+to:     :
+why: a save refuses a dirty worktree before creating anything
+---
+file: bin/omarchy-replicant
+suite: test-save.sh
+from:   warn "savegame is deprecated — 'save' does this now (same options)"
+to:   :
+why: savegame says it is deprecated
+---
+file: bin/omarchy-replicant
+suite: test-save.sh
+from:     echo "pull: the repo has uncommitted changes — pull needs a clean worktree:" >&2
+to:     :
+why: pull refuses a dirty worktree instead of stashing it
+---
+file: bin/omarchy-replicant
+suite: test-save.sh
+from:     ok "nothing to push — there is no remote yet: run 'omarchy-replicant create --push'"
+to:     :
+why: push names the next step when there is no remote
+---
+file: bin/omarchy-replicant
+suite: test-save.sh
+from:     if ! push_err=$(git_repo push -q 2>&1); then
+to:     if false; then
+why: a shape commit that cannot push reports the local commit and fails
+---
+file: bin/lib/save.sh
+suite: test-save.sh
+from:     if (( ! force )); then
+to:     if false; then
+why: discarding a committed transaction needs an explicit force
+---
+file: bin/omarchy-replicant
+suite: test-save.sh
+from:   warn "backup is deprecated — it only reviews now; 'changes' shows the same, 'save --id <id> -m "why"' commits one entry"
+to:   :
+why: backup says it is a read-only alias for changes
 DATA
 )
 

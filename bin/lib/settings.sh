@@ -384,6 +384,7 @@ num_in_range() {
 }
 
 set_setting_value() {
+  require_writable_schema || return 1
   invalidate_file_maps
   local entry; entry=$(find_setting "$1") || { echo "unknown setting: $1" >&2; return 1; }
   local file path type label unit min max options apply value="$2"
@@ -686,6 +687,7 @@ setting_repo_value() {
 # rest of the file it lives in. The whole-file equivalents (`reset`, `restore`)
 # are still there; this is the small, everyday one.
 core_revert() {
+  require_writable_schema || return 1
   local id="$1" to="${2:-default}" value
   # Say which of the two things is wrong. Both failures below assume the id is
   # real, so an id that is not reported "no Omarchy default known for

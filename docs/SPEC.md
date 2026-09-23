@@ -20,6 +20,7 @@ This document describes the data model of the plugin and the rules that the code
 | Module | What it holds |
 | --- | --- |
 | `manifest.sh` | The shipped lists, the user's list, Omarchy's defaults, the repo version guard |
+| `registry.sh` | One normalized row per entry from every source that names one |
 | `categories.sh` | The areas that the panel files every entry under |
 | `scopes.sh` | Profiles, and whether each file is shared, kept per profile, or off |
 | `track.sh` | Writing the user's list: `track` and `untrack` |
@@ -32,6 +33,10 @@ This document describes the data model of the plugin and the rules that the code
 | `discover.sh` | Entries found rather than listed: plugin configs and Hyprland modules |
 | `settings.sh` | The settings registry, its readers and its writers |
 | `status.sh` | The JSON that the panel and the bar read, the diff and the log |
+| `briefcache.sh` | The brief-status metadata cache and its invalidation |
+| `save.sh` | Saves as transactions: snapshot, one commit, fast-forward, push |
+| `bulk.sh` | Validates and applies multi-entry changes in one transaction |
+| `migrate.sh` | Migrates a clean v1 repository into a new encrypted v2 repository |
 | `restore.sh` | The restore plan for each area, and how each area is put back |
 | `plugins.sh` | Plugins and themes: origins, inventories, and installs on request |
 | `history.sh` | Copies that left the repo, and bringing them back from git history |
@@ -179,13 +184,13 @@ so `is_dir_entry` is the only test anywhere.
 An inventory file stays only if a restore consumes it, or if a person rebuilds a machine from it.
 
 - A restore consumes `omarchy-plugins.txt` and `omarchy-themes.txt`.
-- A person rebuilds from `pacman-*.txt`, `drift-vs-omarchy.txt`, `defined-secrets.txt`,
+- A person rebuilds from `pacman-*.txt`, `drift-vs-omarchy.txt`,
   `cifs-mounts.txt` and `user-services.txt`.
 - `user-services.txt` records only the units whose file is in `~/.config/systemd/user`. The units
   that the distribution enables change on every package update and are nobody's setup.
-- `system.txt`, `mise.txt`, `npm-global.txt`, `containers.txt` and `system-services.txt` were
-  retired, because they failed both tests. The backup removes them from this machine's directory.
-  Another machine's inventory is not this machine's to tidy.
+- `system.txt`, `mise.txt`, `npm-global.txt`, `containers.txt`, `system-services.txt` and
+  `defined-secrets.txt` were retired, because they failed both tests. The backup removes them from
+  this machine's directory. Another machine's inventory is not this machine's to tidy.
 
 ## What "changed" means
 
@@ -194,6 +199,12 @@ An inventory file stays only if a restore consumes it, or if a person rebuilds a
   "copied in, never committed".
 - `entry_differs` is the only definition of that comparison. `count_changes` sends the counts to
   the bar in the brief payload, so the bar and the panel read the same number.
+- The brief payload reuses a metadata cache at `$REPLICANT_HOME/cache/state-v2.json`. The cache
+  holds file identity, modification metadata, ciphertext object IDs, and the previous counts. It
+  holds no secret values, names, or plaintext hashes. Every writer invalidates it, and the repo
+  HEAD, profile, incoming list, and key state guard it. Full status never reads it: a content
+  change that preserves size and mtime still hits the brief cache, while full status compares
+  bytes and always sees it.
 - The badge heals itself. Edit a file and put it back, and `cmp` matches again.
 - The badge order is: off, missing, incoming, unsaved, default, unpushed, saved.
 - `incoming` outranks `unsaved` for safety: the two look the same and ask for opposite buttons.
@@ -218,15 +229,35 @@ commits arrive knows which one is right, so that moment writes it down.
 
 ## Saving
 
-- `savegame` copies, commits and pushes. `--auto` writes the subject from the changed paths, and
-  `-m` gives a subject. Plain `savegame` commits the inventory and leaves the config for a person
-  to commit with a reason.
-- `savegame` pushes every commit that the remote does not have, and it sets the upstream on the
+- `save` snapshots, commits and pushes through one transaction. The snapshot
+  lands in a detached worktree under `$REPLICANT_HOME/transactions/<uuid>/`,
+  beside a `meta.json` journal (base commit, selected IDs, stage, candidate
+  commit, push result). The active worktree must be clean: every copy in it
+  is regenerable from live files. A repo with no commits yet saves inline.
+- `save --all` holds config, secrets and inventory in one commit.
+  `save --id` holds exactly the named entries (and overrules the incoming
+  hold-back, like `save-file` always did). `save --inventory` holds only
+  this machine's inventory. `--auto` writes the subject from the changed
+  paths, and `-m` gives a subject. `savegame` is a deprecated alias for
+  `save`, and `save-file` is `save --id` with a default subject.
+- The save commits only when the schema validates and the secret scanner
+  passes over the transaction. It then verifies that the active HEAD is
+  still the base, fast-forwards to the candidate, and pushes. A failure
+  before the fast-forward leaves the active repo untouched; a committed
+  transaction is never discarded automatically.
+- `save` pushes every commit that the remote does not have, and it sets the upstream on the
   first push. It says what happened: pushed, no remote, held with `--no-push`, or failed.
 - A failed push exits 1. With two machines on one repo, a push that another machine beat is the
-  normal case, and the answer is to pull and save again.
-- `set` and `revert` commit through `savegame -m`, which commits every pending file together with the
+  normal case, and the answer is to pull and save again. The next save retries the push.
+- `set` and `revert` commit through `save --all -m`, which commits every pending file together with the
   setting. That is intended. `scope`, `track` and `untrack` commit only their own paths.
+- `policy set --scope <scope> -- <id...>` validates the complete selection before it changes
+  `.replicant-sync`. It changes all selected scopes together and commits the repository shape once.
+  Entry type conversion uses a separate command and never happens through this scope operation.
+- `bulk save|scope|track|convert-secret|untrack` applies one validated selection in one transaction.
+  Tracking requires confirmation. Destructive scope changes and type conversion require `--yes`.
+  Files larger than 10 MiB require `--allow-large`; `BULK_LARGE_LIMIT_BYTES` changes that threshold.
+  Secret operations require a version 2 repository and a valid local identity.
 - A lock (`flock` on `~/.local/share/omarchy-replicant/.replicant.lock`) serialises every command
   that writes. `undo`, `backups`, `purge` and `recover` take it only when they apply, because a
   dry run must not create the lock file. `REPLICANT_LOCK_WAIT` sets the wait for the tests.
@@ -265,13 +296,48 @@ commits arrive knows which one is right, so that moment writes it down.
 - `bin/scan-secrets.sh` is the only list of credential shapes. The data repo's pre-commit hook and
   the backup both use it. The backup scans `config/`, this machine's `state/` and this profile's tree.
 - The hook is rewritten whenever it differs from the plugin's version. It fails closed: a missing
-  scanner blocks the commit.
+  scanner blocks the commit. The hook lets vault ciphertext (`*.age`) through.
 - A secret is never rendered. `core_diff` says only whether a secret differs, and the JSON carries a
-  kind, a mode and variable names, never values. See hard rule 11 in `CONTRIBUTING.md`.
+  kind and a mode, never values. In version 1 it also carried variable names. In version 2 it
+  carries only a count, and a locked row carries no count. See hard rule 11 in `CONTRIBUTING.md`.
+- In version 2 every secret lives encrypted in `vault/blobs/` under a random opaque ID, with its
+  path, scope and blob ID inside the encrypted `vault/index.age`. The repo holds only the public
+  recipient in `.replicant/recipient.txt`. The shared private identity lives at
+  `$REPLICANT_HOME/keys/identity.txt` at mode 600 and never enters Git, logs, status JSON, backups
+  or temporary worktrees.
+- One machine runs `key init`, backs the identity up with `key export` to a path outside the repo
+  and the state dir, and each other machine adopts it once with `key import`. `key status` reports
+  whether this machine can read the vault, and `doctor` repeats its remediation.
+- A secret whose vault cannot be read shows as `locked`. The bar counts locked secrets apart from
+  unsaved ones and asks for the key, never for a save. `count_changes` prints
+  `<unsaved> <incoming> <locked>`, and both brief and full status publish `locked`.
+- `key rotate` re-encrypts every blob and the index to a new recipient. Rotation cannot revoke
+  ciphertext already pushed: it stays readable with the old key. After a private key compromise,
+  start a new clean repository instead of rotating.
 - A tracked secret that only root can read does not end the backup. The backup names it with the
   `sudo install` command that copies it.
 - `suggest_kind` marks a file that holds a credential (`gh/hosts.yml`, `.netrc`, `*token*`), so it is
   offered as a secret. As plain config, an OAuth token would sit in the repo at mode 644.
+
+## Status contract
+
+- Full `status --json` carries `schema_version: 2` and one `entries` array. Each entry carries
+  `id`, `label`, `kind`, `source`, `category`, `scope`, `exists`, `saved`, `is_default`, `dirty`,
+  `unpushed`, `incoming`, `sync_state`, `is_dir`, `nfiles` and `locked`. A locked secret omits `src`.
+- The full payload also carries `counts`, `encryption` and `migration`. The old `configs` and
+  `secrets` arrays remain for one compatibility release. The brief payload keeps its small shape.
+- `source` is `user` for a personal entry and `override` for shipped, discovered or v2 override
+  entries. `kind` is `config`, `dir` or `secret`.
+
+## Migration
+
+- `migrate-v2` runs from a terminal with `--yes`. It requires a clean and synchronized v1 repo,
+  an empty private remote, a safe external identity backup path and post-quantum age support.
+- The command stages under `$REPLICANT_HOME/migration/<id>/repo`, creates one root commit, pushes it,
+  clones it independently and checks the result before activation.
+- The old repository is renamed to `legacy-repo-<epoch>`. The command never deletes it or its remote.
+  `migration-warning` remains until the user confirms credential rotation and legacy cleanup.
+- A failed preflight, encryption step, validation step, push or clone leaves the active v1 repo in place.
 
 ## The safety net
 
@@ -290,7 +356,8 @@ The plugin writes nothing outside its own folder and `~/.local/share/omarchy-rep
 backups and the optional link. `purge` names every trace (hard rule 8):
 
 - `repo/`, the user's data repo, only with `--repo`.
-- `.replicant.lock`, `.last-fetch`, `incoming`, `staged/`, `setting-backups` and `catalog.json`.
+- `.replicant.lock`, `.last-fetch`, `incoming`, `staged/`, `setting-backups`, `catalog.json`,
+  `cache/` (the brief-status counts) and `transactions/` (abandoned save worktrees with journals).
 - The `.bak.<epoch>` copies beside the files that it overwrote. For a directory entry, a copy is a
   whole tree.
 - `~/.local/bin/omarchy-replicant`, if `link` made it.

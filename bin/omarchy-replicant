@@ -41,6 +41,11 @@ fi
 
 git_repo() { git -C "$REPO_DIR" "$@"; }
 
+# The brief-status cache lives at $REPLICANT_HOME/cache/state-v2.json. The core
+# invalidates it on every mutation it performs; this CLI commits and pulls
+# directly, so it removes the file itself after each write. Best effort only.
+invalidate_brief_cache() { rm -f -- "$REPLICANT_HOME/cache/state-v2.json" 2>/dev/null || true; }
+
 # Serialize everything that writes to the repo. Without this, two commands
 # racing (the panel firing `set` twice while a savegame is still committing)
 # collide on .git/index.lock and one of them dies half-done. Commands queue
@@ -67,7 +72,43 @@ load_core() {
 }
 
 cmd_status() { ensure_core; bash "$CORE" status "$@"; }
-cmd_backup() { ensure_core; bash "$CORE" backup; }
+# changes: read-only review of what a save would commit. Prints pending repo
+# paths, staged stats, and the selective-save hint. Writes nothing.
+cmd_changes() {
+  ensure_core
+  [[ -d "$REPO_DIR/.git" ]] || fail "no repo yet — run 'create' or 'clone' first"
+  local pending; pending=$(git_repo status --short 2>/dev/null | head -n 100)
+  if [[ -z "$pending" ]]; then
+    ok "nothing pending — everything copied in is committed"
+  else
+    printf '%s\n' "$pending"
+  fi
+  local staged; staged=$(git_repo diff --cached --stat 2>/dev/null | head -n 100)
+  [[ -n "$staged" ]] && { echo "--- staged ---" >&2; printf '%s\n' "$staged"; }
+  if [[ -n "$pending$staged" ]]; then
+    echo "To save it: 'save --all -m \"why\"', or 'save --id <id> -m \"why\"' for one entry." >&2
+  fi
+  return 0
+}
+# backup: read-only alias for changes. The copy pass lives on inside the core
+# for save transactions (backup --for-savegame); the user-facing command only
+# reviews, and save commits.
+cmd_backup() {
+  warn "backup is deprecated — it only reviews now; 'changes' shows the same, 'save --id <id> -m \"why\"' commits one entry"
+  cmd_changes "$@"
+}
+# tx: resume or discard an abandoned save transaction, or list them.
+cmd_tx() {
+  ensure_core
+  local sub="${1:-list}"; [[ "$sub" == -* ]] && sub="list"
+  [[ "$sub" != "list" ]] && shift || true
+  case "$sub" in
+    list) bash "$CORE" tx-list ;;
+    resume) [[ -n "${1:-}" ]] || fail "usage: omarchy-replicant tx resume <uuid>"; bash "$CORE" tx-resume "$1" || exit 1; invalidate_brief_cache ;;
+    discard) [[ -n "${1:-}" ]] || fail "usage: omarchy-replicant tx discard <uuid> [--force]"; bash "$CORE" tx-discard "$@" || exit 1; invalidate_brief_cache ;;
+    *) fail "usage: omarchy-replicant tx list|resume <uuid>|discard <uuid> [--force]" ;;
+  esac
+}
 
 cmd_init() {
   # --savegame is accepted and ignored: init has always done the full savegame
@@ -134,7 +175,7 @@ cmd_create() {
   if (( do_push )) || { command -v gum >/dev/null 2>&1 && gum confirm "Push now to $url?"; }; then
     git_repo push -u origin main 2>&1 || git_repo push -u origin HEAD 2>&1
     ok "pushed to $url (private)"
-  else info "remote $url — run omarchy-replicant savegame to push"; fi
+  else info "remote $url — run omarchy-replicant save --auto to push"; fi
 }
 
 # savegame — system -> repo -> GitHub (ported from savegame.sh)
@@ -181,116 +222,42 @@ auto_commit_subject() {
   fi
 }
 
-cmd_savegame() {
-  local MSG="" PUSH=1 AUTO=0
-  while (( $# )); do case "$1" in
-    -m|--message) MSG=${2:-}; [[ -n "$MSG" ]] || fail "-m needs a message"; shift 2;;
-    -a|--auto) AUTO=1; shift;;
-    --no-push) PUSH=0; shift;;
-    *) fail "unknown option: $1";;
-  esac; done
+# save — everything through one transaction and one commit. The work happens
+# in the core (bin/lib/save.sh); this parses and reports the outcome.
+cmd_save() {
   ensure_core
-  if [[ $(git -C "$REPO_DIR" config core.hooksPath 2>/dev/null) != ".githooks" ]]; then
-    echo "→ Enabling .githooks" >&2
-    git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
-  fi
-  echo "→ savegame: copying into the repo" >&2
-  bash "$CORE" backup --for-savegame
-
-  local did_commit=0
-  if [[ -n $(git_repo status --porcelain -- state/ 2>/dev/null) ]]; then
-    git_repo add -A state/
-    # The date used to be in the subject, which put it twice on every row of
-    # the panel's list — there is a date column right beside it. The machine
-    # is the thing you cannot see from the date: in a repo two machines write
-    # to, "whose inventory changed" is the whole content of the line.
-    # The machine name comes from the core, which is the only place that
-    # decides it. It is NOT $MACHINE here: that variable belongs to
-    # replicant-core.sh, which this function never sources, so naming it under
-    # `set -u` aborted savegame after it had copied everything in — a save that
-    # did the work and then failed at the commit.
-    local machine; machine=$(bash "$CORE" machine)
-    git_repo commit -q -m "state: $machine inventory (packages, plugins, themes)"
-    did_commit=1
-    echo "→ Inventory commit:" >&2; git_repo show --stat --oneline HEAD 2>/dev/null | sed 's/^/    /' >&2; echo >&2
-  fi
-
-  local pending
-  pending=$(git_repo status --porcelain -- . ':(exclude)state/' 2>/dev/null || true)
-  # An explicit -m always wins: a subject a person wrote beats one derived from
-  # a file list, and --auto is only ever a fallback for callers that cannot ask.
-  if [[ -n $pending && -z $MSG ]] && (( AUTO )); then MSG=$(auto_commit_subject); fi
-  if [[ -n $pending && -n $MSG ]]; then
-    git_repo add -A
-    git_repo commit -q -m "$MSG"
-    did_commit=1
-    echo "→ Single commit (-m):" >&2; git_repo show --stat --oneline HEAD 2>/dev/null | sed 's/^/    /' >&2; echo >&2
-    pending=""
-  fi
-
-  # Commits made earlier count too. After a pull the tree is clean and a commit
-  # can still wait, and the panel tells the user to press Save for it. This
-  # used to stop at "Nothing to save" before it reached the push.
-  PUSH_STATE=held
-  if (( PUSH )); then push_pending; fi
-
-  if (( ! did_commit )) && [[ -z $pending && $PUSH_STATE != ok && $PUSH_STATE != failed ]]; then
-    echo "No changes. Nothing to save." >&2
-    return 0
-  fi
-
-  if [[ -n $pending ]]; then
-    echo "── Uncommitted changes ──" >&2
-    echo "Write one commit per change, and say WHY in it." >&2; echo >&2
-    while read -r state path; do printf '  %s  %s\n' "$state" "$path" >&2; done <<<"$pending"; echo >&2
-    for path in $(git_repo diff --name-only -- . ':(exclude)state/' ':(exclude)secrets/' 2>/dev/null); do
-      echo "── $path ──" >&2; git_repo diff --unified=1 -- "$path" 2>/dev/null | sed -n '5,120p' | sed 's/^/    /' >&2; echo >&2
-    done
-    if git_repo status --porcelain -- secrets/ 2>/dev/null | grep -q .; then
-      echo "── secrets/ ──" >&2; echo "    changed (content not shown):" >&2
-      git_repo status --porcelain -- secrets/ 2>/dev/null | sed 's/^/    /' >&2; echo >&2
-    fi
-    echo "Once committed: git -C $REPO_DIR push origin HEAD" >&2
-  fi
-
-  # A save that did not reach GitHub must never say that it did.
-  if [[ $PUSH_STATE == failed ]]; then
-    warn "Committed on this machine, but the push to GitHub failed:"
-    printf '%s\n' "$PUSH_ERROR" | sed 's/^/    /' >&2
-    warn "Another machine may have saved first. Run 'omarchy-replicant pull', then save again."
-    return 1
-  fi
-  [[ -z $pending ]] || return 0
-  case "$PUSH_STATE" in
-    no-remote) echo "Everything saved on this machine. There is no remote yet: run 'omarchy-replicant create --push'." >&2 ;;
-    held)      echo "Everything saved on this machine, not pushed (--no-push)." >&2 ;;
-    *)         echo "Everything saved and pushed." >&2 ;;
-  esac
+  local rc=0
+  bash "$CORE" save "$@" || rc=$?
+  invalidate_brief_cache
+  return "$rc"
 }
 
-# push_pending: send the commits that the remote does not have yet. It sets
-# PUSH_STATE to no-remote, nothing, ok or failed, and PUSH_ERROR to what git
-# said when the push failed. The caller decides what to print.
-push_pending() {
-  PUSH_STATE=nothing; PUSH_ERROR=""
-  git_repo remote get-url origin >/dev/null 2>&1 || { PUSH_STATE=no-remote; return 0; }
-  git_repo rev-parse -q --verify HEAD >/dev/null 2>&1 || return 0
-  local -a push_args=(origin HEAD)
-  if git_repo rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
-    [[ "$(git_repo rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)" != 0 ]] || return 0
-  else
-    # Never pushed from here: set the upstream on the way, as `push` does.
-    # `create` without --push tells the user that savegame pushes, and it did
-    # not, because there was no upstream to compare with.
-    push_args=(-u origin "$(git_repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)")
+cmd_savegame() {
+  ensure_core
+  # Deprecated alias for `save`, kept for one compatibility release. Bare
+  # savegame keeps its old meaning (the inventory is committed, config is
+  # left copied-in but uncommitted for a reasoned commit by hand); with -m
+  # or --auto it is a global save.
+  warn "savegame is deprecated — 'save' does this now (same options)"
+  local has_msg=0 has_auto=0 a
+  for a in "$@"; do case "$a" in
+    -m|--message) has_msg=1 ;;
+    -a|--auto) has_auto=1 ;;
+  esac; done
+  if (( has_msg || has_auto )); then
+    cmd_save --all "$@"
+    return "$?"
   fi
-  echo "→ Push to $(git_repo config --get remote.origin.url 2>/dev/null)" >&2
-  if PUSH_ERROR=$(git_repo push -q "${push_args[@]}" 2>&1); then
-    PUSH_STATE=ok
-    echo "    done" >&2
-  else
-    PUSH_STATE=failed
+  local rc=0
+  cmd_save --inventory "$@" || rc=$?
+  if (( rc == 0 )); then
+    local unsaved=0
+    unsaved=$(bash "$CORE" status --json --brief --no-fetch 2>/dev/null | jq -r .unsaved 2>/dev/null || echo 0)
+    if [[ "$unsaved" != "0" && -n "$unsaved" ]]; then
+      echo "Config is left uncommitted — 'save --all -m \"why\"' to save it." >&2
+    fi
   fi
+  return "$rc"
 }
 
 # `diff` with no id: what is pending in the repo as a whole. With an id it is
@@ -436,11 +403,22 @@ cmd_reset() {
 # rather than quietly deciding on the user's behalf.
 cmd_push() {
   ensure_core
+  if ! git_repo remote get-url origin >/dev/null 2>&1; then
+    ok "nothing to push — there is no remote yet: run 'omarchy-replicant create --push'"
+    return 0
+  fi
   local branch; branch=$(git_repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)
   if ! git_repo rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
     echo "→ First push of $branch to $(git_repo config --get remote.origin.url 2>/dev/null)" >&2
-    git_repo push -u origin "$branch" || fail "push failed"
-    ok "pushed"; return 0
+    local err
+    if err=$(git_repo push -u origin "$branch" 2>&1); then
+      ok "pushed"; return 0
+    else
+      echo "Saved locally, but the push to GitHub failed:" >&2
+      printf '%s\n' "$err" | sed 's/^/    /' >&2
+      echo "Another machine may have saved first. Run 'omarchy-replicant pull', then push again." >&2
+      return 1
+    fi
   fi
   local ahead; ahead=$(git_repo log --oneline '@{u}..HEAD' 2>/dev/null | wc -l)
   if (( ahead == 0 )); then
@@ -448,12 +426,20 @@ cmd_push() {
     # Uncommitted work is not "nothing to do", and the difference is the whole
     # reason someone is looking at this command.
     [[ -n $(git_repo status --porcelain 2>/dev/null) ]] &&
-      echo "  there are uncommitted changes — 'savegame --auto' commits and pushes them" >&2
+      echo "  there are uncommitted changes — 'save --auto' commits and pushes them" >&2
     return 0
   fi
   echo "→ Pushing $(plural "$ahead" commit) to $(git_repo config --get remote.origin.url 2>/dev/null)" >&2
-  git_repo push origin HEAD || fail "push failed"
-  ok "pushed"
+  local err
+  if err=$(git_repo push origin HEAD 2>&1); then
+    ok "pushed"
+    return 0
+  else
+    echo "Saved locally, but the push to GitHub failed:" >&2
+    printf '%s\n' "$err" | sed 's/^/    /' >&2
+    echo "Another machine may have saved first. Run 'omarchy-replicant pull', then push again." >&2
+    return 1
+  fi
 }
 
 # Bringing down what another machine saved. Three things went wrong here and
@@ -472,21 +458,21 @@ cmd_push() {
 cmd_pull() {
   [[ -d "$REPO_DIR/.git" ]] || fail "no repo — clone first"
   ensure_core
+  local dirt
+  dirt=$(git_repo status --porcelain 2>/dev/null || true)
+  if [[ -n "$dirt" ]]; then
+    echo "pull: the repo has uncommitted changes — pull needs a clean worktree:" >&2
+    printf '%s\n' "$dirt" | head -n 20 | sed 's/^/    /' >&2
+    echo "Review them with 'changes' or 'git -C $REPO_DIR diff'." >&2
+    echo "Save them with 'save --all -m \"why\"', or discard the worktree changes, then pull again." >&2
+    return 1
+  fi
   git_repo fetch --all --prune >/dev/null 2>&1 || warn "could not reach the remote — using what is already here"
   local before; before=$(git_repo rev-parse HEAD 2>/dev/null || echo "")
-  local stashed=0
-  if [[ -n $(git_repo status --porcelain 2>/dev/null) ]]; then
-    if git_repo stash push -u -q -m "replicant pull $(date -Is)" 2>/dev/null; then stashed=1; fi
-  fi
   local br; br=$(git_repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)
   if ! git_repo pull --rebase --quiet origin "$br" 2>&1; then
     git_repo rebase --abort >/dev/null 2>&1 || true
-    (( stashed )) && { git_repo stash pop -q >/dev/null 2>&1 || true; }
     fail "pull failed — nothing was changed; look at $REPO_DIR"
-  fi
-  if (( stashed )); then
-    git_repo stash pop -q >/dev/null 2>&1 || \
-      warn "your uncommitted copies clashed with what came down — they are safe in 'git -C $REPO_DIR stash list'"
   fi
   local after; after=$(git_repo rev-parse HEAD 2>/dev/null || echo "")
   if [[ -z "$before" || "$before" == "$after" ]]; then
@@ -498,6 +484,7 @@ cmd_pull() {
   # button on, and written down so the panel can tell an incoming difference
   # from an outgoing one. The mapping is core business logic, not terminal UX.
   local moved; moved=$(bash "$CORE" incoming "$before" "$after" 2>/dev/null)
+  invalidate_brief_cache
   if [[ -z "$moved" ]]; then
     ok "pulled — nothing of yours changed"
     return 0
@@ -536,7 +523,18 @@ cmd_clone() {
     fi
     fail "nothing to restore from yet"
   fi
+  invalidate_brief_cache
   ok "cloned into $REPO_DIR — run omarchy-replicant restore --dry-run"
+}
+
+cmd_migrate_v2() {
+  ensure_core
+  local has_yes=0 arg
+  for arg in "$@"; do [[ "$arg" == --yes || "$arg" == -y ]] && has_yes=1; done
+  (( has_yes )) || fail "migrate-v2 requires --yes after reviewing the migration summary"
+  load_core
+  core_migrate_v2 "$@" || exit 1
+  invalidate_brief_cache
 }
 
 # restore — ported bootstrap+restore-desktop, by group, with .bak.<epoch> (install_file())
@@ -601,6 +599,7 @@ cmd_restore() {
   if (( DRY )); then
     echo "Dry-run — nothing was written. To apply: omarchy-replicant restore --apply" >&2
   else
+    invalidate_brief_cache
     ok "restore complete — $(plural "$total_changed" file) written, previous versions kept as .bak.<epoch>" >&2
   fi
 }
@@ -661,56 +660,22 @@ cmd_set() {
   set_setting_value "$id" "$value" || fail "could not set $id"
   # this is a real decision (a value you chose), so it gets its own commit —
   # same "one commit per decision, with the why" rule as a manual edit
-  cmd_savegame -m "config: $id = $value"
+  cmd_save --all -m "config: $id = $value"
 }
 
 # save-file — commit and push exactly one tracked file. The panel's per-file
 # Save: after editing one config you rarely want the "everything at once"
-# savegame, and you always want the commit message to say which file it was.
+# save, and you always want the commit message to say which file it was.
+# A transaction around one entry: the destination comes from the registry
+# (never a second copy of that logic), secrets never land in config/, and a
+# named file overrules the incoming hold-back.
 cmd_save_file() {
   local id="${1:-}" msg=""
   shift || true
   while (( $# )); do case "$1" in -m|--message) msg="${2:-}"; shift 2;; *) shift;; esac; done
   [[ -n "$id" ]] || fail "usage: save-file <id> [-m \"why\"]"
-  load_core
-  local src; src=$(resolve_manifest_src "$id") || fail "unknown id: $id"
-
-  # Through the core's own answers, not a second copy of them. This function
-  # used to work out the destination itself and got all three cases wrong:
-  #
-  #   * `[[ -f "$src" ]]` is false for a DIRECTORY entry, so `save-file nvim/`
-  #     died with "does not exist on this machine" — and that command is the
-  #     documented escape hatch for a file another machine has a newer copy of.
-  #   * `"$CONFIG_DIR/$id"` ignores scope, so a profile-scoped entry was written
-  #     to the shared tree while every other pass read it from
-  #     profiles/<profile>/. repo_path_for is meant to be the only thing that
-  #     knows where a copy lives, precisely so a file cannot be saved to one
-  #     path and restored from another.
-  #   * `case "$id" in ssh/*|env/*)` keys on the path prefix — the exact bug
-  #     hard rule 11 exists for. A secret the user tracked under any other name
-  #     (`gh/hosts.yml`) was written into config/ at 644 with the token in it,
-  #     next to the correct 600 copy in secrets/. The panel's per-file Save
-  #     button calls this command, so it was one click away on any such row.
-  local dst; dst=$(repo_copy_for_rel "$id")
-  if is_dir_entry "$id"; then
-    [[ -d "${src%/}" ]] || fail "${src%/} does not exist on this machine"
-    copy_tree_into_repo "$src" "$dst" || fail "could not copy $id into the repo"
-  else
-    [[ -f "$src" ]] || fail "$src does not exist on this machine"
-    mkdir -p "$(dirname "$dst")"
-    if is_secret_rel "$id"; then install -m 600 "$src" "$dst"; else cp -f "$src" "$dst"; fi
-  fi
-  local repo_rel="${dst%/}"; repo_rel="${repo_rel#"$REPO_DIR"/}"
-  if git_repo diff --quiet -- "$repo_rel" 2>/dev/null && ! git_repo status --porcelain -- "$repo_rel" 2>/dev/null | grep -q .; then
-    ok "$id is already saved — nothing to commit"; return 0
-  fi
-  git_repo add -- "$repo_rel"
-  git_repo commit -q -m "${msg:-config: update $id}" || fail "commit failed"
-  if git_repo rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
-    git_repo push -q origin HEAD 2>&1 && ok "saved and pushed: $id" || warn "committed, but the push failed — try Save to GitHub"
-  else
-    ok "committed: $id (no remote yet — run 'omarchy-replicant create --push')"
-  fi
+  [[ -n "$msg" ]] || msg="config: update $id"
+  cmd_save --id "$id" -m "$msg"
 }
 
 cmd_log() {
@@ -768,8 +733,17 @@ commit_repo_shape() {
   git_repo add -A -- "${paths[@]}" >/dev/null 2>&1 || true
   if ! git_repo diff --cached --quiet -- "${paths[@]}" 2>/dev/null; then
     git_repo commit -q -m "$msg" -- "${paths[@]}" >/dev/null 2>&1 || true
-    git_repo push -q 2>/dev/null || warn "committed locally; push failed (offline?)"
+    local push_err
+    if ! push_err=$(git_repo push -q 2>&1); then
+      echo "Saved locally, but the push to GitHub failed:" >&2
+      printf '%s\n' "$push_err" | sed 's/^/    /' >&2
+      echo "Another machine may have saved first. Run 'omarchy-replicant pull', then push again." >&2
+      echo "The next save (or an explicit push) retries it." >&2
+      invalidate_brief_cache
+      return 1
+    fi
   fi
+  invalidate_brief_cache
 }
 
 cmd_sync() {
@@ -799,6 +773,126 @@ cmd_scope() {
     "profiles/$(current_profile)/config/$id"
 }
 
+# cmd_policy — bulk policy changes use one validated core operation and one
+# repository-shape commit. The `--` separator keeps ids unambiguous.
+cmd_policy() {
+  local action="${1:-}" scope="" id
+  shift || true
+  [[ "$action" == set ]] || fail "usage: policy set --scope <scope> -- <id...>"
+  while (( $# )); do
+    case "$1" in
+      --scope) scope="${2:-}"; shift 2 ;;
+      --) shift; break ;;
+      *) fail "usage: policy set --scope <scope> -- <id...>" ;;
+    esac
+  done
+  [[ -n "$scope" && $# -gt 0 ]] || fail "usage: policy set --scope <scope> -- <id...>"
+  load_core
+  local -a ids=("$@") paths=(.replicant-sync)
+  for id in "${ids[@]}"; do
+    paths+=("config/$id" "profiles/$(current_profile)/config/$id")
+  done
+  core_scope_bulk "$scope" "${ids[@]}" || exit 1
+  commit_repo_shape "policy: set $scope for $(plural "${#ids[@]}" entry entries)" "${paths[@]}"
+}
+
+# cmd_bulk validates and applies one multi-entry action in a temporary repo.
+# The active repository changes only after the candidate commit exists and a
+# push, when configured, succeeds.
+cmd_bulk() {
+  local action="${1:-}"; shift || true
+  local yes=0 allow_large=0 scope="" kind=""
+  local -a args=()
+  while (( $# )); do
+    case "$1" in
+      --yes) yes=1; shift ;;
+      --allow-large) allow_large=1; shift ;;
+      --scope) scope="${2:-}"; shift 2 ;;
+      --kind) kind="${2:-}"; shift 2 ;;
+      --) shift; args+=("$@"); break ;;
+      -*) fail "unknown option: $1" ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+  [[ -n "$action" && ${#args[@]} -gt 0 ]] || fail "usage: bulk save|scope|track|convert-secret|untrack [options] -- <entries>"
+  case "$action" in
+    scope) [[ -n "$scope" ]] || fail "bulk scope requires --scope" ;;
+    track) [[ "$kind" == config || "$kind" == secret ]] || fail "bulk track requires --kind config|secret" ;;
+  esac
+  case "$action" in
+    untrack|convert-secret) (( yes )) || fail "bulk $action requires --yes" ;;
+    scope) [[ "$scope" != off ]] || (( yes )) || fail "bulk scope off requires --yes" ;;
+    track) (( yes )) || fail "bulk track requires --yes" ;;
+  esac
+  ensure_core
+  load_core
+  [[ -d "$REPO_DIR/.git" ]] || fail "no repo yet — run 'create' or 'clone' first"
+  local base branch candidate rc=0 uuid tx txrepo
+  base=$(git_repo rev-parse HEAD 2>/dev/null || true)
+  [[ -n "$base" ]] || fail "bulk operations need a repository with one commit"
+  local dirt; dirt=$(git_repo status --porcelain 2>/dev/null || true)
+  [[ -z "$dirt" ]] || fail "bulk requires a clean repository; review 'changes' first"
+  branch=$(git_repo symbolic-ref --short HEAD 2>/dev/null || echo main)
+  uuid=$(tx_uuid)
+  tx="$REPLICANT_HOME/transactions/$uuid"
+  txrepo="$tx/repo"
+  mkdir -p -- "$tx" || fail "could not create bulk transaction"
+  tx_meta_write "$tx" started "$base" "bulk-$action" "bulk: $action ${#args[@]} entries" "${args[@]}"
+  git_repo worktree add --detach -- "$txrepo" "$base" >/dev/null 2>&1 || {
+    tx_remove "$tx"; fail "could not create bulk transaction worktree";
+  }
+  local -a core_args=("$action")
+  case "$action" in
+    scope) core_args+=("$scope" "${args[@]}") ;;
+    track) core_args+=("$kind" "${args[@]}") ;;
+    *) core_args+=("${args[@]}") ;;
+  esac
+  if (( allow_large )); then export BULK_ALLOW_LARGE=1; fi
+  if REPLICANT_TX_REPO="$txrepo" bash "$CORE" bulk-apply "${core_args[@]}"; then
+    :
+  else
+    rc=$?
+    tx_remove "$tx"
+  fi
+  if (( rc == 0 )); then
+    git -C "$txrepo" add -A
+    if git -C "$txrepo" diff --cached --quiet; then
+      echo "bulk: nothing changed" >&2
+      tx_remove "$tx"
+    else
+      REPLICANT_TX_REPO="$txrepo" bash "$CORE" bulk-scan "$txrepo" >/dev/null || rc=$?
+      if (( rc == 0 )); then
+        git -C "$txrepo" commit -q -m "bulk: $action ${#args[@]} entries" || rc=$?
+      fi
+      if (( rc == 0 )); then
+        local pack_kib
+        pack_kib=$(git -C "$txrepo" count-objects -v 2>/dev/null | awk '$1 == "size-pack:" { print $2; exit }')
+        if [[ "${pack_kib:-0}" =~ ^[0-9]+$ ]] && (( pack_kib > 102400 )); then
+          echo "bulk: warning: Git pack exceeds 100 MiB" >&2
+        fi
+      fi
+      candidate=$(git -C "$txrepo" rev-parse HEAD 2>/dev/null || true)
+      (( rc == 0 )) && tx_meta_field "$tx" candidate "$candidate"
+      (( rc == 0 )) && tx_meta_write "$tx" committed "$base" "bulk-$action" "bulk: $action ${#args[@]} entries" "${args[@]}"
+      if (( rc == 0 )) && git_repo remote get-url origin >/dev/null 2>&1; then
+        git -C "$txrepo" push -q origin "HEAD:refs/heads/$branch" || rc=$?
+      fi
+      if (( rc == 0 )) && [[ -n "$candidate" && "$candidate" != "$base" ]]; then
+        git_repo fetch -q --no-tags "$txrepo" HEAD || rc=$?
+        (( rc == 0 )) && git_repo merge --ff-only -q FETCH_HEAD || rc=$?
+      fi
+      if (( rc == 0 )); then
+        tx_meta_write "$tx" fast-forwarded "$base" "bulk-$action" "bulk: $action ${#args[@]} entries" "${args[@]}"
+        tx_remove "$tx"
+      fi
+    fi
+  fi
+  unset BULK_ALLOW_LARGE
+  (( rc == 0 )) || { echo "bulk: operation failed; active repository was not changed; transaction: $tx" >&2; return "$rc"; }
+  invalidate_brief_cache
+  echo "bulk: $action completed in one commit" >&2
+}
+
 # cmd_profile [name] — which profile this machine belongs to. With no argument
 # it prints the current one and every profile the repo knows about.
 # ─── track / untrack / suggest — the user's own list ────────────────────────
@@ -814,7 +908,7 @@ cmd_track() {
   # Only the list itself. The copy of the file arrives with the next save, in a
   # commit about the file — this one is about the decision.
   commit_repo_shape "track: $1" .replicant-track
-  info "saved with the next 'omarchy-replicant savegame'"
+  info "saved with the next 'omarchy-replicant save --auto'"
 }
 
 cmd_untrack() {
@@ -826,7 +920,33 @@ cmd_untrack() {
     .replicant-track \
     "config/$id" \
     "profiles/$(current_profile)/config/$id" \
-    "secrets/$id"
+    "secrets/$id" \
+    vault/index.age \
+    vault/blobs
+}
+
+# cmd_key <subcommand> — the one shared age identity behind the vault: make
+# it once, back it up outside the repo, adopt it on each new machine, check
+# it, replace it. The recipient it names is repo content, so the commands
+# that (re)write it commit that file through the shape helper.
+cmd_key() {
+  local sub="${1:-}"
+  if (( $# )); then shift; fi
+  ensure_core
+  case "$sub" in
+    init|status|rotate) bash "$CORE" key "$sub" "$@" || exit 1 ;;
+    export|import) bash "$CORE" key "$sub" "$@" || exit 1 ;;
+    *) fail "usage: omarchy-replicant key init|export <dest>|import <src>|status|rotate" ;;
+  esac
+  case "$sub" in
+    init) commit_repo_shape "key: recipient for encrypted secrets" .replicant/recipient.txt ;;
+    import)
+      load_core
+      if [[ -f "$REPO_DIR/.replicant/recipient.txt" ]]; then
+        commit_repo_shape "key: recipient for encrypted secrets" .replicant/recipient.txt
+      fi ;;
+    rotate) commit_repo_shape "key: rotated, every secret re-encrypted" vault .replicant/recipient.txt ;;
+  esac
 }
 
 # cmd_forget <id>: a file you deleted, and its copy leaves the repo too. One of
@@ -840,7 +960,9 @@ cmd_forget() {
     .replicant-track \
     "config/$id" \
     "profiles/$(current_profile)/config/$id" \
-    "secrets/$id"
+    "secrets/$id" \
+    vault/index.age \
+    vault/blobs
 }
 
 cmd_deleted() { ensure_core; bash "$CORE" deleted "$@"; }
@@ -973,7 +1095,7 @@ cmd_revert() {
   core_revert "$id" "$to" || exit 1
   # Committed the same way as `set`. This used to stage only config/, so the
   # revert of a setting whose file is kept per profile was never committed.
-  if [[ -d "$REPO_DIR/.git" ]]; then cmd_savegame -m "revert: $id -> $to"; fi
+  if [[ -d "$REPO_DIR/.git" ]]; then cmd_save --all -m "revert: $id -> $to"; fi
 }
 
 # cmd_restore_file <id> — bring one tracked file back from the repo, backed up
@@ -1043,6 +1165,23 @@ cmd_doctor() {
   for c in git jq gh; do
     command -v "$c" >/dev/null 2>&1 && chk_ok "$c installed" || chk_bad "$c missing — omarchy pkg add ${c/gh/github-cli}"
   done
+  if command -v age >/dev/null 2>&1; then
+    chk_ok "age installed"
+  else
+    chk_bad "age missing — omarchy pkg add age"
+  fi
+  if command -v age-keygen >/dev/null 2>&1; then
+    local probe_dir
+    probe_dir=$(mktemp -d 2>/dev/null || echo "")
+    if [[ -n "$probe_dir" ]] && ( umask 077; age-keygen -pq -o "$probe_dir/key" >/dev/null 2>&1 ) && grep -q '^# public key: age1pq1' "$probe_dir/key" 2>/dev/null; then
+      chk_ok "age-keygen makes post-quantum keys"
+    else
+      chk_warn "age-keygen here cannot make post-quantum keys — upgrade age past 1.3 (omarchy pkg add age), then retry"
+    fi
+    [[ -n "$probe_dir" ]] && rm -rf -- "$probe_dir" 2>/dev/null || true
+  else
+    chk_warn "age-keygen missing — omarchy pkg add age"
+  fi
 
   echo "Plugins"
   # The inventory is what rebuilds this machine's shell elsewhere, and a plugin
@@ -1098,7 +1237,7 @@ cmd_doctor() {
       # other bug found this week. Ask the repo, not the list.
       if is_tracked_path "$cl_dir/" 2>/dev/null; then
         [[ -d "$(bash "$CORE" repo-path "omarchy/plugins/${cl_dir##*/}/" 2>/dev/null)" ]] && continue
-        untracked_clones+="      $cl_id  →  tracked but not saved yet: omarchy-replicant savegame"$'\n'
+        untracked_clones+="      $cl_id  →  tracked but not saved yet: omarchy-replicant save --auto"$'\n'
         continue
       fi
       untracked_clones+="      $cl_id  →  omarchy-replicant track ${cl_dir/#$HOME/\~}/"$'\n'
@@ -1189,7 +1328,7 @@ cmd_doctor() {
     printf '      create the file, or remove its require line from ~/.config/hypr/\n' >&2
   fi
   if [[ -n "$hunsaved" ]]; then
-    chk_warn "$(plural "$(printf '%s' "$hunsaved" | grep -c .)" module) that hyprland.lua loads tracked, not saved yet — omarchy-replicant savegame:"
+    chk_warn "$(plural "$(printf '%s' "$hunsaved" | grep -c .)" module) that hyprland.lua loads tracked, not saved yet — omarchy-replicant save --auto:"
     printf '%s' "$hunsaved" >&2
   elif (( n_hm > 0 )); then
     chk_ok "$(plural "$n_hm" "extra module") that hyprland.lua loads saved with it"
@@ -1202,6 +1341,29 @@ cmd_doctor() {
     chk_ok "logged in as $(gh api user --jq .login 2>/dev/null || echo '?')"
   else
     chk_warn "not logged in — run: omarchy-replicant login"
+  fi
+
+  echo "Keys"
+  # Version 1 repos keep secrets in plaintext and have no vault: nothing to
+  # check here beyond the Tools section above. Version 2 reports the exact
+  # remediation, the same string the failing save prints.
+  if [[ -d "$REPO_DIR/.git" ]] && [[ "$(repo_data_version 2>/dev/null)" == 2 ]]; then
+    local key_out key_rc
+    if key_out=$(bash "$CORE" key status 2>&1); then key_rc=0; else key_rc=$?; fi
+    if (( key_rc == 0 )); then
+      chk_ok "secret key ready — $(printf '%s' "$key_out" | sed -e 's/^key: //')"
+    else
+      chk_warn "secret key needs attention — $(printf '%s' "$key_out" | head -n1 | sed -e 's/^key: //;s/^replicant: //')"
+      printf '    run: %s\n' "$(key_remediation 2>/dev/null || echo 'omarchy-replicant key status')" >&2
+    fi
+    local n_locked
+    n_locked=$(bash "$CORE" status --json --no-fetch 2>/dev/null | jq -r '.locked // 0' 2>/dev/null || true)
+    [[ -z "$n_locked" ]] && n_locked=0
+    if [[ "$n_locked" =~ ^[0-9]+$ ]] && (( n_locked > 0 )); then
+      chk_warn "$(plural "$n_locked" secret) locked — import the key, then retry"
+    fi
+  else
+    chk_ok "no encrypted vault in this repo — nothing to unlock"
   fi
 
   echo "Repo"
@@ -1223,13 +1385,31 @@ cmd_doctor() {
     fi
     [[ "$(git_repo config core.hooksPath 2>/dev/null)" == ".githooks" ]] \
       && chk_ok "pre-commit secret scan enabled" \
-      || chk_warn "secret-scan hook not enabled — run: omarchy-replicant savegame"
+      || chk_warn "secret-scan hook not enabled — run: omarchy-replicant save --auto"
     local perm; perm=$(stat -c '%a' "$SECRETS_DIR" 2>/dev/null || echo "")
     [[ -z "$perm" ]] && chk_warn "no secrets/ directory yet" || {
       [[ "$perm" == "700" ]] && chk_ok "secrets/ is 700" || chk_bad "secrets/ is $perm, expected 700 — chmod 700 $SECRETS_DIR"
     }
   else
     chk_warn "no local repo yet — run: omarchy-replicant create --push"
+  fi
+
+  echo "Transactions"
+  local tx_lines n_tx
+  tx_lines=$(bash "$CORE" tx-list 2>/dev/null || true)
+  n_tx=$(printf '%s' "$tx_lines" | grep -c . || true)
+  if (( n_tx == 0 )); then
+    chk_ok "no abandoned save transactions"
+  else
+    local tx_uuid tx_stage tx_scope
+    while IFS=$'\t' read -r tx_uuid tx_stage _base tx_scope _cand _push _msg; do
+      [[ -n "$tx_uuid" ]] || continue
+      if [[ "$tx_stage" == "committed" || "$tx_stage" == "fast-forwarded" ]]; then
+        chk_warn "transaction $tx_uuid committed ($tx_scope) but not in the active repo — resume it: omarchy-replicant tx resume $tx_uuid"
+      else
+        chk_warn "transaction $tx_uuid abandoned before commit ($tx_stage) — discard it: omarchy-replicant tx discard $tx_uuid"
+      fi
+    done <<< "$tx_lines"
   fi
 
   echo "Command line"
@@ -1408,6 +1588,11 @@ cmd_purge() {
   [[ -f "$REPLICANT_HOME/setting-backups" ]] && targets+=("$REPLICANT_HOME/setting-backups")
   # The marketplace catalog, which install-plugin caches for an hour.
   [[ -f "$REPLICANT_HOME/catalog.json" ]] && targets+=("$REPLICANT_HOME/catalog.json")
+  # The brief-status cache: file identity and counts, no secret content.
+  [[ -d "$REPLICANT_HOME/cache" ]] && targets+=("$REPLICANT_HOME/cache")
+  # Abandoned save transactions (worktree plus meta.json journal). A finished
+  # save removes its own; only interrupted ones are ever still here.
+  [[ -d "$REPLICANT_HOME/transactions" ]] && targets+=("$REPLICANT_HOME/transactions")
   if (( ! KEEP_REPO )); then
     [[ -d "$REPLICANT_HOME" ]] && targets+=("$REPLICANT_HOME")
   fi
@@ -1440,6 +1625,9 @@ cmd_purge() {
   if (( KEEP_REPO )) && [[ -d "$REPLICANT_HOME" ]]; then
     echo >&2; info "keeping your backup repo at $REPLICANT_HOME — pass --repo to remove that too"
   fi
+  if (( ! KEEP_REPO )) && [[ -f "$REPLICANT_HOME/keys/identity.txt" ]]; then
+    warn "this also removes your secret key — export it first (key export <dest>) unless another machine holds it"
+  fi
 
   if (( DRY )); then echo >&2; skip "dry-run — nothing was touched. Repeat with --apply" >&2; return 0; fi
   if (( ! YES )); then
@@ -1466,9 +1654,13 @@ First machine
   init [--savegame]           Prepare the local repo without touching GitHub
 
 Every day
-  savegame [-m "why"]         Copy everything in, commit, push        (--no-push to hold)
-            [--auto]          ...with the subject written from what changed
-  backup                      Copy everything in and stop — no commit, no push
+  save [--all] [-m "why"] [--auto]   Copy everything in, one commit, push
+             [--id <id> ...]         (--no-push to hold; --auto writes the
+             [--inventory]           subject from what changed)
+  savegame [-m "why"] [--auto]       Deprecated alias for save (same options)
+  changes                     Review what a save would commit — read-only
+  backup                      Deprecated read-only alias for changes
+  tx list|resume|discard      Recover an abandoned save transaction
   status [--json] [--brief]   What changed, what is pushed, what is not
   diff [id]                   Pending changes, or what changed in one file
   push                        Send the commits you already have, and nothing else
@@ -1480,6 +1672,9 @@ What gets backed up
   untrack <id>                Drop one of your own entries, and its copy
   forget <id>                 A file you deleted: its copy leaves the repo too
   scope <id> shared|profile|off    Who syncs this file        (sync <id> on|off is the old form)
+  policy set --scope <scope> -- <id...>  Set one scope for several entries in one commit
+  bulk save|scope|track|convert-secret|untrack [options] -- <id...>
+                              Apply one validated multi-entry operation atomically
   profile [name]              Which profile this machine is in
   save-file <id> [-m]         Commit and push just that one file
   path <id>  ·  edit <id>     Where a tracked id really lives; open it in your editor
@@ -1489,6 +1684,13 @@ Settings
   get <id>  ·  set <id> <v>   Read or write one     (always in the stored unit, e.g. seconds)
   revert <id> [--to default|repo]   Put one setting back
   shortcuts [--json]          Your keybinding overrides, and what is bound now
+
+Secret key                   (one shared age identity behind encrypted secrets)
+  key init                    Create it on this machine, and record the recipient
+  key export <dest>           Back it up outside the repo (absolute path)
+  key import <src>            Adopt it on a new machine, before saving secrets
+  key status                  Whether this machine can read the vault
+  key rotate                  Replace it, re-encrypting every secret
 
 Putting things back            (dry run by default; .bak.<epoch> kept for everything)
   restore [--apply] [--all] [--only <area>] [--yes]
@@ -1506,6 +1708,8 @@ Third-party code               (no dry run, no backup; fetches the moment you ru
 
 Second machine
   clone <url>                 Point this machine at the repo you already have
+  migrate-v2 --github-name <name> --identity-backup <path> [--remote <url>] [--yes]
+                              Create and activate a clean encrypted v2 repository
 
 The plugin itself
   update-check [--fetch]      Whether a newer Replicant is at its origin    (--json)
@@ -1570,15 +1774,27 @@ Dry-run by default, like everything here that writes.
   Make the PRIVATE GitHub repo for YOUR data and push this machine into it.
   Defaults to <hostname>-replicant. Always private. Asks; run it in a terminal."
   [backup]="backup
-  Copy every tracked file into the local repo and stop. No commit, no push, no
-  network. This is the half of savegame that touches your files."
+  Deprecated read-only alias for changes. It copies nothing, commits nothing
+  and pushes nothing. Review with changes, save with save."
+  [changes]="changes
+  Review what a save would commit: pending repo paths plus staged stats.
+  Read-only: it never writes to the repo. Save with save --all -m, or
+  save --id <id> -m for one entry."
+  [tx]="tx list|resume <uuid>|discard <uuid> [--force]
+  Recover an abandoned save transaction under transactions/. list shows the
+  journal stage. resume fast-forwards a committed one and pushes. discard
+  drops a pre-commit one; a committed one needs --force."
+  [save]="save [--all] [--id <id> ...] [--inventory] [-m \"why\"] [--auto] [--no-push]
+  Copy everything in through one transaction: snapshot, one commit, push.
+  --all saves everything (config, secrets, inventory) in one commit. --id
+  saves exactly the named entries. --inventory saves only this machine's
+  inventory. With -m, one commit carrying your reason. With --auto, a subject
+  derived from the paths that changed (what the panel's Save button uses).
+  With neither, the inventory is committed when it moved and anything else is
+  left for a reasoned commit by hand. --no-push holds it all locally."
   [savegame]="savegame [-m \"why\"] [--auto] [--no-push]
-  Copy everything in, commit, push.
-  With -m, one commit carrying your reason. With --auto, a subject derived from
-  the paths that changed (what the panel's Save button uses). With neither, the
-  inventory is committed and your config is left copied-in but UNCOMMITTED, so
-  you can write one commit per change by hand.
-  --no-push holds it all locally."
+  Deprecated alias for save, kept for one compatibility release.
+  With -m or --auto it is 'save --all'; bare it is 'save --inventory'."
   [status]="status [--json] [--brief] [--fetch|--no-fetch]
   What changed, what is saved, what is still to push. --json is what the panel
   reads. Read-only: it never writes to the repo."
@@ -1596,7 +1812,8 @@ Dry-run by default, like everything here that writes.
   [path]="path <id>
   Print where a tracked id really lives on this machine."
   [save-file]="save-file <id> [-m \"why\"]
-  Commit and push just that one file, staging nothing else."
+  Commit and push just that one file, staging nothing else.
+  This is 'save --id <id>' with a default subject."
   [log]="log [-n N] [--json]
   Recent saves. Runs of identical subjects are collapsed with a count."
   [settings]="settings [--json]
@@ -1609,6 +1826,13 @@ Dry-run by default, like everything here that writes.
   [scope]="scope <id> shared|profile|off
   Who gets this file. shared: every machine. profile: each profile keeps its own
   copy, so neither overwrites the other. off: nobody backs it up."
+  [policy]="policy set --scope <scope> -- <id...>
+  Apply one validated scope decision to several tracked entries. The complete
+  selection changes together and produces one repository-shape commit."
+  [bulk]="bulk save|scope|track|convert-secret|untrack [options] -- <id...>
+  Apply one validated multi-entry operation in one transaction and one commit.
+  Destructive operations and tracking require --yes. Large files require
+  --allow-large."
   [track]="track <path> [name-in-repo] [--secret]
   Add a file or a directory (trailing /) to YOUR list, which lives in your repo
   and travels to your other machines. --secret stores it under secrets/ at mode
@@ -1669,7 +1893,7 @@ Dry-run by default, like everything here that writes.
   is saved in your repo."
   [push]="push
   Push the commits that already exist. It copies nothing and commits nothing —
-  when there is uncommitted work it says so and leaves it to savegame."
+  when there is uncommitted work it says so and leaves it to save."
   [pull]="pull
   Bring down what another machine saved. It does not touch your files: run
   restore afterwards to put anything back."
@@ -1693,6 +1917,9 @@ Dry-run by default, like everything here that writes.
   it, fetching whatever is at its origin right now. It first says what the
   Omarchy marketplace checked, and whether the origin has moved since.
   --check  say that, and install nothing"
+  [migrate-v2]="migrate-v2 --github-name <name> --identity-backup <absolute-path> [--remote <url>] [--yes]
+  Migrate a clean v1 repository into a new encrypted v2 repository.
+  The legacy repository remains at legacy-repo-<epoch>."
 )
 
 
@@ -1708,7 +1935,7 @@ main() {
   # Anything that writes to the repo takes the lock first; read-only commands
   # (status/get/diff/edit) stay lock-free so the panel's polling never blocks.
   case "$cmd" in
-    init|create|backup|savegame|set|save-file|reset|reset-all|push|pull|clone|restore|sync|scope|track|untrack|forget|profile|revert|restore-file|install-theme|install-plugin) acquire_repo_lock ;;
+    init|create|save|savegame|set|save-file|reset|reset-all|push|pull|clone|restore|sync|scope|policy|bulk|track|untrack|forget|profile|revert|restore-file|install-theme|install-plugin|tx|migrate-v2) acquire_repo_lock ;;
     # These write only when they apply. A dry run takes no lock: taking it
     # creates the lock file, and purge would then list its own lock.
     undo|backups|purge|recover)
@@ -1723,6 +1950,9 @@ main() {
     login) shift; cmd_login "$@";;
     create) shift; cmd_create "$@";;
     backup) shift; cmd_backup "$@";;
+    changes) shift; cmd_changes "$@";;
+    tx) shift; cmd_tx "$@";;
+    save) shift; cmd_save "$@";;
     savegame) shift; cmd_savegame "$@";;
     status) shift; cmd_status "$@";;
     get) shift; cmd_get "$@";;
@@ -1738,8 +1968,11 @@ main() {
     doctor) shift; cmd_doctor "$@";;
     sync) shift; cmd_sync "$@";;
     scope) shift; cmd_scope "$@";;
+    policy) shift; cmd_policy "$@";;
+    bulk) shift; cmd_bulk "$@";;
     track) shift; cmd_track "$@";;
     untrack) shift; cmd_untrack "$@";;
+    key) shift; cmd_key "$@";;
     forget) shift; cmd_forget "$@";;
     deleted) shift; cmd_deleted "$@";;
     recover) shift; cmd_recover "$@";;
@@ -1766,6 +1999,7 @@ main() {
     push) shift; cmd_push "$@";;
     pull) shift; cmd_pull "$@";;
     clone) shift; cmd_clone "$@";;
+    migrate-v2) shift; cmd_migrate_v2 "$@";;
     install-theme) shift; cmd_install_theme "$@";;
     install-plugin) shift; cmd_install_plugin "$@";;
     restore) shift; cmd_restore "$@";;

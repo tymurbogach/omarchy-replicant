@@ -28,7 +28,7 @@ rel_for_repo_path() {
 # a rename to git, so it is not a deletion here.
 deleted_rows() {
   local limit="${1:-200}" line sha epoch date subject
-  [[ -d "$REPO_DIR/.git" ]] || return 0
+  [[ -e "$REPO_DIR/.git" ]] || return 0
   git -C "$REPO_DIR" rev-parse -q --verify HEAD >/dev/null 2>&1 || return 0
   local -A in_head=() seen=()
   local -a specs=()
@@ -113,6 +113,7 @@ core_recover() {
   for p in "${files[@]}"; do echo "  + $p" >&2; done
   for line in ${lines[@]+"${lines[@]}"}; do echo "  + tracked again: $line" >&2; done
   if (( dry )); then skip "dry-run: nothing was touched. Repeat with --apply"; return 0; fi
+  require_writable_schema || return 1
 
   if (( ${#lines[@]} )); then
     ensure_track_file

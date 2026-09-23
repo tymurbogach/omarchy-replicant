@@ -25,7 +25,7 @@ invalidate_git_cache() { GIT_CACHE_READY=0; GIT_DIRTY_SET=""; GIT_UNPUSHED_SET="
 load_git_cache() {
   (( GIT_CACHE_READY )) && return 0
   GIT_CACHE_READY=1
-  [[ -d "$REPO_DIR/.git" ]] || return 0
+  [[ -e "$REPO_DIR/.git" ]] || return 0
   # -uall so an untracked DIRECTORY is listed as its files: git collapses one to
   # "config/nvim/" otherwise, and a per-file lookup would miss every file in it.
   # -z so a path with a space or a quote arrives intact; a rename yields both

@@ -17,6 +17,11 @@ export HOME="$TMP/home"
 export OMARCHY_PATH="$TMP/omarchy"
 export OMARCHY_REPLICANT_HOME="$TMP/replicant"
 
+# This suite pins the version 1 layout (plaintext secrets/ and friends) until
+# the section 9 migration. A repo born here would be version 2, so the git
+# dir is made first: every backup below then keeps the v1 files it asserts.
+git init -q -b main "$OMARCHY_REPLICANT_HOME/repo" 2>/dev/null || true
+
 mkdir -p "$HOME/.config/hypr" "$HOME/.config/omarchy/plugins/com.example.demo" "$HOME/.config/alacritty"
 mkdir -p "$OMARCHY_PATH/config/hypr" "$OMARCHY_PATH/default/bash"
 
@@ -823,6 +828,52 @@ check_contains "the plan lists it as a tree, slash and all" "/tree/|" \
 d=$(core_diff "tree/")
 check_contains "its diff summarises rather than dumps" "identical to the copy in your repo" "$d"
 
+section "a restore keeps what it overwrote as a backup"
+# Every write to the machine keeps a .bak.<epoch> of what it replaced, and a
+# restore is a write like any other. Without the backup, restoring over a local
+# edit destroys the only copy of that edit.
+cp "$HOME/.config/hypr/input.lua" "$TMP/input.keep"
+printf 'live version\n' > "$HOME/.config/hypr/input.lua"
+core_backup >/dev/null 2>&1
+git -C "$REPO_DIR" add -A >/dev/null 2>&1
+git -C "$REPO_DIR" commit -qm "saved live version" >/dev/null 2>&1
+printf 'repo version\n' > "$(repo_copy_for_rel hypr/input.lua)"
+rm -f "$HOME"/.config/hypr/input.lua.bak.*
+core_restore_file hypr/input.lua >/dev/null 2>&1
+check "restore puts the repo copy back" "repo version" "$(cat "$HOME/.config/hypr/input.lua")"
+bak=$(find "$HOME/.config/hypr" -maxdepth 1 -name 'input.lua.bak.*' | head -n1)
+check "…and keeps what was there as a backup" "live version" "$(cat "$bak" 2>/dev/null)"
+cp "$TMP/input.keep" "$HOME/.config/hypr/input.lua"
+core_backup >/dev/null 2>&1
+git -C "$REPO_DIR" add -A >/dev/null 2>&1
+git -C "$REPO_DIR" commit -qm "input back" >/dev/null 2>&1
+
+section "a saved file deleted from this machine is missing, not synced"
+# Regression test for the missing-file defect (PLAN section 1). The full
+# payload names the row missing, and the brief payload the bar polls counts
+# it: deleting a saved file used to leave every bar counter at zero, so the
+# bar kept the calm hexagon and its tooltip said "in sync".
+# A delta, not an absolute: earlier sections leave their own missing rows
+# behind, so only the change this deletion causes is asserted here.
+cp "$HOME/.config/hypr/input.lua" "$TMP/input.keep"
+printf 'saved content\n' > "$HOME/.config/hypr/input.lua"
+core_backup >/dev/null 2>&1
+git -C "$REPO_DIR" add -A >/dev/null 2>&1
+git -C "$REPO_DIR" commit -qm "saved input" >/dev/null 2>&1
+missing_before=$(core_status --json --brief --no-fetch 2>/dev/null | jq -r .missing)
+rm -f "$HOME/.config/hypr/input.lua"
+check "the full payload names the row missing" "missing" \
+  "$(build_configs_json | jq -r '[.[] | select(.id=="hypr/input.lua")][0].sync_state')"
+brief=$(core_status --json --brief --no-fetch)
+check "the brief payload counts the missing file" "$(( missing_before + 1 ))" "$(jq -r .missing <<<"$brief")"
+check "…and asks for action" "true" "$(jq -r .needs_action <<<"$brief")"
+cp "$TMP/input.keep" "$HOME/.config/hypr/input.lua"
+core_backup >/dev/null 2>&1
+git -C "$REPO_DIR" add -A >/dev/null 2>&1
+git -C "$REPO_DIR" commit -qm "input back" >/dev/null 2>&1
+check "bringing it back drops the count again" "$missing_before" \
+  "$(core_status --json --brief --no-fetch 2>/dev/null | jq -r .missing)"
+
 section "themes travel as URLs, not as 556 MB of wallpaper"
 mkdir -p "$STATE_DIR"
 printf '# name\torigin\nmine\thttps://example.com/omarchy-mine-theme\n' > "$STATE_DIR/omarchy-themes.txt"
@@ -1051,8 +1102,8 @@ for st in $core_states; do
   grep -q "st === \"$st\"" "$logic" || { unrendered=$((unrendered+1)); echo "    core emits '$st' and stateGlyph has no case for it"; }
 done
 check "every state the core emits has a badge in the panel" "0" "$unrendered"
-check "…and the states are the seven that are documented" \
-  "default incoming missing off saved unpushed unsaved" \
+check "…and the states are the eight that are documented" \
+  "default incoming locked missing off saved unpushed unsaved" \
   "$(echo $core_states)"
 # The README and the panel's own legend are the two places a user reads the
 # badge alphabet. A state the core emits and neither of them names is a symbol
@@ -1060,6 +1111,7 @@ check "…and the states are the seven that are documented" \
 for st in $core_states; do
   case "$st" in
     incoming) word="to restore" ;;
+    locked)   word="locked" ;;
     unsaved)  word="unsaved" ;;
     unpushed) word="to push" ;;
     saved)    word="saved" ;;
@@ -1535,6 +1587,26 @@ check "…and another profile's is not"           "0" "$(grep -c 'zz-other' <<<"
 record_incoming
 git -C "$REPO_DIR" rm -rq "profiles/$mine/config/zz-mine.conf" profiles/zz-other
 git -C "$REPO_DIR" -c user.email=t@example.com -c user.name=t commit -qm "probe removed"
+
+section "an incoming file stays incoming when this machine edits it too"
+# Both states mean "this file and its copy differ", and they ask for opposite
+# buttons. The direction recorded at pull time wins until the files match
+# again, so a local edit must not flip the row to unsaved and invite a save
+# over another machine's work.
+cp "$HOME/.config/hypr/input.lua" "$TMP/input.keep"
+printf 'saved before the pull\n' > "$HOME/.config/hypr/input.lua"
+core_backup >/dev/null 2>&1
+git -C "$REPO_DIR" add -A >/dev/null 2>&1
+git -C "$REPO_DIR" commit -qm "saved input" >/dev/null 2>&1
+record_incoming "hypr/input.lua"
+printf 'edited after the pull\n' > "$HOME/.config/hypr/input.lua"
+check "a file with incoming and local edits asks for Restore, not Save" "incoming" \
+  "$(build_configs_json | jq -r '[.[] | select(.id=="hypr/input.lua")][0].sync_state')"
+record_incoming
+cp "$TMP/input.keep" "$HOME/.config/hypr/input.lua"
+core_backup >/dev/null 2>&1
+git -C "$REPO_DIR" add -A >/dev/null 2>&1
+git -C "$REPO_DIR" commit -qm "input back" >/dev/null 2>&1
 
 section "a plugin with work its origin does not have"
 # Omaplug sorts plugins by this before it offers an update. For a backup it is

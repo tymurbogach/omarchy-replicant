@@ -29,40 +29,50 @@ restore_mode_for() {
 # plan_for_category <category> — "repo-path|destination|mode" per line.
 # Skips what the user switched off, what the repo does not have a copy of, and
 # theme.name (a theme is replayed through omarchy-theme-set, not copied).
+# The ids come from the registry, so the plan and the panel rows agree on what
+# exists; the secrets tail below keeps its own loop, since v2 secrets restore
+# through the vault and never through a repo path.
 plan_for_category() {
-  local want="$1" entry src rel cat repo_path mode
-  for entry in "${TRACKED[@]}"; do
-    src="${entry%%:*}"; rel="${entry##*:}"
-    [[ "$rel" == "omarchy/theme.name" ]] && continue
-    cat=$(category_for_rel "$rel")
+  local want="$1" row id kind cat scope live repo
+  local -a rf=()
+  registry_build
+  for row in ${REGISTRY[@]+"${REGISTRY[@]}"}; do
+    mapfile -t rf < <(row_split "$row" 9)
+    id="${rf[0]}"; kind="${rf[1]}"; cat="${rf[3]}"; scope="${rf[4]}"; live="${rf[5]}"; repo="${rf[6]}"
+    [[ "$kind" == "secret" ]] && continue
+    [[ "$id" == "omarchy/theme.name" ]] && continue
     [[ "$cat" == "$want" ]] || continue
-    is_excluded "$rel" && continue
-    repo_path=$(repo_path_for "$rel")
+    [[ "$scope" == "off" ]] && continue
     # A directory keeps its trailing slash all the way through the plan, which
     # is how the restore loop knows to walk a tree instead of copying a file.
-    if is_dir_entry "$rel"; then
-      [[ -d "${repo_path%/}" ]] || continue
-      printf '%s|%s|%s\n' "${repo_path%/}/" "${src%/}/" "$(restore_mode_for "$rel")"
+    if [[ "$kind" == "dir" ]]; then
+      [[ -d "${repo%/}" ]] || continue
+      printf '%s|%s|%s\n' "${repo%/}/" "${live%/}/" "$(restore_mode_for "$id")"
       continue
     fi
-    [[ -f "$repo_path" ]] || continue
-    printf '%s|%s|%s\n' "$repo_path" "$src" "$(restore_mode_for "$rel")"
+    [[ -f "$repo" ]] || continue
+    printf '%s|%s|%s\n' "$repo" "$live" "$(restore_mode_for "$id")"
   done
   # A settings plugin that writes a Hyprland module keeps its own store: the
   # OmaSettings window writes hypr/omasettings.lua from plugins/omasettings.json.
   # Restoring Hyprland alone brought the module back without the store, so the
   # plugin's window showed the old values, and its next write put them back.
   if [[ "$want" == "hyprland" ]]; then
-    local mrel prel psrc
-    for entry in "${TRACKED[@]}"; do
-      mrel="${entry##*:}"
-      [[ "$mrel" == hypr/*.lua ]] || continue
+    local mrow mid mrel prel pscope plive prepo prow
+    local -a prf=()
+    for mrow in ${REGISTRY[@]+"${REGISTRY[@]}"}; do
+      mapfile -t prf < <(row_split "$mrow" 9)
+      mid="${prf[0]}"
+      [[ "${prf[1]}" == "secret" ]] && continue
+      [[ "$mid" == hypr/*.lua ]] || continue
+      mrel="$mid"
       prel="plugins/${mrel##*/}"; prel="${prel%.lua}.json"
-      psrc=$(resolve_manifest_src "$prel") || continue
-      is_excluded "$prel" && continue
-      repo_path=$(repo_path_for "$prel")
-      [[ -f "$repo_path" ]] || continue
-      printf '%s|%s|%s\n' "$repo_path" "$psrc" "$(restore_mode_for "$prel")"
+      prow=$(registry_row_for "$prel" 2>/dev/null) || continue
+      mapfile -t prf < <(row_split "$prow" 9)
+      pscope="${prf[4]}"; plive="${prf[5]}"; prepo="${prf[6]}"
+      [[ "$pscope" == "off" ]] && continue
+      [[ -f "$prepo" ]] || continue
+      printf '%s|%s|%s\n' "$prepo" "$plive" "$(restore_mode_for "$prel")"
     done
   fi
   [[ "$want" == "secrets" ]] || return 0
@@ -188,6 +198,8 @@ restore_preview() {
 # re-read its Lua on its own, and a restored terminal config is invisible until
 # the terminal is told. Prints the number of entries written, on stdout.
 restore_apply() {
+  require_writable_schema || return 1
+  briefcache_invalidate
   local area="$1" e src dst mode changed=0 apply errs DRY=0
   shift
   for e in "$@"; do
@@ -212,8 +224,14 @@ restore_apply() {
 # same .bak.<epoch> every other write makes. The per-file counterpart of
 # `reset`, which goes to Omarchy's default instead.
 core_restore_file() {
+  require_writable_schema || return 1
+  briefcache_invalidate
   local rel="$1" src repo_path mode
   src=$(resolve_manifest_src "$rel") || { echo "unknown id: $rel" >&2; return 1; }
+  if is_secret_rel "$rel" && [[ "$(repo_data_version)" == 2 ]]; then
+    vault_restore_entry "$rel" || return 1
+    return 0
+  fi
   repo_path=$(repo_copy_for_rel "$rel")
   if is_dir_entry "$rel"; then
     [[ -d "${repo_path%/}" ]] || { echo "$rel is not saved in your repo yet" >&2; return 1; }

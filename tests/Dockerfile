@@ -12,7 +12,8 @@
 FROM archlinux:latest
 
 # qt6-declarative brings qmltestrunner, for the panel's logic in replicant.js.
-RUN pacman -Syu --noconfirm --needed git jq shellcheck diffutils which qt6-declarative \
+# age brings the post-quantum keys the vault tests generate at runtime.
+RUN pacman -Syu --noconfirm --needed git jq shellcheck diffutils which qt6-declarative age \
  && pacman -Scc --noconfirm
 
 RUN useradd -m tester

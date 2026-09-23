@@ -133,7 +133,7 @@ core_browse() {
 core_suggest() {
   local as_json=0; [[ "${1:-}" == "--json" ]] && as_json=1
   {
-    local f reason kind
+    local f reason kind size risk
     # Top level of ~/.config and one directory down: deep trees are libraries
     # and caches, and the config people actually edit is never four levels in.
     while IFS= read -r f; do
@@ -152,7 +152,11 @@ core_suggest() {
       esac
       kind=$(suggest_kind "$f")
       [[ "$kind" == secret ]] && reason="holds a credential — track it as a secret"
-      printf '%s\t%s\t%s\t%s\n' "$f" "$(derive_rel "$f")" "$reason" "$kind"
+      size=$(stat -c '%s' -- "$f" 2>/dev/null || echo 0)
+      risk=""
+      (( size > 10485760 )) && risk="large"
+      [[ "$kind" == secret ]] && risk="${risk:+$risk,}secret"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$f" "$(derive_rel "$f")" "$reason" "$kind" "$size" "$risk"
     done < <({
       find "$HOME/.config" -maxdepth 2 -type f 2>/dev/null
       find "$HOME/.config/systemd/user" -maxdepth 1 -type f 2>/dev/null
@@ -170,7 +174,9 @@ core_suggest() {
   } | sort -s -t$'\t' -k4,4r | if (( as_json )); then
     jq -Rsc 'def home: sub("^"+$ENV.HOME; "~");
       split("\n") | map(select(length > 0) | split("\t")
-      | {path: .[0], pretty: (.[0]|home), id: .[1], reason: .[2], kind: .[3]})'
+      | {path: .[0], pretty: (.[0]|home), id: .[1], reason: .[2], kind: .[3],
+          size: (if .[3] == "secret" then 0 else (.[4]|tonumber? // 0) end),
+          nfiles: (if .[3] == "secret" then 0 else 1 end), risk: .[5]})'
   else
     cat
   fi

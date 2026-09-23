@@ -55,6 +55,7 @@ track_line_for() {
 
 # core_track <path> [rel] [--secret] — add one path to the user's list.
 core_track() {
+  require_writable_schema || return 1
   local path="" rel="" kind=config arg
   for arg in "$@"; do
     case "$arg" in
@@ -116,6 +117,7 @@ core_track() {
   keep+=("$(track_line_for "$path" "$rel" "$kind")")
   write_track_file ${keep[@]+"${keep[@]}"}
   load_user_manifest
+  briefcache_invalidate
   echo "tracking ${path/#$HOME/\~} as $rel" >&2
 }
 
@@ -123,7 +125,8 @@ core_track() {
 # a shipped core entry is switched off with `scope <rel> off`, which keeps the
 # row (and the copy the repo holds) instead of making both disappear.
 core_untrack() {
-  local rel="$1" entry k line
+  require_writable_schema || return 1
+  local rel="$1" entry k line was_secret=false
   [[ -n "$rel" ]] || { echo "untrack: usage: untrack <id>" >&2; return 1; }
   if ! is_user_entry "$rel"; then
     for entry in "${MANIFEST[@]}" "${SECRETS_MANIFEST[@]}"; do
@@ -133,6 +136,9 @@ core_untrack() {
     done
     echo "untrack: $rel is not in your list" >&2; return 1
   fi
+  # Before the list surgery below: untracking removes the very entry that
+  # makes is_secret_rel true, so the vault branch after it would never fire.
+  is_secret_rel "$rel" && was_secret=true
   ensure_track_file
   local -a keep=()
   while IFS= read -r line; do
@@ -143,9 +149,15 @@ core_untrack() {
   load_user_manifest
   # The repo copy goes with it — core_backup's prune pass would remove it on
   # the next save anyway, and leaving it until then means the panel shows a row
-  # for a file nothing tracks.
-  local copy; copy=$(repo_copy_for_rel "$rel")
-  [[ -e "$copy" ]] && rm -rf -- "$copy"
+  # for a file nothing tracks. Encrypted secrets live in the vault instead of
+  # next to the configs, so they leave through it.
+  if [[ "$was_secret" == true && "$(repo_data_version)" == 2 ]]; then
+    vault_drop_entry "$rel" || return 1
+  else
+    local copy; copy=$(repo_copy_for_rel "$rel")
+    [[ -e "$copy" ]] && rm -rf -- "$copy"
+  fi
+  briefcache_invalidate
   echo "$rel is no longer tracked (the copy in your repo was removed too)" >&2
 }
 
@@ -154,6 +166,7 @@ core_untrack() {
 # its place in the plugin's list, so it shows again if the file comes back.
 # Git history keeps the copy either way, and `recover` brings it back.
 core_forget() {
+  require_writable_schema || return 1
   local rel="$1" src copy
   [[ -n "$rel" ]] || { echo "forget: usage: forget <id>" >&2; return 1; }
   src=$(resolve_manifest_src "$rel") || { echo "forget: unknown id: $rel" >&2; return 1; }
@@ -168,8 +181,15 @@ core_forget() {
     return 1
   fi
   if is_user_entry "$rel"; then core_untrack "$rel"; return; fi
+  if is_secret_rel "$rel" && [[ "$(repo_data_version)" == 2 ]]; then
+    vault_drop_entry "$rel" || return 1
+    briefcache_invalidate
+    echo "$rel is gone from your repo too. Git history keeps it: 'recover' brings it back" >&2
+    return 0
+  fi
   copy=$(repo_copy_for_rel "$rel")
   [[ -e "${copy%/}" ]] || { echo "forget: $rel has no copy in your repo, so there is nothing to forget" >&2; return 1; }
   rm -rf -- "${copy%/}"
+  briefcache_invalidate
   echo "$rel is gone from your repo too. Git history keeps it: 'recover' brings it back" >&2
 }

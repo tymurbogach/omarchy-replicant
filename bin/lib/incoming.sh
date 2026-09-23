@@ -40,31 +40,16 @@ record_incoming() {
   else printf '%s\n' "$@" | sort -u > "$INCOMING_FILE"
   fi
   INCOMING_LOADED=0
+  briefcache_invalidate
   return 0
 }
 
-# entry_differs <src> <repo-copy> <is-dir> — 0 when what is on this machine is
-# not what the repo holds. This is the CONTENT half of "unsaved", factored out
-# because two callers need it: the row payload the panel draws, and the cheap
-# count the bar icon polls. A second copy of this comparison is exactly how a
-# badge and a bar icon come to disagree about the same file.
-#
-# A file that is not on this machine does NOT differ — that is "missing", a
-# different row and a different answer.
-entry_differs() {
-  local src="$1" repo_path="$2" is_dir="${3:-false}"
-  if [[ "$is_dir" == true ]]; then
-    [[ -d "${src%/}" ]] || return 1
-    tree_same "$src" "$repo_path" && return 1
-    return 0
-  fi
-  [[ -f "$src" ]] || return 1
-  [[ -f "$repo_path" ]] || return 0
-  cmp -s "$src" "$repo_path" 2>/dev/null && return 1
-  return 0
-}
+# entry_differs lives in state.sh now, beside the evaluator that is its only
+# remaining reader through state_facts (the builders and the backup hold
+# decision call it there). This module keeps the incoming mark itself.
 
-# count_changes — prints "<unsaved> <incoming>" over every tracked entry.
+# count_changes — prints "<unsaved> <incoming> <locked> <missing>" over every
+# tracked entry.
 #
 # The bar icon used to read repoState.dirty, which counts what git sees in the
 # REPO working tree — files core_backup has already copied in. Edit a config and
@@ -76,34 +61,50 @@ entry_differs() {
 # already in the brief payload as `dirty`, and the icon ORs the two. Fifty cmps
 # take a few milliseconds; building the full row payload for the same answer
 # took 1.4 s of CPU once a minute.
+#
+# Locked is the third number: a version 2 secret whose vault cannot be read on
+# this machine. It is counted apart from unsaved so the bar can ask for the key
+# instead of asking for a save. Missing is the fourth: a saved entry gone from
+# this machine, which asks for restore or forget, never for calm.
+# Older callers that read only two fields keep working: the first field stays
+# the unsaved count.
 count_changes() {
-  local entry src rel repo_path is_dir n_unsaved=0 n_incoming=0 scope prof
+  local entry rel n_unsaved=0 n_incoming=0 n_locked=0 n_missing=0
+  local regrow live same member locked scope repo k v
+  local -a rf=()
   # Built once in this shell, so the loops below need no fork for each row.
-  SCOPE_MAP_READY=0; load_scope_map
-  prof=$(current_profile)
-  read_incoming
-  for entry in "${TRACKED[@]}"; do
-    src="${entry%%:*}"; rel="${entry##*:}"
-    scope_into scope "$rel"
+  registry_build
+  # Content only, like entry_differs always was: the git half (copied in, not
+  # committed) already reaches the bar as `dirty` in the brief payload, and
+  # adding it here would count one file twice.
+  for entry in "${TRACKED[@]}" "${TRACKED_SECRETS[@]}"; do
+    rel="${entry##*:}"
+    regrow=$(registry_row_for "$rel") || continue
+    mapfile -t rf < <(row_split "$regrow" 9)
+    scope="${rf[4]}"
     [[ "$scope" == "off" ]] && continue
-    is_dir=false; is_dir_entry "$rel" && is_dir=true
-    repo_path_into repo_path "$rel" "$prof"
-    entry_differs "$src" "$repo_path" "$is_dir" || continue
+    live=false; same=false; member=false; locked=false; repo=false
+    while IFS='=' read -r k v; do
+      case "$k" in
+        live) live="$v" ;; same) same="$v" ;; repo) repo="$v" ;;
+        incoming) member="$v" ;; locked) locked="$v" ;;
+      esac
+    done < <(state_facts "$regrow")
+    if [[ "$locked" == true ]]; then n_locked=$(( n_locked + 1 )); continue; fi
+    if [[ "$live" == false ]]; then
+      # Only when the repo holds a copy: a shipped entry neither here nor in
+      # the repo draws no row, and the bar stays quiet about it too.
+      [[ "$repo" == true ]] && n_missing=$(( n_missing + 1 ))
+      continue
+    fi
     # Exclusive, exactly as the badge precedence is: a file the repo has a newer
     # copy of is asking for Restore, not for Save, and counting it in both
     # totals put the same file behind two contradictory buttons.
-    if [[ -n "${INCOMING[$rel]:-}" ]]; then n_incoming=$(( n_incoming + 1 ))
+    [[ "$same" == true ]] && continue
+    if [[ "$member" == true ]]; then n_incoming=$(( n_incoming + 1 ))
     else n_unsaved=$(( n_unsaved + 1 )); fi
   done
-  for entry in "${TRACKED_SECRETS[@]}"; do
-    src="${entry%%:*}"; rel="${entry##*:}"
-    scope_into scope "$rel"
-    [[ "$scope" == "off" ]] && continue
-    entry_differs "$src" "$SECRETS_DIR/$rel" false || continue
-    if [[ -n "${INCOMING[$rel]:-}" ]]; then n_incoming=$(( n_incoming + 1 ))
-    else n_unsaved=$(( n_unsaved + 1 )); fi
-  done
-  printf '%s %s\n' "$n_unsaved" "$n_incoming"
+  printf '%s %s %s %s\n' "$n_unsaved" "$n_incoming" "$n_locked" "$n_missing"
 }
 
 # Used by the omarchy-replicant CLI wrapper

@@ -1,0 +1,16 @@
+{
+  "initialized": true,
+  "brief": true,
+  "branch": "main",
+  "remote": "@TMP@/remote.git",
+  "dirty": 0,
+  "untracked": 0,
+  "ahead": 1,
+  "behind": 0,
+  "unsaved": 2,
+  "incoming": 1,
+  "locked": 1,
+  "missing": 1,
+  "needs_action": true,
+  "pending": ""
+}

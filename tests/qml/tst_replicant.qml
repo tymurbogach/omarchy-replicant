@@ -12,7 +12,7 @@ TestCase {
 
   // Every state the core emits. Guard 7 in run-all.sh keeps the QML and the
   // core in agreement about the names; this keeps each one distinct on screen.
-  readonly property var states: ["off", "missing", "incoming", "unsaved", "default", "unpushed", "saved"]
+  readonly property var states: ["off", "missing", "incoming", "unsaved", "default", "unpushed", "saved", "locked"]
 
   function facts(o) {
     var f = { asked: true, ready: true, ahead: 0, behind: 0, incoming: 0, dirty: 0 }
@@ -48,6 +48,12 @@ TestCase {
     compare(R.stateRole("unpushed"), "accent")
     compare(R.stateRole("saved"), "ok")
     compare(R.stateRole("default"), "dim")
+  }
+
+  function test_locked_needs_a_key_not_a_button() {
+    compare(R.stateRole("locked"), "warn")
+    verify(R.rowMatchesFilter({ sync_state: "locked" }, "changed"))
+    verify(!R.wouldRestore({ synced: true, saved: true, sync_state: "locked" }))
   }
 
   function test_summary_in_order_of_precedence() {
@@ -88,6 +94,23 @@ TestCase {
     compare(sec.length, 1)
     verify(sec[0].secret)
     compare(sec[0].scope, "off")
+  }
+
+  function test_entries_are_the_primary_status_shape() {
+    var st = { entries: [
+      { id: "z.conf", label: "z.conf", src: "/z", kind: "config", source: "override",
+        category: "shell", scope: "shared", exists: true, saved: true, sync_state: "saved" },
+      { id: "env/key", label: "env/key", kind: "secret", source: "user", category: "secrets",
+        scope: "shared", exists: true, saved: true, locked: true, sync_state: "locked" }
+    ], configs: [{ id: "old", category: "shell" }], secrets: [{ id: "old-secret" }] }
+    var configs = R.rowsFor(st, "shell", "", "all")
+    compare(configs.length, 1)
+    compare(configs[0].id, "z.conf")
+    var secrets = R.rowsFor(st, "secrets", "", "changed")
+    compare(secrets.length, 1)
+    verify(secrets[0].secret)
+    compare(secrets[0].sync_state, "locked")
+    compare(R.allRows(st).length, 2)
   }
 
   function test_lineRole_for_a_diff() {
@@ -255,5 +278,33 @@ TestCase {
     compare(R.agoText(0, 7200), "2 hours ago")
     compare(R.agoText(0, 86400 * 3), "3 days ago")
     compare(R.agoText(2000, 1000), "just now")
+  }
+
+  function test_manage_visible_order_and_range() {
+    var cards = [
+      { rows: [{ id: "a", label: "a", sync_state: "saved" }, { id: "b", label: "b", sync_state: "saved" }] },
+      { rows: [{ id: "c", label: "c", sync_state: "saved" }] }
+    ]
+    var rows = R.visibleRows({}, cards, [{ id: "suggested", path: "/tmp/x", kind: "config" }], "", "all")
+    compare(rows.map(function(r) { return r.id }).join(","), "a,b,c,suggested")
+    compare(R.rangeIds(rows, "c", "a").join(","), "a,b,c")
+  }
+
+  function test_manage_actions_hide_mixed_operations() {
+    compare(R.validBulkActions([{ id: "a", source: "user", secret: false }]).join(","),
+            "save,convert-secret,untrack,scope-shared,scope-profile,scope-off")
+    compare(R.validBulkActions([{ id: "a", secret: false }, { id: "s", secret: true }]).join(","),
+            "save")
+    compare(R.validBulkActions([{ id: "s", secret: true, locked: true }]).length, 0)
+  }
+
+  function test_manage_selection_summary_hides_secret_size() {
+    var summary = R.selectionSummary([
+      { id: "a", secret: false, is_dir: false, size: 12 },
+      { id: "s", secret: true, size: 999999 }
+    ])
+    compare(summary.selected, 2)
+    compare(summary.files, 1)
+    compare(summary.bytes, 12)
   }
 }

@@ -37,6 +37,17 @@ on() {
   REPLICANT_PROFILE="${PROFILE_OF[$m]}" \
     "$CLI" "$@" 2>&1
 }
+# on_copy <machine> — the copy pass the deprecated CLI backup used to run.
+# The user-facing backup is read-only now; setup steps that need copies call
+# the core directly with the same per-machine environment.
+on_copy() {
+  local m="$1"; shift
+  HOME="$TMP/$m/home" \
+  OMARCHY_REPLICANT_HOME="$TMP/$m/replicant" \
+  REPLICANT_MACHINE="$m" \
+  REPLICANT_PROFILE="${PROFILE_OF[$m]}" \
+    bash "$HERE/../bin/replicant-core.sh" backup "$@" 2>&1
+}
 declare -A PROFILE_OF=([desktop]=desktop [laptop]=laptop)
 
 # A fake `omarchy` recording every call it gets, so this suite can prove
@@ -76,6 +87,11 @@ git -C "$D/.config/omarchy/themes/mine" remote add origin https://example.com/om
 
 section "the desktop saves"
 DREPO="$TMP/desktop/replicant/repo"
+# This journey pins the version 1 layout until the section 9 migration. repos
+# born here would be version 2, so the desktop repo gets its git dir before
+# the first backup: secrets keep flowing through secrets/ below. Same shape
+# as a fresh layout (main branch), minus the v2 marker files.
+git init -q -b main "$DREPO" 2>/dev/null || true
 init_out=$(on desktop init)
 # Every check below stands on this one. When it fails, the reason is in the
 # output of init, and a check that hides it leaves nothing to debug in CI.
@@ -89,7 +105,7 @@ on desktop track "$D/.local/bin/my-script" >/dev/null 2>&1
 git -C "$DREPO" config user.email t@example.com
 git -C "$DREPO" config user.name Test
 git -C "$DREPO" remote add origin "$TMP/origin.git" 2>/dev/null
-on desktop backup >/dev/null 2>&1
+on_copy desktop >/dev/null 2>&1
 git -C "$DREPO" add -A >/dev/null 2>&1
 git -C "$DREPO" commit -q -m "desktop" >/dev/null 2>&1
 git -C "$DREPO" push -q -u origin HEAD:main >/dev/null 2>&1
@@ -170,7 +186,7 @@ section "push means push"
 # nothing called, and that took its arguments as the commit message, which is
 # how a commit titled "--help" once reached GitHub.
 printf 'not saved by push\n' > "$D/.config/hypr/input.lua"
-on desktop backup >/dev/null 2>&1          # copied into the repo, committed nowhere
+on_copy desktop >/dev/null 2>&1          # copied into the repo, committed nowhere
 before_head=$(git -C "$DREPO" rev-parse HEAD)
 out=$(on desktop push)
 check "push commits nothing on its own" "$before_head" "$(git -C "$DREPO" rev-parse HEAD)"
@@ -179,6 +195,16 @@ check "push commits nothing on its own" "$before_head" "$(git -C "$DREPO" rev-pa
 check_contains "…and says there is work it did not take on" "uncommitted changes" "$out"
 check_true "…leaving it for savegame" \
   bash -c 'git -C "$1" status --porcelain -- config/ | grep -q .' _ "$DREPO"
+# A save needs a clean worktree: the backup's copies are regenerable, so the
+# save refuses them instead of committing over them. The refusal names the
+# rule and moves nothing.
+rc=0; out=$(on desktop savegame --auto --no-push) || rc=$?
+check "a save on a dirty tree refuses" "1" "$rc"
+check_contains "…naming the clean-worktree rule" "clean worktree" "$out"
+check "…with the commit point unmoved" "$before_head" "$(git -C "$DREPO" rev-parse HEAD)"
+# Discard the regenerable copies and the save goes through from live files.
+git -C "$DREPO" checkout -- . >/dev/null 2>&1
+git -C "$DREPO" clean -fdq >/dev/null 2>&1
 on desktop savegame --auto --no-push >/dev/null 2>&1
 out=$(on desktop push)
 check_contains "…and it does push what is already committed" "commit" "$out"
@@ -259,7 +285,7 @@ check "the laptop keeps its OWN monitor layout" "$LAPTOP_MONITORS" \
 
 section "and back the other way"
 printf 'return { "a", "b" }\n' > "$L/.config/nvim/lua/plugins.lua"
-on laptop backup >/dev/null 2>&1
+on_copy laptop >/dev/null 2>&1
 git -C "$LREPO" config user.email t@example.com
 git -C "$LREPO" config user.name Test
 git -C "$LREPO" add -A >/dev/null 2>&1

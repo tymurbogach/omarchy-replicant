@@ -32,7 +32,7 @@ Everything in the repo is English. Two additions:
 3. **`reset-all` (everything to Omarchy's defaults) and `restore --apply --all` (everything to what
    the repo holds) are two separate actions.** Never merge them in the CLI or in the panel.
 4. **Verify every visual change to `Panel.qml` or `BarWidget.qml` with a real screenshot** after a
-   reload. `repoState.configs[].sync_state` drives the badges. To add a state, trigger it on a real
+   reload. `repoState.entries[].sync_state` drives the badges. To add a state, trigger it on a real
    test file and look at it.
 5. **A global destructive command asks for one summary confirmation**, unless `--yes` is given:
    `reset-all` and `restore --apply --all`. The exception is `install-theme` and `install-plugin`:
@@ -55,7 +55,7 @@ Everything in the repo is English. Two additions:
 11. **Never render a secret, and ask the entry, not the file name.** `is_secret_rel` asks
     `TRACKED_SECRETS`, and `repo_copy_for_rel`, `restore_mode_for` and `core_diff` go through it.
     `core_diff` never prints a secret's contents (`.pub` files excepted). The JSON carries a kind,
-    a mode and variable names, never values. `tests/test-core.sh` plants a token and greps for it.
+    a mode and lock state, never values or secret names. `tests/test-core.sh` plants a token and greps for it.
 12. **Some names are taken.** `state` is a built-in property of every QML Item, and `GROUPS` is a
     bash special variable. Before you name a shell array or a QML property, check that it is free.
 

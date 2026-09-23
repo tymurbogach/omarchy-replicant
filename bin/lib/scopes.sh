@@ -67,7 +67,7 @@ guess_profile() {
 # and never reassigns, so an existing machine keeps the profile it already has
 # and nothing moves in a repo that is already working.
 ensure_profile_recorded() {
-  [[ -d "$REPO_DIR/.git" ]] || return 0
+  [[ -e "$REPO_DIR/.git" ]] || return 0
   [[ -n "${REPLICANT_PROFILE:-}" ]] && return 0
   profile_for_machine "$MACHINE" >/dev/null 2>&1 && return 0
   local want taken=0 line k v d
@@ -123,6 +123,7 @@ current_profile() {
 
 # core_profile_set <name> — assign this machine to a profile, creating it.
 core_profile_set() {
+  require_writable_schema || return 1
   local want="$1" line k v
   local -a keep=()
   [[ "$want" =~ ^[a-z0-9][a-z0-9_-]{0,31}$ ]] || {
@@ -140,6 +141,7 @@ core_profile_set() {
     echo "# machines in different profiles never overwrite each other's copy."
     printf '%s\n' "${keep[@]}"
   } > "$PROFILE_FILE"
+  briefcache_invalidate
   echo "$MACHINE is now in the '$want' profile" >&2
 }
 
@@ -312,6 +314,7 @@ move_repo_copy() {
 
 # core_scope <rel> <shared|profile|off> — the panel's per-file scope control.
 core_scope() {
+  require_writable_schema || return 1
   local rel="$1" want="$2" line k old
   local -a keep=()
   case "$want" in shared|profile|off) ;; *)
@@ -345,6 +348,65 @@ core_scope() {
     profile) echo "$rel is kept per profile — this machine reads and writes the '$(current_profile)' copy" >&2 ;;
     off)     echo "$rel will no longer sync" >&2 ;;
   esac
+  briefcache_invalidate
+}
+
+# core_scope_bulk <scope> <id...> — apply one scope decision to every id.
+# Validate the complete selection before changing the scope file or moving a
+# repository copy. The CLI commits the resulting shape as one decision.
+core_scope_bulk() {
+  require_writable_schema || return 1
+  local want="$1" id src old from to
+  shift || true
+  [[ "$want" == shared || "$want" == profile || "$want" == off ]] || {
+    echo "policy: expected scope 'shared', 'profile' or 'off'" >&2
+    return 1
+  }
+  (( $# > 0 )) || { echo "policy: no entries selected" >&2; return 1; }
+
+  local -A seen=()
+  local -a ids=() olds=() froms=() tos=() lines=()
+  for id in "$@"; do
+    [[ -n "$id" && -z "${seen[$id]:-}" ]] || {
+      echo "policy: duplicate or empty entry id: $id" >&2; return 1; }
+    seen["$id"]=1
+    resolve_manifest_src "$id" >/dev/null 2>&1 || {
+      echo "policy: unknown id: $id" >&2; return 1; }
+    old=$(scope_for "$id")
+    ids+=("$id"); olds+=("$old")
+    [[ "$old" == "$want" ]] && { froms+=(""); tos+=(""); continue; }
+    if [[ "$old" == shared && "$want" == profile ]]; then
+      from="$CONFIG_DIR/$id"; to="$REPO_DIR/profiles/$(current_profile)/config/$id"
+    elif [[ "$old" == profile && "$want" == shared ]]; then
+      from="$REPO_DIR/profiles/$(current_profile)/config/$id"; to="$CONFIG_DIR/$id"
+    else
+      froms+=(""); tos+=(""); continue
+    fi
+    if [[ -e "$from" && ! -e "$to" ]]; then
+      [[ -d "$(dirname "$to")" || -w "$(dirname "$to")" || ! -e "$(dirname "$to")" ]] || {
+        echo "policy: destination is not writable: $to" >&2; return 1; }
+    fi
+    froms+=("$from"); tos+=("$to")
+  done
+
+  ensure_scope_file
+  while IFS= read -r line; do
+    local key="${line%%=*}"
+    key="${key//[[:space:]]/}"
+    [[ -z "${seen[$key]:-}" ]] && lines+=("$line")
+  done < <(read_scopes)
+  for id in "${ids[@]}"; do
+    [[ "$want" == shared ]] || lines+=("$id = $want")
+  done
+  write_scope_file "${lines[@]}"
+
+  local i
+  for i in "${!ids[@]}"; do
+    [[ -n "${froms[$i]}" ]] || continue
+    move_repo_copy "${froms[$i]}" "${tos[$i]}" || return 1
+  done
+  briefcache_invalidate
+  echo "$(plural "${#ids[@]}" entry entries) now use the '$want' scope" >&2
 }
 
 # core_sync <rel> <on|off> — the older two-state switch, kept because it is in

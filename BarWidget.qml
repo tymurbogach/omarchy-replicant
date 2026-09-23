@@ -54,14 +54,23 @@ BarWidget {
     return n
   }
   readonly property int nIncoming: repoState.incoming || 0
+  readonly property int nLocked: repoState.locked || 0
+  readonly property int nMissing: repoState.missing || 0
   readonly property string glyph: {
     if (!asked) return R.mdi(0xF0450)                                         // refresh
     if (!repoState.initialized) return R.mdi(0xF0415)                         // plus
     if ((repoState.ahead || 0) > 0 && (repoState.behind || 0) > 0) return R.mdi(0xF002A)  // alert
+    // Locked first: without the key no other secret state can be evaluated.
+    if (root.nLocked > 0) return R.mdi(0xF002A)                               // alert
     // Before anything about pushing: an incoming file is the one state where
     // the obvious next action is the wrong one.
     if (root.nIncoming > 0) return R.mdi(0xF0162)                             // cloud-download
     if ((repoState.behind || 0) > 0) return R.mdi(0xF0162)                    // cloud-download
+    // A saved entry gone from this machine: restore it or forget it, but never
+    // the calm icon. Same warning family as locked, above unsaved: a missing
+    // file is closer to incoming (another machine may hold the truth) than to
+    // an edit that only needs saving.
+    if (root.nMissing > 0) return R.mdi(0xF002A)                              // alert
     if (root.nUnsaved > 0) return R.mdi(0xF0193)                              // content-save
     if ((repoState.ahead || 0) > 0) return R.mdi(0xF0167)                     // cloud-upload
     return R.mdi(0xF06E1)                                                     // hexagon-multiple
@@ -73,18 +82,20 @@ BarWidget {
     if (repoState.remote) t += " → " + repoState.remote
     else t += " (no remote)"
     t += "\nbranch: " + (repoState.branch || "?")
+    if (root.nLocked > 0) t += "\n⚠ " + R.plural(root.nLocked, "secret") + " locked — import the key"
     if (root.nIncoming > 0) t += "\n↓ " + R.plural(root.nIncoming, "file") + " to restore from another machine"
     if ((repoState.behind || 0) > 0) t += "\n↓ " + R.plural(repoState.behind, "commit") + " to pull"
+    if (root.nMissing > 0) t += "\n· " + R.plural(root.nMissing, "file") + " missing from this machine — restore or forget"
     if (root.nUnsaved > 0) t += "\n● " + R.plural(root.nUnsaved, "file") + " changed and not saved"
     if ((repoState.ahead || 0) > 0) t += "\n↑ " + R.plural(repoState.ahead, "commit") + " to push"
-    if (root.nIncoming === 0 && root.nUnsaved === 0
+    if (root.nLocked === 0 && root.nMissing === 0 && root.nIncoming === 0 && root.nUnsaved === 0
         && (repoState.ahead || 0) === 0 && (repoState.behind || 0) === 0) t += "\n✓ in sync"
     t += "\nClick to open panel · Right-click to refresh"
     return t
   }
   readonly property color bg: {
     if (!asked || !repoState.initialized) return Qt.darker(bar ? bar.barForeground : Color.foreground, 1.6)
-    if (root.nIncoming > 0 || (repoState.behind || 0) > 0) return "#e6a23c"
+    if (root.nLocked > 0 || root.nMissing > 0 || root.nIncoming > 0 || (repoState.behind || 0) > 0) return "#e6a23c"
     if ((repoState.ahead || 0) > 0 || root.nUnsaved > 0) return Color.accent
     return bar ? bar.barForeground : Color.foreground
   }

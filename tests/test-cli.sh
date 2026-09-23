@@ -9,8 +9,13 @@ set -uo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CLI="$HERE/../bin/omarchy-replicant"
+CORE_BIN="$HERE/../bin/replicant-core.sh"
 # shellcheck source=tests/lib.sh
 source "$HERE/lib.sh"
+# copy_backup: the copy pass the deprecated CLI backup used to run. The
+# user-facing backup is now a read-only alias for changes; tests that need
+# copies in the repo call the core directly.
+copy_backup() { bash "$CORE_BIN" backup 2>&1; }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP/home"
@@ -134,7 +139,7 @@ section "dry runs must not write — proven by hashing the files"
 git init -q "$REPO"
 git -C "$REPO" config user.email t@example.com
 git -C "$REPO" config user.name Test
-"$CLI" backup >/dev/null 2>&1
+copy_backup >/dev/null 2>&1
 git -C "$REPO" add -A >/dev/null 2>&1
 git -C "$REPO" commit -q -m initial >/dev/null 2>&1
 # Diverge the machine from the repo so both dry runs have real work to describe.
@@ -197,7 +202,7 @@ check_false "unknown id -> refused" "$CLI" reset nope/nope
 check "nothing was touched" "$before_home" "$(hash_tree "$HOME/.config")"
 
 section "save-file touches one file and nothing else"
-"$CLI" backup >/dev/null 2>&1
+copy_backup >/dev/null 2>&1
 git -C "$REPO" add -A >/dev/null 2>&1
 git -C "$REPO" commit -q -m "second" >/dev/null 2>&1
 printf 'edited again\n' > "$HOME/.config/hypr/input.lua"
@@ -287,6 +292,20 @@ check "…and the unrelated edit is still pending, not swallowed" "1" \
 git -C "$REPO" checkout -- config/omarchy/shell.json 2>/dev/null || true
 run scope hypr/hyprlock.conf shared >/dev/null 2>&1
 
+section "bulk policy changes validate and commit once"
+before_head=$(git -C "$REPO" rev-parse HEAD)
+check_false "policy needs a selection" "$CLI" policy set --scope off --
+check_false "policy refuses an unknown id before mutation" "$CLI" policy set --scope off -- hypr/input.lua nope/nope
+check "invalid bulk policy leaves the commit unchanged" "$before_head" "$(git -C "$REPO" rev-parse HEAD)"
+run policy set --scope off -- hypr/input.lua hypr/hyprlock.conf >/dev/null 2>&1
+check "bulk policy writes both entries" "2" \
+  "$(grep -Ec '^hypr/(input\.lua|hyprlock\.conf) = off$' "$REPO/.replicant-sync")"
+check "bulk policy creates one commit" "1" \
+  "$(git -C "$REPO" log --format=%s "$before_head"..HEAD | grep -c '^policy: set off for 2 entries$')"
+run policy set --scope shared -- hypr/input.lua hypr/hyprlock.conf >/dev/null 2>&1
+check "bulk policy can restore the shared scope" "0" \
+  "$(grep -Ec '^hypr/(input\.lua|hyprlock\.conf) = ' "$REPO/.replicant-sync" 2>/dev/null || true)"
+
 section "editing a file, and coming back to the panel"
 # --wait only means something for an editor that can be waited on. A terminal
 # editor is opened in a floating terminal that detaches, so the CLI must NOT
@@ -373,7 +392,7 @@ out=$(run doctor)
 check_contains "a module that is tracked and not copied in says so" "tracked, not saved yet" "$out"
 check_contains "…and names it" "hypr/extra.lua" "$out"
 check_contains "a module that exists nowhere is an error" "hypr.gone" "$out"
-run backup >/dev/null 2>&1
+copy_backup >/dev/null 2>&1
 check_contains "once saved, it says saved" "saved with it" "$(run doctor)"
 rm -f "$HOME/.config/hypr/hyprland.lua" "$HOME/.config/hypr/extra.lua"
 
@@ -439,6 +458,13 @@ run unlink >/dev/null 2>&1
 check "a real file at that path is left alone" "1" "$(ls "$PATH_LINK" 2>/dev/null | wc -l)"
 check_false "…and link refuses to clobber it" "$CLI" link
 rm -f "$PATH_LINK"
+
+# A save needs a clean worktree, and the doctor and install sections above
+# plant repo fixtures (backup copies, a fake machine's inventory) without
+# committing them. Absorb them the way line 200 does, so the saves below
+# start clean.
+git -C "$REPO" add -A >/dev/null 2>&1
+git -C "$REPO" commit -qm "test fixtures" >/dev/null 2>&1 || true
 
 section "save-file asks the core where a copy goes"
 # It used to work the destination out itself, in three lines, and got all three
@@ -588,9 +614,10 @@ git init -q "$REPO"
 git -C "$REPO" config user.email t@example.com
 git -C "$REPO" config user.name Test
 # Two writes racing used to collide on .git/index.lock and one would die
-# half-done, leaving the repo mid-commit.
+# half-done, leaving the repo mid-commit. save takes the repo lock; the
+# deprecated backup is read-only now and would not exercise it.
 # shellcheck disable=SC2034  # a repetition counter; the body deliberately ignores it
-for i in 1 2 3; do ( "$CLI" backup >/dev/null 2>&1 ) & done
+for i in 1 2 3; do ( "$CLI" save --inventory --no-push >/dev/null 2>&1 ) & done
 wait
 check "no leftover git index lock" "0" "$(ls "$REPO/.git/index.lock" 2>/dev/null | wc -l)"
 check_true "the repo is still usable afterwards" git -C "$REPO" status --porcelain
@@ -617,7 +644,7 @@ section "track / untrack commit only their own paths"
 printf 'mine\n' > "$HOME/.config/mine.conf"
 # Something unrelated left pending, exactly as a user would have it.
 printf '{ "idle": { "lock": 900 } }\n' > "$HOME/.config/omarchy/shell.json"
-run backup >/dev/null 2>&1
+copy_backup >/dev/null 2>&1
 run track "$HOME/.config/mine.conf" >/dev/null 2>&1
 check_contains "the list names it" "mine.conf" "$(cat "$REPO/.replicant-track" 2>/dev/null)"
 check "the track commit is about the list, not the pending edit" "0" \
@@ -633,6 +660,11 @@ check_false "untrack refuses a shipped file"    "$CLI" untrack hypr/input.lua
 run untrack mine.conf >/dev/null 2>&1
 check "untracking removes it from the list" "0" \
   "$(grep -c 'mine.conf' "$REPO/.replicant-track" 2>/dev/null || true)"
+# The track section above leaves backup copies and a planted edit uncommitted
+# on purpose. A save needs a clean worktree now, so absorb them the way the
+# save-file section does, before the saves below.
+git -C "$REPO" add -A >/dev/null 2>&1
+git -C "$REPO" commit -qm "test fixtures" >/dev/null 2>&1 || true
 
 section "suggest never writes anything"
 before=$(hash_tree "$HOME")

@@ -388,14 +388,14 @@ TestCase {
     compare(snapshot.anchor.id, "removed")
   }
 
-  function test_navigation_keeps_body_and_viewer_offsets_independent() {
+  function test_navigation_does_not_store_viewer_offset() {
     var snapshot = R.navigationSnapshot({
       scrollY: { configs: 240 },
       viewerScrollY: 91
     })
     compare(snapshot.scrollY.configs, 240)
-    compare(snapshot.viewerScrollY, 91)
+    verify(!Object.prototype.hasOwnProperty.call(snapshot, "viewerScrollY"))
     snapshot.scrollY.configs = 0
-    compare(snapshot.viewerScrollY, 91)
+    compare(snapshot.scrollY.configs, 0)
   }
 }

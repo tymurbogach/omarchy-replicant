@@ -51,7 +51,7 @@ Column {
     ButtonGroup {
       anchors.left: parent.left
       anchors.verticalCenter: parent.verticalCenter
-      focusable: false
+      focusable: true
       spacing: Style.space(4)
       fontSize: Style.font.bodySmall
       foreground: panel.fg

@@ -281,7 +281,6 @@ function navigationSnapshot(v) {
     manageMode: v.manageMode === true,
     selectedIds: (v.selectedIds || []).slice(),
     selectionAnchor: String(v.selectionAnchor || ""),
-    viewerScrollY: Math.max(0, Number(v.viewerScrollY) || 0),
     anchor: v.anchor && v.anchor.id ? {
       kind: String(v.anchor.kind || "card"),
       id: String(v.anchor.id),

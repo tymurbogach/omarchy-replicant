@@ -1178,7 +1178,7 @@ Panel {
           foreground: root.fg
           accent: Color.accent
           fontFamily: root.ff
-          focusable: false
+          focusable: true
           onChanged: function(v) { root.activeTab = v }
         }
 

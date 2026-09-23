@@ -231,7 +231,7 @@ tools/
 
 ## 7. Simplify the Shell Architecture
 
-- [ ] Keep `bin/omarchy-replicant` responsible for argument parsing, confirmation, and output only.
+- [x] Keep `bin/omarchy-replicant` responsible for argument parsing, confirmation, and output only.
 - [x] Move save and transaction behavior into `bin/lib/save.sh`.
 - [x] Move encryption behavior into `bin/lib/crypto.sh`.
 - [x] Move migration behavior into `bin/lib/migrate.sh`.

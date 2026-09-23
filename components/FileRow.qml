@@ -154,6 +154,7 @@ Item {
         iconText: frow.isIncoming ? panel.icFromRepo : panel.icSave
         foreground: frow.isIncoming ? panel.warnColor : Color.accent
         enabled: !panel.busy
+        disabledReason: panel.busy ? "Another Replicant operation is running." : ""
         tooltipText: (!enabled ? "Disabled while another operation runs. " : "") + (frow.isIncoming
                      ? "Bring down the newer copy that another machine saved (keeps a .bak copy)"
                      : "Commit and push just this file")

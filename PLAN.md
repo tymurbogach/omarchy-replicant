@@ -402,8 +402,8 @@ omarchy-replicant migrate-v2 \
 ## 14. Test Failure Modes and Security Boundaries
 
 - [x] Add dedicated crypto, migration, transaction, and registry test suites.
-- [ ] Run integration tests in a container with an `age` build that supports `-pq`.
-  Docker remains blocked because `/var/run/docker.sock` denies access on this host.
+- [x] Run integration tests in a container with an `age` build that supports `-pq`.
+  `tests/run-all.sh` passes in the `replicant-tests` image. The container uses age 1.3.2.
 - [x] Test missing, wrong, malformed, and permission-invalid identities.
 - [x] Test tampered ciphertext. It must never replace live data.
 - [x] Test interruption during encryption, commit, fast-forward, and push.

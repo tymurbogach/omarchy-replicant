@@ -615,6 +615,21 @@ Panel {
   function shellQuote(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'" }
   function clean(s) { return String(s || "").replace(/\x1b\[[0-9;]*m/g, "").replace(/\n{3,}/g, "\n\n").trim() }
 
+  // Every completed write clears the busy state and refreshes the panel from
+  // the system. The controller owns the process; the panel owns the result.
+  function finish(label, code, out, err) {
+    root.busyLabel = ""
+    var text = root.clean(String(out || "") + "\n" + String(err || ""))
+    root.lastOk = code === 0
+    root.lastTitle = label
+    if (code !== 0) text = label + " failed (exit " + code + ")\n" + text
+    else if (text === "") text = label + ": done."
+    root.lastOutput = text.length > 20000 ? "…" + text.slice(-20000) : text
+    root.refresh()
+    root.loadBackups()
+    root.loadDeleted()
+  }
+
   // --auto is not a convenience here, it is the difference between the button
   // working and not. Bare `savegame` commits the inventory, pushes that, and
   // deliberately leaves config and secrets copied-in-but-uncommitted so a human

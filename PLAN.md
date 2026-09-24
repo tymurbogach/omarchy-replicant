@@ -168,29 +168,29 @@
 
   ## Phase G2: Fresh Initialization and Private Repository Safety
 
-  - [ ] Distinguish a missing repository from an existing v1 repository.
-  - [ ] Create the v3 schema before applying the write gate.
-  - [ ] Build fresh repositories in temporary Git directories.
-  - [ ] Validate the complete repository before activation.
-  - [ ] Activate the repository with one atomic rename.
-  - [ ] Remove temporary repositories after every failure.
-  - [ ] Make create request private GitHub visibility.
-  - [ ] Verify visibility after repository creation.
-  - [ ] Reject existing public repositories before local mutation.
-  - [ ] Never change public visibility automatically.
-  - [ ] Avoid changing origin before every preflight succeeds.
-  - [ ] Make clone identify v1 and v2 repositories as migration-only.
-  - [ ] Report exact recovery commands after remote failures.
+  - [x] Distinguish a missing repository from an existing v1 repository.
+  - [x] Create the v3 schema before applying the write gate.
+  - [x] Build fresh repositories in temporary Git directories.
+  - [x] Validate the complete repository before activation.
+  - [x] Activate the repository with one atomic rename.
+  - [x] Remove temporary repositories after every failure.
+  - [x] Make create request private GitHub visibility.
+  - [x] Verify visibility after repository creation.
+  - [x] Reject existing public repositories before local mutation.
+  - [x] Never change public visibility automatically.
+  - [x] Avoid changing origin before every preflight succeeds.
+  - [x] Make clone identify v1 and v2 repositories as migration-only.
+  - [x] Report exact recovery commands after remote failures.
 
   Tests:
 
-  - [ ] Run init without existing state.
-  - [ ] Run create without existing state.
-  - [ ] Create against an existing private remote.
-  - [ ] Reject an existing public remote.
-  - [ ] Assert that public rejection performs no push or remote change.
-  - [ ] Inject failures before validation, activation, and first push.
-  - [ ] Verify that failed initialization leaves no partial repository.
+  - [x] Run init without existing state.
+  - [x] Run create without existing state.
+  - [x] Create against an existing private remote.
+  - [x] Reject an existing public remote.
+  - [x] Assert that public rejection performs no push or remote change.
+  - [x] Inject failures before validation, activation, and first push.
+  - [x] Verify that failed initialization leaves no partial repository.
 
   Gate and commit:
 

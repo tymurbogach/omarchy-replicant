@@ -395,6 +395,18 @@ from:     if (( ! force )); then
 to:     if false; then
 why: discarding a committed transaction needs an explicit force
 ---
+file: bin/lib/repo.sh
+suite: test-bootstrap.sh
+from:     if [[ "$vis" == PUBLIC ]]; then
+to:     if false; then
+why: create refuses an existing public remote before local mutation
+---
+file: bin/lib/repo.sh
+suite: test-bootstrap.sh
+from:   if ! _repo_clone_build "$url" "$stage"; then
+to:   if false; then
+why: a failed clone leaves no partial repository
+---
 DATA
 )
 

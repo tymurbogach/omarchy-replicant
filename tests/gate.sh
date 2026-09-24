@@ -150,7 +150,20 @@ gate_g1() {
   if "$HERE/test-schema.sh" >/dev/null 2>&1; then ok "legacy schema suite still passes"; else bad "legacy schema suite fails"; fi
 }
 
-gate_g2() { section "G2 bootstrap gate"; bad "G2 is not implemented yet"; }
+gate_g2() {
+  section "G2 bootstrap gate"
+  "$HERE/coverage-check.sh" >/dev/null 2>&1 && ok "coverage manifest is complete" || bad "coverage manifest is incomplete"
+  grep -q 'repo_state()' "$ROOT/bin/lib/schema.sh" 2>/dev/null && ok "missing and legacy repos are distinguished" || bad "repo_state is missing from schema.sh"
+  grep -q 'bootstrap_fail_at' "$ROOT/bin/lib/repo.sh" 2>/dev/null && ok "failure injection points exist" || bad "bootstrap_fail_at is missing from repo.sh"
+  grep -q 'mktemp -d.*replicant-init' "$ROOT/bin/lib/save.sh" 2>/dev/null && ok "init stages in a temp dir" || bad "init has no temp staging"
+  grep -q 'mktemp -d.*replicant-clone' "$ROOT/bin/lib/repo.sh" 2>/dev/null && ok "clone stages in a temp dir" || bad "clone has no temp staging"
+  if grep -q 'gh repo create "\$name" --private' "$ROOT/bin/lib/repo.sh" 2>/dev/null; then ok "create requests private visibility"; else bad "create does not request --private"; fi
+  if grep -qE '^[[:space:]]*(command gh|gh) repo edit' "$ROOT/bin/lib/repo.sh" 2>/dev/null; then bad "bootstrap changes visibility automatically"; else ok "bootstrap never changes visibility automatically"; fi
+  grep -q 'migration-only' "$ROOT/bin/lib/repo.sh" 2>/dev/null && ok "clone names legacy repos migration-only" || bad "clone has no migration-only message"
+  grep -q 'gh auth login' "$ROOT/bin/lib/repo.sh" 2>/dev/null && ok "remote failures print recovery commands" || bad "no recovery commands after remote failures"
+  if "$HERE/test-bootstrap.sh" >/dev/null 2>&1; then ok "bootstrap suite passes"; else bad "bootstrap suite fails"; fi
+  if "$HERE/test-v3schema.sh" >/dev/null 2>&1; then ok "v3 schema suite still passes"; else bad "v3 schema suite fails"; fi
+}
 gate_g3() { section "G3 migration gate"; bad "G3 is not implemented yet"; }
 gate_g4() { section "G4 transaction gate"; bad "G4 is not implemented yet"; }
 gate_g5() { section "G5 status gate"; bad "G5 is not implemented yet"; }

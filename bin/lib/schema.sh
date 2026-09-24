@@ -43,6 +43,22 @@ repo_data_version() {
   printf '%s\n' "$v"
 }
 
+# repo_state: prints missing when no git repo exists here, else the version
+# as v1, v2, v3, unknown, or a newer number. A directory without .git is not
+# version 1: version 1 is a git repo without a schema marker. Bootstrap
+# (init, create, clone) uses this to tell "nothing here yet" from "a legacy
+# repo that needs migration".
+# -e, not -d: a linked worktree carries .git as a file.
+repo_state() {
+  local v
+  [[ -e "$REPO_DIR/.git" ]] || { printf 'missing\n'; return 0; }
+  v=$(repo_data_version)
+  [[ "$v" =~ ^[0-9]+$ ]] && printf 'v%s\n' "$v" || printf '%s\n' "$v"
+}
+
+# repo_exists: 0 when a git repo exists at REPO_DIR, staged or not.
+repo_exists() { [[ -e "$REPO_DIR/.git" ]]; }
+
 # repo_is_v3: 0 when the active repo carries the version 3 schema marker.
 # Writers use this to choose the canonical stores; readers use it to choose
 # the canonical resolution paths. A repo without a marker is version 1.

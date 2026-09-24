@@ -596,10 +596,16 @@ core_save() {
 
 # core_init: create the initial savegame commit. The CLI parses the deprecated
 # flags and reports the command result; this function owns repository writes.
+# A missing repo is staged as v3 in a temp dir first: the write gate runs
+# against the staged repo, never before the schema marker exists.
 core_init() {
-  require_writable_schema || return 1
+  if [[ "$(repo_state)" == missing ]]; then
+    core_init_staged || return 1
+  else
+    require_writable_schema || return 1
+  fi
   ensure_repo_layout
-  core_backup
+  core_backup || return 1
   git -C "$REPO_DIR" add -A
   if git -C "$REPO_DIR" diff --cached --quiet; then
     echo "init: nothing new" >&2
@@ -609,4 +615,73 @@ core_init() {
   fi
   git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
   echo "init done at $REPO_DIR (savegame layout: config/secrets/state)" >&2
+}
+
+# core_init_staged: build a fresh v3 repo in a temp dir beside the final path
+# (same parent, so the rename is atomic), validate it, and move it into place.
+# Every failure removes the staging dir: a failed init leaves no repo behind.
+core_init_staged() {
+  local parent stage
+  parent="$(dirname -- "$REPO_DIR")"
+  mkdir -p -- "$parent" || return 1
+  if [[ -e "$REPO_DIR" ]] && ! repo_exists; then
+    if [[ -d "$REPO_DIR" ]] && [[ -z "$(ls -A -- "$REPO_DIR" 2>/dev/null)" ]]; then
+      rmdir -- "$REPO_DIR" || return 1
+    else
+      printf 'init: %s exists but is not a git repo — move it aside, then retry\n' "$REPO_DIR" >&2
+      return 1
+    fi
+  fi
+  stage="$(mktemp -d "$parent/.replicant-init-XXXXXX")" || return 1
+  if ! _core_init_build "$stage"; then
+    rm -rf -- "$stage"
+    return 1
+  fi
+  if ! bootstrap_fail_at activate; then
+    rm -rf -- "$stage"
+    return 1
+  fi
+  if ! mv -- "$stage" "$REPO_DIR"; then
+    rm -rf -- "$stage"
+    printf 'init: could not activate the staged repo at %s — nothing was changed\n' "$REPO_DIR" >&2
+    return 1
+  fi
+  return 0
+}
+
+# _core_init_build <stage>: run the full layout inside the staging dir with
+# the repo paths redirected, then validate the staged repo. Writes nothing
+# outside the stage: the path globals set at source time are redirected too.
+_core_init_build() {
+  local stage="$1" rc=0
+  local saved_repo="$REPO_DIR" saved_config="$CONFIG_DIR"
+  local saved_state_root="$STATE_ROOT" saved_state="$STATE_DIR"
+  local saved_templates="$TEMPLATES_DIR" saved_secrets="$SECRETS_DIR"
+  local saved_hooks="$GITHOOKS_DIR" saved_track="$USER_TRACK_FILE"
+  local saved_version="$REPO_VERSION_FILE" saved_scope="$SCOPE_FILE"
+  if ! bootstrap_fail_at validate; then
+    return 1
+  fi
+  REPO_DIR="$stage" CONFIG_DIR="$stage/config"
+  STATE_ROOT="$stage/state" STATE_DIR="$stage/state/$MACHINE"
+  TEMPLATES_DIR="$stage/templates" SECRETS_DIR="$stage/secrets"
+  GITHOOKS_DIR="$stage/.githooks"
+  USER_TRACK_FILE="$stage/.replicant-track"
+  REPO_VERSION_FILE="$stage/.replicant-version"
+  SCOPE_FILE="$stage/.replicant-sync"
+  if ! ensure_repo_layout; then
+    rc=1
+  elif ! _schema_marker_valid; then
+    rc=1
+  elif ! v3_no_legacy_files; then
+    rc=1
+  elif ! validate_v3_entries "$stage/.replicant/entries.json"; then
+    rc=1
+  fi
+  REPO_DIR="$saved_repo" CONFIG_DIR="$saved_config"
+  STATE_ROOT="$saved_state_root" STATE_DIR="$saved_state"
+  TEMPLATES_DIR="$saved_templates" SECRETS_DIR="$saved_secrets"
+  GITHOOKS_DIR="$saved_hooks" USER_TRACK_FILE="$saved_track"
+  REPO_VERSION_FILE="$saved_version" SCOPE_FILE="$saved_scope"
+  return "$rc"
 }

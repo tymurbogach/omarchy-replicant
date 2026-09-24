@@ -38,12 +38,19 @@ check_false "the v1 schema is still absent" test -e "$REPO_DIR/.replicant/schema
 printf 'custom\n' > "$HOME/.config/hypr/input.lua"
 git -C "$REPO_DIR" checkout -- .replicant-track
 
-section "successful migration creates one clean encrypted repository"
+section "the deprecated alias migrates to v3"
+upstream="$TMP/remote-upstream.git"
+git init --bare -q -b main "$upstream"
+git -C "$REPO_DIR" remote add origin "$upstream" 2>/dev/null
+git -C "$REPO_DIR" push -q -u origin main 2>/dev/null
 backup="$TMP/identity.backup"
-core_migrate_v2 --remote "$remote" --identity-backup "$backup" --yes
+alias_out=$(core_migrate_v2 --remote "$remote" --identity-backup "$backup" --yes 2>&1)
 migration_rc=$?
 check "migration succeeds against an empty local remote" "0" "$migration_rc"
-check "the active repository is v2" "2" "$(jq -r .dataVersion "$REPO_DIR/.replicant/schema.json" 2>/dev/null)"
+check_contains "…warning that v2 is deprecated" "deprecated" "$alias_out"
+check "the active repository is v3" "3" "$(jq -r .dataVersion "$REPO_DIR/.replicant/schema.json" 2>/dev/null)"
+check "…with the v2 secret format" "age-pq-v2" "$(jq -r .secretFormat "$REPO_DIR/.replicant/schema.json" 2>/dev/null)"
+check "the vault index is version 2" "2" "$(vault_index_decrypt 2>/dev/null | jq -r .version 2>/dev/null)"
 check_true "the external identity backup exists" test -f "$backup"
 check "the identity backup is private" "600" "$(stat -c '%a' "$backup" 2>/dev/null)"
 check_true "the legacy repository is retained" test -f "$REPLICANT_HOME/migration-warning"
@@ -62,7 +69,7 @@ check "the remote has no unreachable objects" "" \
 check_true "the new identity matches the repository recipient" \
   test "$(age-keygen -y "$REPLICANT_HOME/keys/identity.txt" 2>/dev/null)" = "$(tr -d '[:space:]' < "$REPO_DIR/.replicant/recipient.txt")"
 
-section "full status publishes the v2 contract"
+section "full status publishes the v3 contract"
 full_status=$(bash "$CORE" status --json --no-fetch 2>/dev/null)
 check "status schema version" "3" "$(jq -r .schema_version <<<"$full_status")"
 check "migration is complete" "false" "$(jq -r .migration.required <<<"$full_status")"

@@ -22,6 +22,7 @@
     "log": {"success": "tests/test-cli.sh", "failure": "tests/test-cli.sh", "noop": "tests/test-cli.sh"},
     "login": {"success": "tests/test-cli.sh", "failure": "tests/test-cli.sh", "noop": "tests/test-cli.sh"},
     "migrate-v2": {"success": "tests/test-migration.sh", "failure": "tests/test-migration.sh", "noop": "tests/test-cli.sh"},
+    "migrate-v3": {"success": "tests/test-migrate-v3.sh", "failure": "tests/test-migrate-v3.sh", "noop": "tests/test-cli.sh"},
     "path": {"success": "tests/test-cli.sh", "failure": "tests/test-cli.sh", "noop": "tests/test-cli.sh"},
     "policy": {"success": "tests/test-cli.sh", "failure": "tests/test-cli.sh", "noop": "tests/test-cli.sh"},
     "profile": {"success": "tests/test-core.sh", "failure": "tests/test-cli.sh", "noop": "tests/test-cli.sh"},

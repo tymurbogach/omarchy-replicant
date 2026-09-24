@@ -348,10 +348,22 @@ to:     did_commit=0
 why: a committed transaction is fast-forwarded into the active repo
 ---
 file: bin/lib/migrate.sh
-suite: test-migration.sh
-from:   mv -- "$REPO_DIR" "$legacy" || { rm -f -- "$identity_backup"; rm -rf -- "$root"; return 1; }
-to:   true || { rm -f -- "$identity_backup"; rm -rf -- "$root"; return 1; }
+suite: test-migrate-v3.sh
+from:   mv -- "$REPO_DIR" "$legacy" || {
+to:   true || {
 why: migration activates the new repository only after the staged copy passes verification
+---
+file: bin/lib/migrate.sh
+suite: test-migrate-v3.sh
+from:     if [[ "$provenance" == user ]]; then
+to:     if false; then
+why: migration refuses a custom secret whose path cannot be reconstructed
+---
+file: bin/lib/migrate.sh
+suite: test-migrate-v3.sh
+from:   if ! git -C "$REPO_DIR" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+to:   if false; then
+why: migration refuses a repository without upstream tracking
 ---
 file: bin/omarchy-replicant
 suite: test-bulk.sh

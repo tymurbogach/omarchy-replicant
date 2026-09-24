@@ -164,7 +164,18 @@ gate_g2() {
   if "$HERE/test-bootstrap.sh" >/dev/null 2>&1; then ok "bootstrap suite passes"; else bad "bootstrap suite fails"; fi
   if "$HERE/test-v3schema.sh" >/dev/null 2>&1; then ok "v3 schema suite still passes"; else bad "v3 schema suite fails"; fi
 }
-gate_g3() { section "G3 migration gate"; bad "G3 is not implemented yet"; }
+gate_g3() {
+  section "G3 migration gate"
+  "$HERE/coverage-check.sh" >/dev/null 2>&1 && ok "coverage manifest is complete" || bad "coverage manifest is incomplete"
+  grep -q 'core_migrate_v3()' "$ROOT/bin/lib/migrate.sh" 2>/dev/null && ok "migrate-v3 engine exists" || bad "core_migrate_v3 is missing"
+  grep -q 'SCHEMA_VERSION.*SCHEMA_FORMAT\|dataVersion: \$v, secretFormat: \$f' "$ROOT/bin/lib/migrate.sh" 2>/dev/null && ok "migration stages the v3 schema" || bad "migration does not stage the v3 schema"
+  grep -q 'cannot reconstruct a path' "$ROOT/bin/lib/migrate.sh" 2>/dev/null && ok "unknown secret paths refuse loudly" || bad "unknown secret paths are not refused"
+  grep -q 'migration-only' "$ROOT/bin/lib/repo.sh" 2>/dev/null && ok "clone still names legacy repos migration-only" || bad "clone lost its migration-only message"
+  grep -q 'journal.json' "$ROOT/bin/lib/migrate.sh" 2>/dev/null && ok "migration keeps a recovery journal" || bad "migration has no recovery journal"
+  grep -q 'deprecated' "$ROOT/bin/omarchy-replicant" 2>/dev/null && ok "migrate-v2 is a deprecated alias" || bad "migrate-v2 alias is missing"
+  if "$HERE/test-migrate-v3.sh" >/dev/null 2>&1; then ok "migration suite passes"; else bad "migration suite fails"; fi
+  if "$HERE/test-migration.sh" >/dev/null 2>&1; then ok "alias suite still passes"; else bad "alias suite fails"; fi
+}
 gate_g4() { section "G4 transaction gate"; bad "G4 is not implemented yet"; }
 gate_g5() { section "G5 status gate"; bad "G5 is not implemented yet"; }
 gate_g6() { section "G6 secret restore gate"; bad "G6 is not implemented yet"; }

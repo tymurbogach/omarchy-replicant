@@ -200,42 +200,42 @@
 
   ## Phase G3: Atomic v1 and v2 Migration
 
-  - [ ] Implement migrate-v3 for both legacy formats.
-  - [ ] Generate a migration summary before accepting --yes.
-  - [ ] List every recorded machine in that summary.
-  - [ ] Make --yes acknowledge that those machines are upgraded or offline.
-  - [ ] Require a clean local repository.
-  - [ ] Require a configured and reachable remote.
-  - [ ] Require proven upstream synchronization.
-  - [ ] Refuse migration without upstream tracking.
-  - [ ] Check destination collisions before mutation.
-  - [ ] Back up and verify the existing identity before remote mutation.
-  - [ ] Copy only allowlisted state files.
-  - [ ] Exclude retired inventories such as defined-secrets.txt.
-  - [ ] Reconstruct custom secret paths from legacy metadata.
-  - [ ] Refuse migration when a secret path cannot be reconstructed.
-  - [ ] Preserve custom secrets, scopes, profiles, and machine records.
-  - [ ] Verify every encrypted index entry and blob.
-  - [ ] Decrypt and compare every secret before activation.
-  - [ ] Verify non-secret file digests and permissions.
-  - [ ] Push the staged repository only after complete local verification.
-  - [ ] Activate the staged repository only after remote verification.
-  - [ ] Restore the original identity and repository after activation failure.
-  - [ ] Keep a recovery journal until activation completes.
-  - [ ] Detect legacy writes made after migration.
+  - [x] Implement migrate-v3 for both legacy formats.
+  - [x] Generate a migration summary before accepting --yes.
+  - [x] List every recorded machine in that summary.
+  - [x] Make --yes acknowledge that those machines are upgraded or offline.
+  - [x] Require a clean local repository.
+  - [x] Require a configured and reachable remote.
+  - [x] Require proven upstream synchronization.
+  - [x] Refuse migration without upstream tracking.
+  - [x] Check destination collisions before mutation.
+  - [x] Back up and verify the existing identity before remote mutation.
+  - [x] Copy only allowlisted state files.
+  - [x] Exclude retired inventories such as defined-secrets.txt.
+  - [x] Reconstruct custom secret paths from legacy metadata.
+  - [x] Refuse migration when a secret path cannot be reconstructed.
+  - [x] Preserve custom secrets, scopes, profiles, and machine records.
+  - [x] Verify every encrypted index entry and blob.
+  - [x] Decrypt and compare every secret before activation.
+  - [x] Verify non-secret file digests and permissions.
+  - [x] Push the staged repository only after complete local verification.
+  - [x] Activate the staged repository only after remote verification.
+  - [x] Restore the original identity and repository after activation failure.
+  - [x] Keep a recovery journal until activation completes.
+  - [x] Detect legacy writes made after migration.
 
   Tests:
 
-  - [ ] Migrate a representative v1 repository.
-  - [ ] Migrate the current v2 layout.
-  - [ ] Migrate a custom secret absent from shipped manifests.
-  - [ ] Migrate all scopes and multiple profiles.
-  - [ ] Migrate two recorded machines.
-  - [ ] Refuse an unknown secret path.
-  - [ ] Refuse dirty, ahead, behind, divergent, and missing-upstream states.
-  - [ ] Inject failure at every migration boundary.
-  - [ ] Verify identity restoration after every injected failure.
-  - [ ] Run the v0.11 client against v3 and detect its artifacts.
+  - [x] Migrate a representative v1 repository.
+  - [x] Migrate the current v2 layout.
+  - [x] Migrate a custom secret absent from shipped manifests.
+  - [x] Migrate all scopes and multiple profiles.
+  - [x] Migrate two recorded machines.
+  - [x] Refuse an unknown secret path.
+  - [x] Refuse dirty, ahead, behind, divergent, and missing-upstream states.
+  - [x] Inject failure at every migration boundary.
+  - [x] Verify identity restoration after every injected failure.
+  - [x] Run the v0.11 client against v3 and detect its artifacts.
 
   Gate and commit:
 

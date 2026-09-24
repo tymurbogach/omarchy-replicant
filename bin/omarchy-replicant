@@ -397,14 +397,16 @@ cmd_clone() {
   repo_clone "$url"
 }
 
-cmd_migrate_v2() {
+cmd_migrate_v3() {
   ensure_core
-  local has_yes=0 arg
-  for arg in "$@"; do [[ "$arg" == --yes || "$arg" == -y ]] && has_yes=1; done
-  (( has_yes )) || fail "migrate-v2 requires --yes after reviewing the migration summary"
   load_core
-  core_migrate_v2 "$@" || exit 1
+  core_migrate_v3 "$@" || exit 1
   invalidate_brief_cache
+}
+
+cmd_migrate_v2() {
+  warn "migrate-v2 is deprecated — it migrates to version 3 now; use migrate-v3"
+  cmd_migrate_v3 "$@"
 }
 
 cmd_migration_confirm() {
@@ -1436,8 +1438,9 @@ Third-party code               (no dry run, no backup; fetches the moment you ru
 
 Second machine
   clone <url>                 Point this machine at the repo you already have
-  migrate-v2 --github-name <name> --identity-backup <path> [--remote <url>] [--yes]
-                              Create and activate a clean encrypted v2 repository
+  migrate-v3 --github-name <name> --identity-backup <path> [--remote <url>] [--yes]
+                              Create and activate a clean encrypted v3 repository
+  migrate-v2                  Deprecated alias for migrate-v3 (migrates to v3)
 
 The plugin itself
   update-check [--fetch]      Whether a newer Replicant is at its origin    (--json)
@@ -1649,7 +1652,12 @@ Dry-run by default, like everything here that writes.
   Omarchy marketplace checked, and whether the origin has moved since.
   --check  say that, and install nothing"
   [migrate-v2]="migrate-v2 --github-name <name> --identity-backup <absolute-path> [--remote <url>] [--yes]
-  Migrate a clean v1 repository into a new encrypted v2 repository.
+  Deprecated alias for migrate-v3: migrates a clean v1 or v2 repository into
+  a new encrypted v3 repository. The legacy repository remains at legacy-repo-<epoch>."
+  [migrate-v3]="migrate-v3 --github-name <name> --identity-backup <absolute-path> [--remote <url>] [--yes]
+  Migrate a clean v1 or v2 repository into a new encrypted v3 repository.
+  Without --yes it prints the migration summary and stops; --yes acknowledges
+  that every recorded machine is upgraded or offline.
   The legacy repository remains at legacy-repo-<epoch>."
 )
 
@@ -1678,7 +1686,7 @@ main() {
   # Anything that writes to the repo takes the lock first; read-only commands
   # (status/get/diff/edit) stay lock-free so the panel's polling never blocks.
   case "$cmd" in
-    init|create|save|savegame|set|save-file|reset|reset-all|push|pull|clone|restore|sync|scope|policy|bulk|track|untrack|forget|profile|revert|restore-file|install-theme|install-plugin|tx|migrate-v2) acquire_repo_lock ;;
+    init|create|save|savegame|set|save-file|reset|reset-all|push|pull|clone|restore|sync|scope|policy|bulk|track|untrack|forget|profile|revert|restore-file|install-theme|install-plugin|tx|migrate-v2|migrate-v3) acquire_repo_lock ;;
     # These write only when they apply. A dry run takes no lock: taking it
     # creates the lock file, and purge would then list its own lock.
     undo|backups|purge|recover)
@@ -1744,6 +1752,7 @@ main() {
     pull) shift; cmd_pull "$@";;
     clone) shift; cmd_clone "$@";;
     migrate-v2) shift; cmd_migrate_v2 "$@";;
+    migrate-v3) shift; cmd_migrate_v3 "$@";;
     install-theme) shift; cmd_install_theme "$@";;
     install-plugin) shift; cmd_install_plugin "$@";;
     restore) shift; cmd_restore "$@";;

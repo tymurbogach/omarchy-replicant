@@ -212,7 +212,7 @@ status_migration_json() {
   local v required=false warning=false data_version=null
   v=$(repo_data_version 2>/dev/null || echo unknown)
   [[ "$v" =~ ^[0-9]+$ ]] && data_version="$v"
-  [[ "$v" == 1 ]] && required=true
+  [[ "$v" == 1 || "$v" == 2 ]] && required=true
   [[ -f "$REPLICANT_HOME/migration-warning" ]] && warning=true
   jq -nc --argjson data_version "$data_version" --argjson required "$required" --argjson warning "$warning" \
     '{data_version:$data_version,required:$required,legacy_warning:$warning}'

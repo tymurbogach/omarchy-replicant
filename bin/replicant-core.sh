@@ -50,7 +50,7 @@ GITHOOKS_DIR="$REPO_DIR/.githooks"
 # The logic lives in modules under bin/lib/. Each defines functions and data
 # and runs nothing. The two calls after the loop load the tracked lists, so
 # every module is defined before they run.
-for _module in manifest categories scopes track suggest incoming backups tree layout inventory repo backup gitstate discover settings status restore plugins history update schema crypto registry state briefcache save migrate bulk legacy; do
+for _module in manifest categories scopes track suggest incoming backups tree layout inventory repo backup gitstate discover settings status restore plugins history update schema crypto registry state briefcache save transaction migrate bulk legacy; do
   # shellcheck disable=SC1090
   source "$PLUGIN_DIR/bin/lib/$_module.sh" || { echo "replicant-core.sh: bin/lib/$_module.sh is missing" >&2; exit 1; }
 done
@@ -84,6 +84,7 @@ case "${1:-}" in
   scope)              core_scope "${2:-}" "${3:-}" ;;
   policy-scope)       shift; core_scope_bulk "$@" ;;
   bulk-apply)         shift; bulk_apply "$@" ;;
+  bulk-transact)      shift; core_bulk_transact "$@" ;;
   bulk-scan)          save_scan_tx "${1:-}" ;;
   profile-set)        core_profile_set "${2:-}" ;;
   profile-get)        current_profile ;;

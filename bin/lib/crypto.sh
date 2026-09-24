@@ -116,12 +116,13 @@ core_key() {
     import) key_import "$@" ;;
     status) key_status "$@" ;;
     rotate) key_rotate "$@" ;;
-    *) echo "key: usage: key init | key export <absolute-destination> | key import <source> | key status | key rotate" >&2; return 2 ;;
+    *) echo "key: usage: key init | key export [--force] <absolute-destination> | key import <source> | key status | key rotate" >&2; return 2 ;;
   esac
 }
 
 # vault_paths: the three locations, printed for callers that need them.
 vault_identity_file() { printf '%s\n' "$REPLICANT_HOME/keys/identity.txt"; }
+vault_prev_identity_file() { printf '%s\n' "$REPLICANT_HOME/keys/identity.txt.prev"; }
 vault_recipient_file() { printf '%s\n' "$REPO_DIR/.replicant/recipient.txt"; }
 vault_index_file() { printf '%s\n' "$REPO_DIR/vault/index.age"; }
 vault_blobs_dir() { printf '%s\n' "$REPO_DIR/vault/blobs"; }
@@ -558,22 +559,27 @@ key_init() {
   }
   recf=$(vault_recipient_file)
   printf '%s\n' "$rec" > "$recf"
-  # A save transaction requires the active worktree to be clean. Record the
-  # public recipient here so key setup does not leave an unsaveable worktree.
-  git -C "$REPO_DIR" add -A -- .replicant/recipient.txt
-  git -C "$REPO_DIR" commit -q -m "replicant: record encryption recipient" || {
-    printf 'key: could not record the repository recipient\n' >&2
-    return 1
-  }
+  # The public recipient is repo content: the caller commits it through the
+  # transaction engine (core_key_init_transact), never here, so key setup
+  # cannot leave a half-committed worktree behind.
   briefcache_invalidate
   printf 'key: identity created at keys/identity.txt (0600), recipient %s recorded — run savegame to encrypt your secrets\n' "$rec" >&2
 }
 
-# key_export <absolute-destination>: a backup of the identity outside the repo
-# and the state dir, verified by deriving its recipient twice.
+# key_export [--force] <absolute-destination>: a backup of the identity
+# outside the repo and the state dir, verified by deriving its recipient
+# twice. Refuses an existing destination without --force, and installs through
+# a temporary file plus rename, so a reader never sees a half-written key.
 key_export() {
-  local dest="$1" idf mine theirs
-  [[ -n "$dest" ]] || { printf 'key: usage: key export <absolute-destination>\n' >&2; return 1; }
+  local force=0 dest="" idf mine theirs a
+  for a in "$@"; do
+    case "$a" in
+      --force) force=1 ;;
+      -*) printf 'key: usage: key export [--force] <absolute-destination>\n' >&2; return 2 ;;
+      *) [[ -z "$dest" ]] || { printf 'key: usage: key export [--force] <absolute-destination>\n' >&2; return 2; }; dest="$a" ;;
+    esac
+  done
+  [[ -n "$dest" ]] || { printf 'key: usage: key export [--force] <absolute-destination>\n' >&2; return 1; }
   [[ "$dest" == /* ]] || { printf 'key: the destination must be absolute: %s\n' "$dest" >&2; return 1; }
   case "$dest" in
     "$REPO_DIR"/*|"$REPLICANT_HOME"/*)
@@ -582,8 +588,11 @@ key_export() {
   esac
   idf=$(vault_identity_file)
   [[ -f "$idf" ]] || { printf 'key: no identity here — run key init or key import first\n' >&2; return 1; }
-  mkdir -p "$(dirname "$dest")" || return 1
-  install -m 600 "$idf" "$dest" || return 1
+  if [[ -e "$dest" && ! "$force" == 1 ]]; then
+    printf 'key: %s already exists — pass --force to replace it\n' "$dest" >&2
+    return 1
+  fi
+  tx_atomic_install "$idf" "$dest" 600 || return 1
   mine=$(age-keygen -y "$idf" 2>/dev/null || true)
   theirs=$(age-keygen -y "$dest" 2>/dev/null || true)
   [[ -n "$theirs" && "$mine" == "$theirs" ]] || {
@@ -614,7 +623,7 @@ key_import() {
   idf=$(vault_identity_file)
   mkdir -p "$(dirname "$idf")"
   chmod 700 "$(dirname "$idf")"
-  install -m 600 "$src" "$idf" || return 1
+  tx_atomic_install "$src" "$idf" 600 || return 1
   if [[ ! -f "$recf" ]]; then
     printf '%s\n' "$mine" > "$recf"
     briefcache_invalidate
@@ -649,6 +658,10 @@ key_status() {
   if [[ "$mine" != "$rec" ]]; then
     printf 'key: this identity does not match the repo recipient — run key import with the shared identity\n' >&2
     return 1
+  fi
+  if [[ -f "$(key_rotation_journal)" ]]; then
+    printf 'key: ready (recipient %s), but an unfinished rotation is recorded — reconcile it before rotating again\n' "$rec"
+    return 0
   fi
   printf 'key: ready (recipient %s)\n' "$rec"
 }
@@ -755,11 +768,143 @@ key_rotate() {
     [[ -f "$b" ]] || continue
     mv -f -- "$b" "$blobs/$(basename "$b")"
   done
-  install -m 600 "$new_idf" "$old_idf"
+  # The previous identity stays beside the new one until the next rotation
+  # finishes: a rotation that dies after this point leaves a vault the old key
+  # cannot read, and the backup is the way back. Installed atomically at 0600.
+  cp -p -- "$old_idf" "$work/identity.prev" || {
+    _vault_drop_tree "$work"
+    printf 'key: cannot back up the previous identity — the old key is untouched\n' >&2
+    return 1
+  }
+  chmod 600 -- "$work/identity.prev"
+  tx_atomic_install "$new_idf" "$old_idf" 600 || {
+    _vault_drop_tree "$work"
+    printf 'key: cannot install the new identity — the vault now needs the new key in %s\n' "$new_idf" >&2
+    return 1
+  }
+  tx_atomic_install "$work/identity.prev" "$(vault_prev_identity_file)" 600 || {
+    _vault_drop_tree "$work"
+    printf 'key: rotated, but the previous identity backup failed — keep %s\n' "$work/identity.prev" >&2
+    return 1
+  }
   recf=$(vault_recipient_file)
   printf '%s\n' "$new_rec" > "$recf"
   _vault_drop_temp "$new_index_tmp"
   _vault_drop_tree "$work"
   briefcache_invalidate
   printf 'key: rotated to recipient %s — old ciphertext already pushed stays readable with the old key\n' "$new_rec" >&2
+}
+
+# key_rotation_journal: the rotation recovery record. Written before the vault
+# is touched and removed after the rotated commit lands: while it exists, a
+# previous rotation never finished, and keys and repository are reconciled
+# from it instead of starting over blindly.
+key_rotation_journal() { printf '%s\n' "$REPLICANT_HOME/key-rotation.json"; }
+
+# key_rotation_begin: record an unfinished rotation (fatal, atomic). Fails
+# before any key or vault change when the journal cannot be written.
+key_rotation_begin() {
+  local journal tmp
+  journal=$(key_rotation_journal)
+  tmp="$journal.tmp.$$"
+  jq -nc --arg stage "started" --arg at "$(date -u +%FT%TZ)" \
+    '{version: 1, stage: $stage, started_at: $at}' > "$tmp" 2>/dev/null || {
+    echo "key: cannot record the rotation journal at $journal" >&2
+    rm -f -- "$tmp"
+    return 1
+  }
+  mv -f -- "$tmp" "$journal" || {
+    echo "key: cannot publish the rotation journal at $journal" >&2
+    rm -f -- "$tmp"
+    return 1
+  }
+  return 0
+}
+
+# key_rotation_reconcile: refuse a new rotation while an unfinished one is
+# recorded, unless the journal is stale: the identity matches the repo
+# recipient and the vault holds no pending changes, so the recorded rotation
+# must have landed and only its cleanup never ran. Prints the recovery
+# commands for a live one: adopt the previous identity, then rotate again.
+key_rotation_reconcile() {
+  local journal prev idf
+  journal=$(key_rotation_journal)
+  [[ -f "$journal" ]] || return 0
+  prev=$(vault_prev_identity_file)
+  if vault_identity_ok >/dev/null 2>&1 \
+      && git -C "$REPO_DIR" diff --quiet -- vault .replicant/recipient.txt 2>/dev/null; then
+    rm -f -- "$journal"
+    return 0
+  fi
+  idf=$(vault_identity_file)
+  echo "key: a previous rotation did not finish (journal at $journal) — keys and repository disagree" >&2
+  if [[ -f "$prev" ]]; then
+    echo "To recover: 'omarchy-replicant key import $prev', then 'omarchy-replicant key rotate' again." >&2
+  else
+    echo "To recover: restore the working identity with 'omarchy-replicant key import <source>', then rotate again." >&2
+  fi
+  echo "When 'key status' is ready and the vault is committed, remove $journal and retry." >&2
+  return 1
+}
+
+# core_key_init_transact: create the shared identity and commit its public
+# recipient as one transaction.
+core_key_init_transact() {
+  local msg="key: recipient for encrypted secrets"
+  tx_shape_begin "key" "$msg" || return 1
+  local txdir="$TX_DIR" candidate
+  key_init || { tx_abort "$txdir"; return 1; }
+  candidate=$(tx_shape_commit "$msg" "$txdir" -- .replicant/recipient.txt) || return 1
+  [[ -n "$candidate" ]] || return 0
+  tx_shape_finish "$txdir" || return 1
+  return 0
+}
+
+# core_key_import_transact <source>: adopt the shared identity and commit the
+# recipient record when the repo names one, as one transaction.
+core_key_import_transact() {
+  local src="${1:-}"
+  [[ -n "$src" ]] || { echo "key: usage: key import <source> (a file holding the shared identity)" >&2; return 2; }
+  local msg="key: recipient for encrypted secrets"
+  tx_shape_begin "key" "$msg" || return 1
+  local txdir="$TX_DIR" candidate
+  key_import "$src" || { tx_abort "$txdir"; return 1; }
+  if [[ ! -f "$(vault_recipient_file)" ]]; then
+    tx_abort "$txdir"
+    return 0
+  fi
+  candidate=$(tx_shape_commit "$msg" "$txdir" -- .replicant/recipient.txt) || return 1
+  [[ -n "$candidate" ]] || return 0
+  tx_shape_finish "$txdir" || return 1
+  return 0
+}
+
+# core_key_rotate_transact: re-encrypt every secret to a new identity and
+# commit vault and recipient as one transaction. The rotation journal opens
+# before the vault is touched and closes after the commit lands; a rotation
+# that dies midway keeps its journal and its previous identity for recovery.
+core_key_rotate_transact() {
+  key_rotation_reconcile || return 1
+  key_rotation_begin || return 1
+  local journal
+  journal=$(key_rotation_journal)
+  local msg="key: rotated, every secret re-encrypted"
+  tx_shape_begin "key" "$msg" || { rm -f -- "$journal"; return 1; }
+  local txdir="$TX_DIR" candidate
+  key_rotate || {
+    tx_abort "$txdir"
+    echo "key: the rotation did not finish — its journal is kept at $journal for recovery" >&2
+    return 1
+  }
+  candidate=$(tx_shape_commit "$msg" "$txdir" -- vault .replicant/recipient.txt) || {
+    echo "key: the vault was re-encrypted but the commit failed — review with 'changes', commit with 'save --all -m \"why\"', then remove $journal" >&2
+    return 1
+  }
+  [[ -n "$candidate" ]] || { rm -f -- "$journal"; return 0; }
+  tx_shape_finish "$txdir" || {
+    echo "key: the rotation is committed locally but not pushed — push, then remove $journal" >&2
+    return 1
+  }
+  rm -f -- "$journal"
+  return 0
 }

@@ -260,3 +260,57 @@ core_forget() {
   briefcache_invalidate
   echo "$rel is gone from your repo too. Git history keeps it: 'recover' brings it back" >&2
 }
+
+# core_track_transact <path> [name-in-repo] [--secret]: track one file as one
+# transaction. Commits only when the policy stores changed: tracking what is
+# already tracked is a no-op that stages nothing.
+core_track_transact() {
+  (( $# )) || { echo "usage: track <path> [name-in-repo] [--secret]" >&2; return 2; }
+  local msg="track: $1"
+  tx_shape_begin "track" "$msg" || return 1
+  local txdir="$TX_DIR" before after candidate
+  before=$(policy_store_state)
+  core_track "$@" || { tx_abort "$txdir"; return 1; }
+  after=$(policy_store_state)
+  if [[ "$after" == "$before" ]]; then
+    tx_abort "$txdir"
+    return 0
+  fi
+  candidate=$(tx_shape_commit "$msg" "$txdir" -- .replicant-track .replicant/entries.json vault/index.age) || return 1
+  [[ -n "$candidate" ]] || return 0
+  tx_shape_finish "$txdir" || return 1
+  echo "saved with the next 'omarchy-replicant save --auto'" >&2
+  return 0
+}
+
+# core_untrack_transact <id>: untrack one entry as one transaction.
+core_untrack_transact() {
+  local id="${1:-}"
+  [[ -n "$id" ]] || { echo "usage: untrack <id>" >&2; return 2; }
+  local msg="untrack: $id"
+  tx_shape_begin "untrack" "$msg" "$id" || return 1
+  local txdir="$TX_DIR" candidate
+  core_untrack "$id" || { tx_abort "$txdir"; return 1; }
+  candidate=$(tx_shape_commit "$msg" "$txdir" -- .replicant-track .replicant/entries.json \
+    "config/$id" "profiles/$(current_profile)/config/$id" "secrets/$id" \
+    vault/index.age vault/blobs) || return 1
+  [[ -n "$candidate" ]] || return 0
+  tx_shape_finish "$txdir" || return 1
+  return 0
+}
+
+# core_forget_transact <id>: forget one deleted file as one transaction.
+core_forget_transact() {
+  local id="${1:-}"
+  [[ -n "$id" ]] || { echo "usage: forget <id>" >&2; return 2; }
+  local msg="forget: $id (gone from $MACHINE)"
+  tx_shape_begin "forget" "$msg" "$id" || return 1
+  local txdir="$TX_DIR" candidate
+  core_forget "$id" || { tx_abort "$txdir"; return 1; }
+  candidate=$(tx_shape_commit "$msg" "$txdir" -- .replicant-track .replicant/entries.json \
+    "config/$id" "profiles/$(current_profile)/config/$id" "secrets/$id" \
+    vault/index.age vault/blobs) || return 1
+  [[ -n "$candidate" ]] || return 0
+  tx_shape_finish "$txdir" || return 1
+  return 0
+}

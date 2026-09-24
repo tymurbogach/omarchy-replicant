@@ -224,6 +224,10 @@ printf 'shape fixture\n' > "$HOME/.config/shape.conf"
 rc=0; out=$(run track "$HOME/.config/shape.conf" 2>&1) || rc=$?
 check "a shape commit also reports a failed push" "1" "$rc"
 check_contains "…and keeps the shape commit local" "Saved locally" "$out"
+check "…with its journal kept for resume" "1" "$(run tx list 2>/dev/null | grep -c . || true)"
+for _tx in $(run tx list 2>/dev/null | cut -f1); do run tx discard "$_tx" --force >/dev/null 2>&1; done
+check "…and cleanup discards it" "0" \
+  "$(ls -A "$OMARCHY_REPLICANT_HOME/transactions" 2>/dev/null | wc -l)"
 git -C "$REPO" remote remove origin 2>/dev/null
 out=$(run push 2>&1; echo "rc=$?")
 check "nothing to push exits 0 once the remote is gone" "1" "$(grep -c 'rc=0' <<<"$out" || true)"

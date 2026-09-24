@@ -133,3 +133,69 @@ bulk_apply() {
     *) echo "bulk: unknown action: $action" >&2; return 2 ;;
   esac
 }
+
+# core_bulk_transact <action> <scope> <kind> <allow_large: 0|1> -- <entries...>:
+# apply one validated multi-entry action as one transaction. The CLI parses
+# and confirms (including every --yes gate); this owns the worktree, the
+# candidate commit, the push and the activation. The active repository changes
+# only after the candidate commit exists. One validated selection, one commit.
+core_bulk_transact() {
+  local action="${1:-}" scope="${2:-}" kind="${3:-}" allow_large="${4:-0}"
+  shift 4 || { echo "bulk: usage: bulk-transact <action> <scope> <kind> <allow_large> -- <entries>" >&2; return 2; }
+  [[ "${1:-}" == "--" ]] && shift
+  local -a args=("$@")
+  [[ -n "$action" && ${#args[@]} -gt 0 ]] || { echo "bulk: no entries selected" >&2; return 1; }
+  tx_begin "bulk-$action" "bulk: $action ${#args[@]} entries" "${args[@]}" || return 1
+  local txdir="$TX_DIR" txrepo="$TX_REPO" base="$TX_BASE" branch candidate rc=0
+  branch=$(git -C "$REPO_DIR" symbolic-ref --short HEAD 2>/dev/null || echo main)
+  local -a core_args=("$action")
+  case "$action" in
+    scope) core_args+=("$scope" "${args[@]}") ;;
+    track) core_args+=("$kind" "${args[@]}") ;;
+    *) core_args+=("${args[@]}") ;;
+  esac
+  if [[ "$allow_large" == 1 ]]; then export BULK_ALLOW_LARGE=1; fi
+  if REPLICANT_TX_REPO="$txrepo" bash "$REAL_CORE" bulk-apply "${core_args[@]}"; then
+    :
+  else
+    rc=$?
+    tx_remove "$txdir"
+  fi
+  if (( rc == 0 )); then
+    git -C "$txrepo" add -A >/dev/null 2>&1 || rc=$?
+    if (( rc == 0 )) && git -C "$txrepo" diff --cached --quiet; then
+      echo "bulk: nothing changed" >&2
+      tx_remove "$txdir"
+    elif (( rc == 0 )); then
+      REPLICANT_TX_REPO="$txrepo" bash "$REAL_CORE" bulk-scan "$txrepo" >/dev/null || rc=$?
+      if (( rc == 0 )); then
+        git -C "$txrepo" commit -q -m "bulk: $action ${#args[@]} entries" || rc=$?
+      fi
+      if (( rc == 0 )); then
+        local pack_kib
+        pack_kib=$(git -C "$txrepo" count-objects -v 2>/dev/null | awk '$1 == "size-pack:" { print $2; exit }')
+        if [[ "${pack_kib:-0}" =~ ^[0-9]+$ ]] && (( pack_kib > 102400 )); then
+          echo "bulk: warning: Git pack exceeds 100 MiB" >&2
+        fi
+      fi
+      candidate=$(git -C "$txrepo" rev-parse HEAD 2>/dev/null || true)
+      (( rc == 0 )) && [[ -n "$candidate" ]] && tx_mark_committed "$txdir" "$candidate" "$base" "bulk-$action" "bulk: $action ${#args[@]} entries" "${args[@]}"
+      if (( rc == 0 )) && git -C "$REPO_DIR" remote get-url origin >/dev/null 2>&1; then
+        git -C "$txrepo" push -q origin "HEAD:refs/heads/$branch" || rc=$?
+      fi
+      if (( rc == 0 )) && [[ -n "$candidate" && "$candidate" != "$base" ]]; then
+        git -C "$REPO_DIR" fetch -q --no-tags "$txrepo" HEAD || rc=$?
+        (( rc == 0 )) && git -C "$REPO_DIR" merge --ff-only -q FETCH_HEAD || rc=$?
+      fi
+      if (( rc == 0 )); then
+        tx_meta_write "$txdir" fast-forwarded "$base" "bulk-$action" "bulk: $action ${#args[@]} entries" "${args[@]}" \
+          || echo "bulk: warning: the fast-forward landed but the journal did not update" >&2
+        tx_remove "$txdir"
+      fi
+    fi
+  fi
+  unset BULK_ALLOW_LARGE
+  (( rc == 0 )) || { echo "bulk: operation failed; active repository was not changed; transaction: $txdir" >&2; return "$rc"; }
+  briefcache_invalidate 2>/dev/null || true
+  echo "bulk: $action completed in one commit" >&2
+}

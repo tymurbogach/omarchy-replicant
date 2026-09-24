@@ -176,7 +176,30 @@ gate_g3() {
   if "$HERE/test-migrate-v3.sh" >/dev/null 2>&1; then ok "migration suite passes"; else bad "migration suite fails"; fi
   if "$HERE/test-migration.sh" >/dev/null 2>&1; then ok "alias suite still passes"; else bad "alias suite fails"; fi
 }
-gate_g4() { section "G4 transaction gate"; bad "G4 is not implemented yet"; }
+gate_g4() {
+  section "G4 transaction gate"
+  "$HERE/coverage-check.sh" >/dev/null 2>&1 && ok "coverage manifest is complete" || bad "coverage manifest is incomplete"
+  [[ -f "$ROOT/bin/lib/transaction.sh" ]] && ok "the transaction engine exists" || bad "bin/lib/transaction.sh is missing"
+  grep -q 'transaction' "$ROOT/bin/replicant-core.sh" 2>/dev/null && ok "the core loads the transaction engine" || bad "replicant-core.sh does not load transaction.sh"
+  grep -q 'core_bulk_transact()' "$ROOT/bin/lib/bulk.sh" 2>/dev/null && ok "bulk runs through the library engine" || bad "core_bulk_transact is missing from bulk.sh"
+  if [[ "$(grep -c 'worktree add' "$ROOT/bin/omarchy-replicant" 2>/dev/null || true)" == 0 ]]; then
+    ok "the CLI creates no transaction worktree"
+  else
+    bad "the CLI still owns worktree transactions"
+  fi
+  if [[ -z "$(grep -nE 'git[^|]* (add|commit)[^|]*\|\| true' "$ROOT/bin/lib/repo.sh" "$ROOT/bin/lib/transaction.sh" "$ROOT/bin/lib/save.sh" "$ROOT/bin/omarchy-replicant" 2>/dev/null || true)" ]]; then
+    ok "no git add or commit failure is ignored"
+  else
+    bad "an ignored git add or commit failure remains"
+  fi
+  grep -q 'core_key_init_transact\|core_key_rotate_transact' "$ROOT/bin/lib/crypto.sh" 2>/dev/null && ok "key writes run through transactions" || bad "key transact wrappers are missing"
+  grep -q -- '--force' "$ROOT/bin/omarchy-replicant" 2>/dev/null && ok "key export knows --force" || bad "key export --force is missing"
+  grep -q 'acquire_repo_lock' "$ROOT/bin/omarchy-replicant" 2>/dev/null && ok "key mutations take the repo lock" || bad "key locking is missing"
+  grep -q 'save_plan\|save_stage\|save_validate_commit\|save_activate' "$ROOT/bin/lib/save.sh" 2>/dev/null && ok "core_save is split into phases" || bad "core_save is not split into phases"
+  if "$HERE/test-transaction.sh" >/dev/null 2>&1; then ok "transaction suite passes"; else bad "transaction suite fails"; fi
+  if "$HERE/test-save.sh" >/dev/null 2>&1; then ok "save suite still passes"; else bad "save suite fails"; fi
+  if "$HERE/test-bulk.sh" >/dev/null 2>&1; then ok "bulk suite still passes"; else bad "bulk suite fails"; fi
+}
 gate_g5() { section "G5 status gate"; bad "G5 is not implemented yet"; }
 gate_g6() { section "G6 secret restore gate"; bad "G6 is not implemented yet"; }
 gate_g7() { section "G7 controller gate"; bad "G7 is not implemented yet"; }

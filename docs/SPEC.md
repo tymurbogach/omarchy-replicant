@@ -39,6 +39,7 @@ This document describes the data model of the plugin and the rules that the code
 | `status.sh` | The JSON that the panel and the bar read, the diff and the log |
 | `briefcache.sh` | The brief-status metadata cache and its invalidation |
 | `save.sh` | Saves as transactions: snapshot, one commit, fast-forward, push |
+| `transaction.sh` | The one journal and lifecycle every mutation shares: worktree transactions, shape commits, resume, atomic installs |
 | `bulk.sh` | Validates and applies multi-entry changes in one transaction |
 | `migrate.sh` | Migrates a clean v1 repository into a new encrypted v2 repository |
 | `restore.sh` | The restore plan for each area, and how each area is put back |
@@ -264,10 +265,16 @@ commits arrive knows which one is right, so that moment writes it down.
   Files larger than 10 MiB require `--allow-large`; `BULK_LARGE_LIMIT_BYTES` changes that threshold.
   Secret operations require a version 2 repository and a valid local identity.
 - A lock (`flock` on `~/.local/share/omarchy-replicant/.replicant.lock`) serialises every command
-  that writes. `undo`, `backups`, `purge` and `recover` take it only when they apply, because a
-  dry run must not create the lock file. `REPLICANT_LOCK_WAIT` sets the wait for the tests.
-- `commit_repo_shape` stages only the paths that exist on disk or in the index. `git add` stages
-  nothing when one of its paths matches nothing, so an untrack was never committed.
+  that writes, key init, import, rotate and export included. `undo`, `backups`, `purge` and `recover`
+  take it only when they apply, because a dry run must not create the lock file.
+  `REPLICANT_LOCK_WAIT` sets the wait for the tests.
+- Every mutation journals before it commits, through `bin/lib/transaction.sh`. Save and bulk
+  snapshot in a detached worktree and require a clean tree; shape writes commit only their own
+  paths beside unrelated pending edits. A journal that cannot be written fails the mutation.
+  A failed push keeps the local commit with its journal and names the retry.
+- A shape commit stages only the paths that exist on disk or in the index, and commits only
+  the staged subset with rename detection off: a path that stages nothing once made the commit
+  fail while reporting success, so an untrack was never committed.
 
 ## A deleted copy comes back from history
 

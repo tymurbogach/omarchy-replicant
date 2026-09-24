@@ -143,10 +143,10 @@ from: printf -v "$1" '%s' "${SCOPE_OF[$2]:-shared}"
 to: printf -v "$1" '%s' shared
 why: the fork-free scope lookup gives the real scope
 ---
-file: bin/lib/repo.sh
+file: bin/lib/transaction.sh
 suite: test-cli.sh
-from: if [[ -e "$REPO_DIR/${p%/}" || -n "$(git_repo ls-files -- "$p" 2>/dev/null)" ]]; then paths+=("$p"); fi
-to: paths+=("$p")
+from:     if [[ -e "$REPO_DIR/${p%/}" ]] || [[ -n "$(git -C "$REPO_DIR" ls-files -- "$p" 2>/dev/null)" ]]; then
+to:     if true; then
 why: untrack commits although one of its paths does not exist
 ---
 file: bin/lib/track.sh
@@ -343,8 +343,8 @@ why: a brief miss stores its counts for the next poll
 ---
 file: bin/lib/save.sh
 suite: test-save.sh
-from:     did_commit=1
-to:     did_commit=0
+from:     SAVE_DID_COMMIT=1
+to:     SAVE_DID_COMMIT=0
 why: a committed transaction is fast-forwarded into the active repo
 ---
 file: bin/lib/migrate.sh
@@ -365,9 +365,9 @@ from:   if ! git -C "$REPO_DIR" rev-parse --abbrev-ref --symbolic-full-name '@{u
 to:   if false; then
 why: migration refuses a repository without upstream tracking
 ---
-file: bin/omarchy-replicant
+file: bin/lib/bulk.sh
 suite: test-bulk.sh
-from:         (( rc == 0 )) && git_repo merge --ff-only -q FETCH_HEAD || rc=$?
+from:         (( rc == 0 )) && git -C "$REPO_DIR" merge --ff-only -q FETCH_HEAD || rc=$?
 to:         (( rc == 0 )) && : || rc=$?
 why: a successful bulk transaction fast-forwards the active repository
 ---
@@ -395,17 +395,29 @@ from:     echo "nothing to push — there is no remote yet: run 'omarchy-replica
 to:     :
 why: push names the next step when there is no remote
 ---
-file: bin/lib/repo.sh
+file: bin/lib/transaction.sh
 suite: test-save.sh
-from:     if ! push_err=$(git_repo push -q 2>&1); then
-to:     if false; then
+from:   if ! push_err=$(git -C "$REPO_DIR" push -q 2>&1); then
+to:   if false; then
 why: a shape commit that cannot push reports the local commit and fails
 ---
-file: bin/lib/save.sh
+file: bin/lib/transaction.sh
 suite: test-save.sh
 from:     if (( ! force )); then
 to:     if false; then
 why: discarding a committed transaction needs an explicit force
+---
+file: bin/lib/transaction.sh
+suite: test-cli.sh
+from: done < <(git -C "$REPO_DIR" diff --cached --name-only --no-renames -z -- "${existing[@]}" 2>/dev/null | tr '\0' '\n')
+to: done < <(git -C "$REPO_DIR" diff --cached --name-only -z -- "${existing[@]}" 2>/dev/null | tr '\0' '\n')
+why: a scope move commits both sides of the rename
+---
+file: bin/lib/crypto.sh
+suite: test-transaction.sh
+from: if [[ -e "$dest" && ! "$force" == 1 ]]; then
+to: if false; then
+why: key export refuses to overwrite without an explicit force
 ---
 file: bin/lib/repo.sh
 suite: test-bootstrap.sh

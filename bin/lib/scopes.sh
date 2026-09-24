@@ -556,6 +556,64 @@ core_sync() {
   esac
 }
 
+# scope_shape_paths <rel>: the repository paths one scope decision can touch.
+# A file lives at exactly one of the two copy paths; the scope stores and the
+# vault index cover the metadata. Prints one path per line.
+scope_shape_paths() {
+  local rel="$1"
+  printf '%s\n' .replicant-sync .replicant/entries.json vault/index.age \
+    "config/$rel" "profiles/$(current_profile)/config/$rel"
+}
+
+# core_sync_transact <rel> <on|off>: the sync switch as one transaction.
+core_sync_transact() {
+  local rel="${1:-}" want="${2:-}"
+  [[ -n "$rel" && -n "$want" ]] || { echo "usage: sync <id> on|off" >&2; return 2; }
+  local -a paths=()
+  while IFS= read -r p; do [[ -n "$p" ]] && paths+=("$p"); done < <(scope_shape_paths "$rel")
+  core_shape_transact "sync: turn $rel $want" "sync" core_sync "$rel" "$want" -- "${paths[@]}"
+}
+
+# core_scope_transact <rel> <shared|profile|off>: one scope change, one commit.
+core_scope_transact() {
+  local rel="${1:-}" want="${2:-}"
+  [[ -n "$rel" && -n "$want" ]] || { echo "usage: scope <id> shared|profile|off" >&2; return 2; }
+  local -a paths=()
+  while IFS= read -r p; do [[ -n "$p" ]] && paths+=("$p"); done < <(scope_shape_paths "$rel")
+  core_shape_transact "scope: $rel is now $want" "scope" core_scope "$rel" "$want" -- "${paths[@]}"
+}
+
+# core_policy_transact <scope> <id...>: one validated bulk policy change, one
+# commit. Validates the complete selection before changing anything, through
+# core_scope_bulk.
+core_policy_transact() {
+  local scope="${1:-}"
+  shift || true
+  [[ -n "$scope" && $# -gt 0 ]] || { echo "usage: policy set --scope <scope> -- <id...>" >&2; return 2; }
+  local -a ids=("$@") paths=(.replicant-sync .replicant/entries.json vault/index.age)
+  local id
+  for id in "${ids[@]}"; do
+    paths+=("config/$id" "profiles/$(current_profile)/config/$id")
+  done
+  core_shape_transact "policy: set $scope for $(plural "${#ids[@]}" entry entries)" \
+    "policy" core_scope_bulk "$scope" "${ids[@]}" -- "${paths[@]}"
+}
+
+# core_profile_transact <name>: move this machine to a profile, one commit.
+core_profile_transact() {
+  local want="${1:-}"
+  [[ -n "$want" ]] || { echo "usage: profile <name>" >&2; return 2; }
+  local msg="profile: $MACHINE is now '$want'"
+  tx_shape_begin "profile" "$msg" || return 1
+  local txdir="$TX_DIR" candidate
+  profile_report "$want" || { tx_abort "$txdir"; return 1; }
+  candidate=$(tx_shape_commit "$msg" "$txdir" -- .replicant-profiles .replicant/machines) || return 1
+  [[ -n "$candidate" ]] || return 0
+  tx_shape_finish "$txdir" || return 1
+  echo "Files scoped to a profile will now be saved and restored from profiles/$want/." >&2
+  return 0
+}
+
 repo_copy_for_rel() {
   if is_secret_rel "$1"; then printf '%s\n' "$SECRETS_DIR/$1"; else repo_path_for "$1"; fi
 }

@@ -190,7 +190,8 @@ cp "$TMP/identity.test" "$KEYS"
 check_false "the old key no longer matches" key_status
 check_false "…and cannot save" core_backup
 mv "$TMP/identity.new" "$KEYS"
-check_true "the backup re-exports after rotation" key_export "$TMP/key-backup.txt"
+check_false "re-export without --force refuses to overwrite" key_export "$TMP/key-backup.txt"
+check_true "…while --force replaces the backup after rotation" key_export --force "$TMP/key-backup.txt"
 git -C "$REPO_DIR" add -A >/dev/null 2>&1
 git -C "$REPO_DIR" commit -qm "rotated" >/dev/null 2>&1 || true
 

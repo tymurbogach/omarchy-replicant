@@ -12,30 +12,10 @@ bootstrap_fail_at() {
   return 1
 }
 
-commit_repo_shape() {
-  local msg="$1"; shift
-  [[ -d "$REPO_DIR/.git" ]] || return 0
-  local -a paths=()
-  local p
-  for p in "$@"; do
-    if [[ -e "$REPO_DIR/${p%/}" || -n "$(git_repo ls-files -- "$p" 2>/dev/null)" ]]; then paths+=("$p"); fi
-  done
-  (( ${#paths[@]} )) || return 0
-  git_repo add -A -- "${paths[@]}" >/dev/null 2>&1 || true
-  if ! git_repo diff --cached --quiet -- "${paths[@]}" 2>/dev/null; then
-    git_repo commit -q -m "$msg" -- "${paths[@]}" >/dev/null 2>&1 || true
-    local push_err
-    if ! push_err=$(git_repo push -q 2>&1); then
-      echo "Saved locally, but the push to GitHub failed:" >&2
-      printf '%s\n' "$push_err" | sed 's/^/    /' >&2
-      echo "Another machine may have saved first. Run 'omarchy-replicant pull', then push again." >&2
-      echo "The next save (or an explicit push) retries it." >&2
-      invalidate_brief_cache
-      return 1
-    fi
-  fi
-  invalidate_brief_cache
-}
+# Repository-shape writes (scope, policy, track, keys) commit through the
+# transaction engine in bin/lib/transaction.sh: journal first, one commit of
+# exactly the staged paths, push after activation. Nothing here commits
+# directly, so no git failure can pass silently.
 
 # repo_create <name> [do_push] [transport]: point a fresh v3 repo at a new
 # private GitHub repo. Every remote preflight runs before any local mutation:

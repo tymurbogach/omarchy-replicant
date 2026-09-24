@@ -489,33 +489,26 @@ cmd_sync() {
   local id="${1:-}" want="${2:-}"
   [[ -n "$id" && -n "$want" ]] || fail "usage: omarchy-replicant sync <id> on|off"
   load_core
-  core_sync "$id" "$want" || exit 1
-  commit_repo_shape "sync: turn $id $want" .replicant-sync .replicant/entries.json
+  core_sync_transact "$id" "$want" || exit 1
+  invalidate_brief_cache
 }
 
 # cmd_scope <id> <shared|profile|off> — the three-state version of `sync`, and
-# what the control in every Configs row actually calls.
+# what the control in every Configs row actually calls. One scope change, one
+# commit of exactly that entry's paths: staging the directories would sweep
+# every unrelated dotfile that happened to be pending into a commit whose
+# message says "scope:", which is exactly the thing the data repo's
+# one-commit-per-decision convention exists to prevent.
 cmd_scope() {
   local id="${1:-}" want="${2:-}"
   [[ -n "$id" && -n "$want" ]] || fail "usage: omarchy-replicant scope <id> shared|profile|off"
   load_core
-  core_scope "$id" "$want" || exit 1
-  # Stage the two paths THIS file can occupy, never the whole of config/ and
-  # profiles/. Staging the directories would sweep every unrelated dotfile that
-  # happened to be pending into a commit whose message says "scope:", which is
-  # exactly the thing the data repo's one-commit-per-decision convention exists
-  # to prevent. A file is only ever at one of these two paths, and git records
-  # the move between them as a rename.
-  commit_repo_shape "scope: $id is now $want" \
-    .replicant-sync \
-    .replicant/entries.json \
-    vault/index.age \
-    "config/$id" \
-    "profiles/$(current_profile)/config/$id"
+  core_scope_transact "$id" "$want" || exit 1
+  invalidate_brief_cache
 }
 
 # cmd_policy — bulk policy changes use one validated core operation and one
-# repository-shape commit. The `--` separator keeps ids unambiguous.
+# shape transaction. The `--` separator keeps ids unambiguous.
 cmd_policy() {
   local action="${1:-}" scope="" id
   shift || true
@@ -529,17 +522,15 @@ cmd_policy() {
   done
   [[ -n "$scope" && $# -gt 0 ]] || fail "usage: policy set --scope <scope> -- <id...>"
   load_core
-  local -a ids=("$@") paths=(.replicant-sync .replicant/entries.json vault/index.age)
-  for id in "${ids[@]}"; do
-    paths+=("config/$id" "profiles/$(current_profile)/config/$id")
-  done
-  core_scope_bulk "$scope" "${ids[@]}" || exit 1
-  commit_repo_shape "policy: set $scope for $(plural "${#ids[@]}" entry entries)" "${paths[@]}"
+  core_policy_transact "$scope" "$@" || exit 1
+  invalidate_brief_cache
 }
 
-# cmd_bulk validates and applies one multi-entry action in a temporary repo.
-# The active repository changes only after the candidate commit exists and a
-# push, when configured, succeeds.
+# cmd_bulk validates and applies one multi-entry action as one transaction.
+# This parses and confirms (including every --yes gate); the transaction
+# itself (worktree, candidate commit, push, activation) lives in
+# core_bulk_transact in bin/lib/bulk.sh. The active repository changes only
+# after the candidate commit exists and a push, when configured, succeeds.
 cmd_bulk() {
   local action="${1:-}"; shift || true
   local yes=0 allow_large=0 scope="" kind=""
@@ -566,72 +557,10 @@ cmd_bulk() {
     track) (( yes )) || fail "bulk track requires --yes" ;;
   esac
   ensure_core
-  load_core
-  [[ -d "$REPO_DIR/.git" ]] || fail "no repo yet — run 'create' or 'clone' first"
-  local base branch candidate rc=0 uuid tx txrepo
-  base=$(git_repo rev-parse HEAD 2>/dev/null || true)
-  [[ -n "$base" ]] || fail "bulk operations need a repository with one commit"
-  local dirt; dirt=$(git_repo status --porcelain 2>/dev/null || true)
-  [[ -z "$dirt" ]] || fail "bulk requires a clean repository; review 'changes' first"
-  branch=$(git_repo symbolic-ref --short HEAD 2>/dev/null || echo main)
-  uuid=$(tx_uuid)
-  tx="$REPLICANT_HOME/transactions/$uuid"
-  txrepo="$tx/repo"
-  mkdir -p -- "$tx" || fail "could not create bulk transaction"
-  tx_meta_write "$tx" started "$base" "bulk-$action" "bulk: $action ${#args[@]} entries" "${args[@]}"
-  git_repo worktree add --detach -- "$txrepo" "$base" >/dev/null 2>&1 || {
-    tx_remove "$tx"; fail "could not create bulk transaction worktree";
-  }
-  local -a core_args=("$action")
-  case "$action" in
-    scope) core_args+=("$scope" "${args[@]}") ;;
-    track) core_args+=("$kind" "${args[@]}") ;;
-    *) core_args+=("${args[@]}") ;;
-  esac
-  if (( allow_large )); then export BULK_ALLOW_LARGE=1; fi
-  if REPLICANT_TX_REPO="$txrepo" bash "$CORE" bulk-apply "${core_args[@]}"; then
-    :
-  else
-    rc=$?
-    tx_remove "$tx"
-  fi
-  if (( rc == 0 )); then
-    git -C "$txrepo" add -A
-    if git -C "$txrepo" diff --cached --quiet; then
-      echo "bulk: nothing changed" >&2
-      tx_remove "$tx"
-    else
-      REPLICANT_TX_REPO="$txrepo" bash "$CORE" bulk-scan "$txrepo" >/dev/null || rc=$?
-      if (( rc == 0 )); then
-        git -C "$txrepo" commit -q -m "bulk: $action ${#args[@]} entries" || rc=$?
-      fi
-      if (( rc == 0 )); then
-        local pack_kib
-        pack_kib=$(git -C "$txrepo" count-objects -v 2>/dev/null | awk '$1 == "size-pack:" { print $2; exit }')
-        if [[ "${pack_kib:-0}" =~ ^[0-9]+$ ]] && (( pack_kib > 102400 )); then
-          echo "bulk: warning: Git pack exceeds 100 MiB" >&2
-        fi
-      fi
-      candidate=$(git -C "$txrepo" rev-parse HEAD 2>/dev/null || true)
-      (( rc == 0 )) && tx_meta_field "$tx" candidate "$candidate"
-      (( rc == 0 )) && tx_meta_write "$tx" committed "$base" "bulk-$action" "bulk: $action ${#args[@]} entries" "${args[@]}"
-      if (( rc == 0 )) && git_repo remote get-url origin >/dev/null 2>&1; then
-        git -C "$txrepo" push -q origin "HEAD:refs/heads/$branch" || rc=$?
-      fi
-      if (( rc == 0 )) && [[ -n "$candidate" && "$candidate" != "$base" ]]; then
-        git_repo fetch -q --no-tags "$txrepo" HEAD || rc=$?
-        (( rc == 0 )) && git_repo merge --ff-only -q FETCH_HEAD || rc=$?
-      fi
-      if (( rc == 0 )); then
-        tx_meta_write "$tx" fast-forwarded "$base" "bulk-$action" "bulk: $action ${#args[@]} entries" "${args[@]}"
-        tx_remove "$tx"
-      fi
-    fi
-  fi
-  unset BULK_ALLOW_LARGE
-  (( rc == 0 )) || { echo "bulk: operation failed; active repository was not changed; transaction: $tx" >&2; return "$rc"; }
+  local rc=0
+  bash "$CORE" bulk-transact "$action" "$scope" "$kind" "$allow_large" -- "${args[@]}" || rc=$?
   invalidate_brief_cache
-  echo "bulk: $action completed in one commit" >&2
+  return "$rc"
 }
 
 # cmd_profile [name] — which profile this machine belongs to. With no argument
@@ -643,52 +572,37 @@ cmd_bulk() {
 cmd_track() {
   [[ $# -gt 0 ]] || fail "usage: omarchy-replicant track <path> [name-in-repo] [--secret]"
   load_core
-  local before; before=$(policy_store_state)
-  core_track "$@" || exit 1
-  [[ "$(policy_store_state)" == "$before" ]] && return 0
-  # Only the list itself. The copy of the file arrives with the next save, in a
-  # commit about the file — this one is about the decision.
-  commit_repo_shape "track: $1" .replicant-track .replicant/entries.json vault/index.age
-  info "saved with the next 'omarchy-replicant save --auto'"
+  core_track_transact "$@" || exit 1
+  invalidate_brief_cache
 }
 
 cmd_untrack() {
   local id="${1:-}"
   [[ -n "$id" ]] || fail "usage: omarchy-replicant untrack <id>"
   load_core
-  core_untrack "$id" || exit 1
-  commit_repo_shape "untrack: $id" \
-    .replicant-track \
-    .replicant/entries.json \
-    "config/$id" \
-    "profiles/$(current_profile)/config/$id" \
-    "secrets/$id" \
-    vault/index.age \
-    vault/blobs
+  core_untrack_transact "$id" || exit 1
+  invalidate_brief_cache
 }
 
 # cmd_key <subcommand> — the one shared age identity behind the vault: make
 # it once, back it up outside the repo, adopt it on each new machine, check
-# it, replace it. The recipient it names is repo content, so the commands
-# that (re)write it commit that file through the shape helper.
+# it, replace it. Init, import, rotate and export take the repo lock, so an
+# export never reads a half-rotated identity. The recipient it names is repo
+# content, so the commands that (re)write it commit that file through the
+# transaction engine.
 cmd_key() {
   local sub="${1:-}"
   if (( $# )); then shift; fi
   ensure_core
   case "$sub" in
-    init|status|rotate) bash "$CORE" key "$sub" "$@" || exit 1 ;;
-    export|import) bash "$CORE" key "$sub" "$@" || exit 1 ;;
-    *) fail "usage: omarchy-replicant key init|export <dest>|import <src>|status|rotate" ;;
+    init) acquire_repo_lock; load_core; core_key_init_transact "$@" || exit 1 ;;
+    import) acquire_repo_lock; load_core; core_key_import_transact "$@" || exit 1 ;;
+    rotate) acquire_repo_lock; load_core; core_key_rotate_transact "$@" || exit 1 ;;
+    export) acquire_repo_lock; bash "$CORE" key export "$@" || exit 1 ;;
+    status) bash "$CORE" key status "$@" || exit 1 ;;
+    *) fail "usage: omarchy-replicant key init|export [--force] <dest>|import <src>|status|rotate" ;;
   esac
-  case "$sub" in
-    init) commit_repo_shape "key: recipient for encrypted secrets" .replicant/recipient.txt ;;
-    import)
-      load_core
-      if [[ -f "$REPO_DIR/.replicant/recipient.txt" ]]; then
-        commit_repo_shape "key: recipient for encrypted secrets" .replicant/recipient.txt
-      fi ;;
-    rotate) commit_repo_shape "key: rotated, every secret re-encrypted" vault .replicant/recipient.txt ;;
-  esac
+  invalidate_brief_cache
 }
 
 # cmd_forget <id>: a file you deleted, and its copy leaves the repo too. One of
@@ -697,15 +611,8 @@ cmd_forget() {
   local id="${1:-}"
   [[ -n "$id" ]] || fail "usage: omarchy-replicant forget <id>"
   load_core
-  core_forget "$id" || exit 1
-  commit_repo_shape "forget: $id (gone from $MACHINE)" \
-    .replicant-track \
-    .replicant/entries.json \
-    "config/$id" \
-    "profiles/$(current_profile)/config/$id" \
-    "secrets/$id" \
-    vault/index.age \
-    vault/blobs
+  core_forget_transact "$id" || exit 1
+  invalidate_brief_cache
 }
 
 cmd_deleted() { ensure_core; bash "$CORE" deleted "$@"; }
@@ -725,12 +632,12 @@ cmd_recover() {
   [[ -n "$sha" ]] || fail "usage: omarchy-replicant recover <sha> [--apply]  (the shas: omarchy-replicant deleted)"
   [[ -d "$REPO_DIR/.git" ]] || fail "no repo yet"
   load_core
-  core_recover "$sha" "$DRY" || exit 1
-  (( DRY )) && return 0
-  local first="${RECOVERED[0]}" more=$(( ${#RECOVERED[@]} - 1 )) subject
-  subject="recover: $(rel_for_repo_path "$first")"
-  (( more > 0 )) && subject+=", +$more more"
-  commit_repo_shape "$subject (from ${sha:0:7})" .replicant-track .replicant/entries.json vault/index.age "${RECOVERED[@]}"
+  if (( DRY )); then
+    core_recover "$sha" "$DRY" || exit 1
+    return 0
+  fi
+  core_recover_transact "$sha" || exit 1
+  invalidate_brief_cache
 }
 
 # ── the plugin itself ────────────────────────────────────────────────────────
@@ -806,9 +713,8 @@ cmd_profile() {
     profile_report
     return $?
   fi
-  profile_report "$want" || exit 1
-  commit_repo_shape "profile: $MACHINE is now '$want'" .replicant-profiles .replicant/machines
-  echo "Files scoped to a profile will now be saved and restored from profiles/$want/." >&2
+  core_profile_transact "$want" || exit 1
+  invalidate_brief_cache
 }
 
 # cmd_revert <setting-id> [--to default|repo] — put ONE setting back without
@@ -1417,7 +1323,7 @@ Settings
 
 Secret key                   (one shared age identity behind encrypted secrets)
   key init                    Create it on this machine, and record the recipient
-  key export <dest>           Back it up outside the repo (absolute path)
+  key export [--force] <dest>  Back it up outside the repo (absolute path)
   key import <src>            Adopt it on a new machine, before saving secrets
   key status                  Whether this machine can read the vault
   key rotate                  Replace it, re-encrypting every secret

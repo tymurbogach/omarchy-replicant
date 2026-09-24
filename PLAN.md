@@ -245,40 +245,40 @@
 
   ## Phase G4: One Transaction Engine
 
-  - [ ] Add bin/lib/transaction.sh.
-  - [ ] Move bulk transaction logic out of the CLI.
-  - [ ] Route save, bulk, policy, profile, and repository-shape writes through it.
-  - [ ] Route vault metadata and key rotation through it.
-  - [ ] Keep the CLI limited to parsing, confirmation, dispatch, and rendering.
-  - [ ] Require a clean worktree before starting.
-  - [ ] Create the journal before creating a candidate commit.
-  - [ ] Fail when any journal write fails.
-  - [ ] Write journals with temporary files and atomic renames.
-  - [ ] Build and validate mutations in temporary worktrees.
-  - [ ] Fast-forward the active repository after local validation.
-  - [ ] Push only after successful local activation.
-  - [ ] Preserve local commits when pushes fail.
-  - [ ] Report a local-only outcome and retry command.
-  - [ ] Make recovery inspect actual Git state.
-  - [ ] Remove ignored git add and git commit failures.
-  - [ ] Lock key init, key import, and key rotate.
-  - [ ] Coordinate key export with rotation.
-  - [ ] Refuse existing export destinations without --force.
-  - [ ] Install exported keys atomically with mode 0600.
-  - [ ] Preserve the previous key during unfinished rotation.
-  - [ ] Reconcile keys and repositories from the journal.
-  - [ ] Split core_save into planning, staging, validation, and activation.
+  - [x] Add bin/lib/transaction.sh.
+  - [x] Move bulk transaction logic out of the CLI.
+  - [x] Route save, bulk, policy, profile, and repository-shape writes through it.
+  - [x] Route vault metadata and key rotation through it.
+  - [x] Keep the CLI limited to parsing, confirmation, dispatch, and rendering.
+  - [x] Require a clean worktree before starting.
+  - [x] Create the journal before creating a candidate commit.
+  - [x] Fail when any journal write fails.
+  - [x] Write journals with temporary files and atomic renames.
+  - [x] Build and validate mutations in temporary worktrees.
+  - [x] Fast-forward the active repository after local validation.
+  - [x] Push only after successful local activation.
+  - [x] Preserve local commits when pushes fail.
+  - [x] Report a local-only outcome and retry command.
+  - [x] Make recovery inspect actual Git state.
+  - [x] Remove ignored git add and git commit failures.
+  - [x] Lock key init, key import, and key rotate.
+  - [x] Coordinate key export with rotation.
+  - [x] Refuse existing export destinations without --force.
+  - [x] Install exported keys atomically with mode 0600.
+  - [x] Preserve the previous key during unfinished rotation.
+  - [x] Reconcile keys and repositories from the journal.
+  - [x] Split core_save into planning, staging, validation, and activation.
 
   Tests:
 
-  - [ ] Test every mutator with an unwritable journal directory.
-  - [ ] Test hook, commit, fast-forward, and push failures.
-  - [ ] Test concurrent save, bulk, policy, and key commands.
-  - [ ] Send INT, TERM, and HUP at every stage.
-  - [ ] Simulate process death during key rotation.
-  - [ ] Verify that a usable identity always matches the active repository.
-  - [ ] Verify that recovery never discards committed work implicitly.
-  - [ ] Verify that each mutation creates at most one commit.
+  - [x] Test every mutator with an unwritable journal directory.
+  - [x] Test hook, commit, fast-forward, and push failures.
+  - [x] Test concurrent save, bulk, policy, and key commands.
+  - [x] Send INT, TERM, and HUP at every stage.
+  - [x] Simulate process death during key rotation.
+  - [x] Verify that a usable identity always matches the active repository.
+  - [x] Verify that recovery never discards committed work implicitly.
+  - [x] Verify that each mutation creates at most one commit.
 
   Gate and commit:
 

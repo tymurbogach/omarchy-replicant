@@ -146,3 +146,23 @@ core_recover() {
   done
   return 0
 }
+
+# core_recover_transact <sha>: apply one recovery as one transaction. The
+# copies come back through core_recover (repo and live machine), then exactly
+# those paths plus the lists commit once with the recovery subject.
+core_recover_transact() {
+  local sha="${1:-}"
+  [[ -n "$sha" ]] || { echo "usage: recover <sha> [--apply]" >&2; return 2; }
+  local msg="recover: $sha"
+  tx_shape_begin "recover" "$msg" || return 1
+  local txdir="$TX_DIR" candidate first more subject
+  core_recover "$sha" 0 || { tx_abort "$txdir"; return 1; }
+  first="${RECOVERED[0]}" more=$(( ${#RECOVERED[@]} - 1 ))
+  subject="recover: $(rel_for_repo_path "$first")"
+  (( more > 0 )) && subject+=", +$more more"
+  subject+=" (from ${sha:0:7})"
+  candidate=$(tx_shape_commit "$subject" "$txdir" -- .replicant-track .replicant/entries.json vault/index.age ${RECOVERED[@]+"${RECOVERED[@]}"}) || return 1
+  [[ -n "$candidate" ]] || return 0
+  tx_shape_finish "$txdir" || return 1
+  return 0
+}

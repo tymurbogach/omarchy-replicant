@@ -330,7 +330,7 @@ core_restore_file() {
   briefcache_invalidate
   local rel="$1" src repo_path mode
   src=$(resolve_manifest_src "$rel") || { echo "unknown id: $rel" >&2; return 1; }
-  if is_secret_rel "$rel" && [[ "$(repo_data_version)" == 2 ]]; then
+  if is_secret_rel "$rel" && repo_has_vault; then
     vault_restore_entry "$rel" || return 1
     return 0
   fi

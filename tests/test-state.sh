@@ -91,53 +91,6 @@ pairs_now=$(printf '%s\n' "${REGISTRY[@]}" | awk -F'\t' '{print $6 ":" $1}' | LC
 pairs_then=$(printf '%s\n' "${TRACKED[@]}" "${TRACKED_SECRETS[@]}" | LC_ALL=C sort)
 check "registry pairs match TRACKED pairs" "$pairs_then" "$pairs_now"
 
-section "a v2 override record wins over the shipped entry"
-ensure_v2_layout >/dev/null 2>&1
-check "the repo is version 2 now" "2" "$(repo_data_version)"
-cat > "$REPO_DIR/.replicant/entries.json" <<EOF
-{"hypr/input.lua": {"path": "$HOME/.config/hypr/input.lua", "kind": "config", "scope": "profile", "source": "override"}}
-EOF
-registry_build >/dev/null 2>&1
-row=$(registry_row_for hypr/input.lua)
-check "source reads override" "override" "$(field 3 "$row")"
-check "scope reads profile" "profile" "$(field 5 "$row")"
-check "repo path moves to the profile tree" \
-  "$REPO_DIR/profiles/$(current_profile)/config/hypr/input.lua" "$(field 7 "$row")"
-printf '{}\n' > "$REPO_DIR/.replicant/entries.json"
-registry_build >/dev/null 2>&1
-check "an empty registry falls back to shipped" "manifest" \
-  "$(field 3 "$(registry_row_for hypr/input.lua)")"
-printf '{oops' > "$REPO_DIR/.replicant/entries.json"
-check_false "an invalid registry fails loudly" registry_build
-printf '{}\n' > "$REPO_DIR/.replicant/entries.json"
-
-section "vault secrets resolve to blobs, or to locked"
-if command -v age >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1 \
-    && probe=$(mktemp -d) && ( umask 077; age-keygen -pq -o "$probe/key" >/dev/null 2>&1 ) \
-    && grep -q '^# public key: age1pq1' "$probe/key" 2>/dev/null; then
-  rm -rf -- "$probe"
-  key_init >/dev/null 2>&1
-  core_backup >/dev/null 2>&1
-  registry_build >/dev/null 2>&1
-  row=$(registry_row_for env/60-secrets.conf)
-  check "the blob id is opaque" "0" \
-    "$(field 8 "$row" | grep -cvE '^[0-9a-f]{32}$' || true)"
-  check "…pointing at the vault file" "vault/blobs/$(field 8 "$row").age" \
-    "$(field 7 "$row" | sed "s|^$REPO_DIR/||")"
-  check "…unlocked with the key" "false" "$(field 9 "$row")"
-  mv "$REPLICANT_HOME/keys/identity.txt" "$TMP/identity.keep"
-  registry_build >/dev/null 2>&1
-  row=$(registry_row_for env/60-secrets.conf)
-  check "no key means locked" "true" "$(field 9 "$row")"
-  check "…with no blob to point at" "" "$(field 8 "$row")"
-  mv "$TMP/identity.keep" "$REPLICANT_HOME/keys/identity.txt"
-else
-  rm -rf -- "${probe:-/nonexistent}" 2>/dev/null || true
-  registry_build >/dev/null 2>&1
-  check "no key means locked" "true" \
-    "$(field 9 "$(registry_row_for env/60-secrets.conf)")"
-fi
-
 section "one evaluator answers every row"
 # A committed base, so git answers clean and the healing below shows: without
 # it every copied file reads dirty, which is correct but buries the point.
@@ -178,21 +131,6 @@ git -C "$REPO_DIR" add -A >/dev/null 2>&1
 git -C "$REPO_DIR" commit -qm "back to default" >/dev/null 2>&1 || true
 check "a file at its Omarchy default reads default" "default false false true false" \
   "$(verdict hypr/input.lua)"
-
-section "parity: the same world dumps the committed fixtures"
-for world in v1 v2; do
-  parity_out="$TMP/parity-$world"
-  bash "$HERE/parity-dump.sh" "$world" "$parity_out" >/dev/null 2>&1
-  for f in "$HERE/fixtures/state-parity/$world"/*; do
-    base=$(basename "$f")
-    if diff -u "$f" "$parity_out/$base" >/dev/null 2>&1; then
-      pass=$((pass+1)); printf '  \033[32m✓\033[0m %s %s matches\n' "$world" "$base"
-    else
-      fail=$((fail+1)); printf '  \033[31m✗\033[0m %s %s differs\n' "$world" "$base"
-      diff -u "$f" "$parity_out/$base" 2>/dev/null | head -n 10 | sed 's/^/    /'
-    fi
-  done
-done
 
 section "brief cache: metadata hit, byte-accurate full"
 # The bar polls brief once a minute; full stays authoritative and never reads
@@ -242,5 +180,78 @@ record_incoming hypr/input.lua
 check "an incoming record invalidates the cache" "false" \
   "$([[ -f "$OMARCHY_REPLICANT_HOME/cache/state-v2.json" ]] && echo true || echo false)"
 record_incoming
+
+section "the repo migrates its records to version 3"
+# What migrate-v3 does in full in phase G3, in miniature here: the legacy
+# policy files leave, the version 3 marker lands, and this machine records
+# itself again. Later sections assert version 3 behavior on the clean repo.
+rm -f "$REPO_DIR/.replicant-track" "$REPO_DIR/.replicant-sync" "$REPO_DIR/.replicant-profiles"
+mkdir -p "$REPO_DIR/.replicant"
+jq -nc '{dataVersion: 3, secretFormat: "age-pq-v2"}' > "$REPO_DIR/.replicant/schema.json"
+machine_metadata_write
+check "the repo is version 3 now" "3" "$(repo_data_version)"
+check "no legacy policy file remains" "" "$(for n in .replicant-track .replicant-sync .replicant-profiles; do [[ -e "$REPO_DIR/$n" ]] && echo "$n"; done)"
+
+section "a v3 override record wins over the shipped entry"
+ensure_v3_layout >/dev/null 2>&1
+check "the repo is version 3 now" "3" "$(repo_data_version)"
+cat > "$REPO_DIR/.replicant/entries.json" <<EOF
+{"hypr/input.lua": {"path": "$HOME/.config/hypr/input.lua", "kind": "config", "scope": "profile", "source": "override"}}
+EOF
+registry_build >/dev/null 2>&1
+row=$(registry_row_for hypr/input.lua)
+check "source reads override" "override" "$(field 3 "$row")"
+check "scope reads profile" "profile" "$(field 5 "$row")"
+check "repo path moves to the profile tree" \
+  "$REPO_DIR/profiles/$(current_profile)/config/hypr/input.lua" "$(field 7 "$row")"
+printf '{}\n' > "$REPO_DIR/.replicant/entries.json"
+registry_build >/dev/null 2>&1
+check "an empty registry falls back to shipped" "manifest" \
+  "$(field 3 "$(registry_row_for hypr/input.lua)")"
+printf '{oops' > "$REPO_DIR/.replicant/entries.json"
+check_false "an invalid registry fails loudly" registry_build
+printf '{}\n' > "$REPO_DIR/.replicant/entries.json"
+
+section "vault secrets resolve to blobs, or to locked"
+if command -v age >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1 \
+    && probe=$(mktemp -d) && ( umask 077; age-keygen -pq -o "$probe/key" >/dev/null 2>&1 ) \
+    && grep -q '^# public key: age1pq1' "$probe/key" 2>/dev/null; then
+  rm -rf -- "$probe"
+  key_init >/dev/null 2>&1
+  core_backup >/dev/null 2>&1
+  registry_build >/dev/null 2>&1
+  row=$(registry_row_for env/60-secrets.conf)
+  check "the blob id is opaque" "0" \
+    "$(field 8 "$row" | grep -cvE '^[0-9a-f]{32}$' || true)"
+  check "…pointing at the vault file" "vault/blobs/$(field 8 "$row").age" \
+    "$(field 7 "$row" | sed "s|^$REPO_DIR/||")"
+  check "…unlocked with the key" "false" "$(field 9 "$row")"
+  mv "$REPLICANT_HOME/keys/identity.txt" "$TMP/identity.keep"
+  registry_build >/dev/null 2>&1
+  row=$(registry_row_for env/60-secrets.conf)
+  check "no key means locked" "true" "$(field 9 "$row")"
+  check "…with no blob to point at" "" "$(field 8 "$row")"
+  mv "$TMP/identity.keep" "$REPLICANT_HOME/keys/identity.txt"
+else
+  rm -rf -- "${probe:-/nonexistent}" 2>/dev/null || true
+  registry_build >/dev/null 2>&1
+  check "no key means locked" "true" \
+    "$(field 9 "$(registry_row_for env/60-secrets.conf)")"
+fi
+
+section "parity: the same world dumps the committed fixtures"
+for world in v1 v3; do
+  parity_out="$TMP/parity-$world"
+  bash "$HERE/parity-dump.sh" "$world" "$parity_out" >/dev/null 2>&1
+  for f in "$HERE/fixtures/state-parity/$world"/*; do
+    base=$(basename "$f")
+    if diff -u "$f" "$parity_out/$base" >/dev/null 2>&1; then
+      pass=$((pass+1)); printf '  \033[32m✓\033[0m %s %s matches\n' "$world" "$base"
+    else
+      fail=$((fail+1)); printf '  \033[31m✗\033[0m %s %s differs\n' "$world" "$base"
+      diff -u "$f" "$parity_out/$base" 2>/dev/null | head -n 10 | sed 's/^/    /'
+    fi
+  done
+done
 
 summary

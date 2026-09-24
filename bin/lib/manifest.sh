@@ -79,28 +79,11 @@ SECRETS_MANIFEST=(
   "$HOME/.config/environment.d/60-secrets.conf:env/60-secrets.conf"
 )
 
-# What the pre-0.7 core tracked that is one person's rather than everyone's.
-# Kept only so an existing repo does not silently stop tracking them the day it
-# upgrades: ensure_track_file writes whichever of these the repo or the machine
-# actually has into the user's own list, and load_user_manifest falls back to
-# the same set for reads until that migration runs. Nothing here is offered to
-# a fresh install. `~/Projects/mise.toml` is deliberately absent — it is a project
+# What the pre-0.7 core tracked lives in legacy.sh, the migration-only
+# module: LEGACY_PERSONAL, LEGACY_PERSONAL_SECRETS and
+# legacy_personal_present. Nothing here is offered to a fresh install.
+# `~/Projects/mise.toml` is deliberately absent — it is a project
 # file, not machine config, and is dropped rather than migrated.
-LEGACY_PERSONAL=(
-  "$HOME/.claude/hooks/cbm-code-discovery-gate:claude/hooks/cbm-code-discovery-gate"
-  "$HOME/.claude/hooks/cbm-session-reminder:claude/hooks/cbm-session-reminder"
-  "$HOME/.claude/hooks/cbm-subagent-reminder:claude/hooks/cbm-subagent-reminder"
-  "$HOME/.config/uwsm/env.d/50-local-bin-priority.sh:uwsm/env.d/50-local-bin-priority.sh"
-  "$HOME/.local/bin/hypr-refresh-auto:bin/hypr-refresh-auto"
-  "$HOME/.local/bin/omarchy-audit:bin/omarchy-audit"
-  "$HOME/.config/omarchy-audit-ignore:omarchy-audit-ignore"
-  "$HOME/.config/omarchy/hooks/post-update.d/audit-config.hook:omarchy/hooks/post-update.d/audit-config.hook"
-  "/etc/systemd/system/fprintd-resume.service:etc/fprintd-resume.service"
-)
-LEGACY_PERSONAL_SECRETS=(
-  "$HOME/Projects/portfolio/.env:env/portfolio.env"
-  "$HOME/Projects/lazytripz/backend/.env:env/lazytrip-backend.env"
-)
 
 # Entries that an earlier release shipped and this one does not, because they
 # are not what every Omarchy machine has. If the repo holds a copy, the entry
@@ -263,6 +246,11 @@ rebuild_tracked() {
 load_user_manifest() {
   local line kind src rel
   USER_MANIFEST=(); USER_SECRETS=()
+  if repo_is_v3; then
+    load_v3_user_manifest || return 1
+    rebuild_tracked
+    return 0
+  fi
   if [[ -f "$USER_TRACK_FILE" ]]; then
     while IFS= read -r line; do
       IFS=$'\t' read -r kind src rel < <(parse_track_line "$line")
@@ -270,28 +258,40 @@ load_user_manifest() {
       if [[ "$kind" == secret ]]; then USER_SECRETS+=("$src:$rel"); else USER_MANIFEST+=("$src:$rel"); fi
     done < <(read_track_lines)
   else
-    local entry
-    for entry in "${LEGACY_PERSONAL[@]}"; do
-      legacy_personal_present "$entry" && USER_MANIFEST+=("$entry")
-    done
-    for entry in "${LEGACY_PERSONAL_SECRETS[@]}"; do
-      [[ -f "${entry%%:*}" || -f "$SECRETS_DIR/${entry##*:}" ]] && USER_SECRETS+=("$entry")
-    done
+    while IFS=$'\t' read -r kind src rel; do
+      [[ -n "${rel:-}" ]] || continue
+      if [[ "$kind" == secret ]]; then USER_SECRETS+=("$src:$rel"); else USER_MANIFEST+=("$src:$rel"); fi
+    done < <(legacy_user_entries)
   fi
   rebuild_tracked
 }
 
-# A pre-0.7 entry counts as this user's only if the repo already holds a copy or
-# the machine still has the file. Deliberately blunt about where the copy might
-# be: this runs before scope_for is defined, so it looks under both roots rather
-# than asking repo_path_for which one applies.
-legacy_personal_present() {
-  local src="${1%%:*}" rel="${1##*:}" p
-  [[ -e "$src" ]] && return 0
-  [[ -e "$CONFIG_DIR/$rel" ]] && return 0
-  for p in "$REPO_DIR"/profiles/*/config/"$rel"; do [[ -e "$p" ]] && return 0; done
-  return 1
+# load_v3_user_manifest: the user's own entries from the canonical v3
+# records. Config entries come from .replicant/entries.json with source
+# user; secret entries come from the decrypted vault index. A locked vault
+# contributes no secrets: those rows render locked from the index state, not
+# from this list.
+load_v3_user_manifest() {
+  local id p k s o vidx
+  if [[ -f "$REPO_DIR/.replicant/entries.json" ]]; then
+    local rows
+    rows=$(load_v3_entries 2>/dev/null) || return 1
+    while IFS=$'\t' read -r id p k s o; do
+      [[ -n "${id:-}" && "$o" == user ]] || continue
+      USER_MANIFEST+=("$p:$id")
+    done <<<"$rows"
+  fi
+  vidx=$(vault_index_decrypt 2>/dev/null || true)
+  if [[ -n "$vidx" ]]; then
+    while IFS=$'\t' read -r id p s o; do
+      [[ -n "${id:-}" && "$o" == user ]] || continue
+      USER_SECRETS+=("$p:$id")
+    done < <(vault_index_user_entries "$vidx")
+  fi
+  return 0
 }
+
+# legacy_personal_present lives in legacy.sh, the migration-only module.
 
 is_user_entry() {
   local rel="$1" entry

@@ -4,7 +4,13 @@
 # functions and data and runs nothing. Other modules read its data.
 
 # ─── The user's list: writing it ────────────────────────────────────────────
+# Refused on version 3: user entries live in .replicant/entries.json and the
+# vault index, and no track file is ever created there.
 write_track_file() {
+  if repo_is_v3; then
+    echo "track: refusing to write the legacy track file in a version 3 repo" >&2
+    return 1
+  fi
   local -a keep=("$@")
   {
     echo "# Files and directories YOU want backed up, on top of the ones the"
@@ -24,8 +30,11 @@ write_track_file() {
 # Same contract as ensure_scope_file, for the same reason: load_user_manifest
 # has a read-only fallback so nothing stops being tracked the moment you
 # upgrade, but a read-modify-write against a list the fallback invented would
-# be a delete. Every writer calls this first.
+# be a delete. Every legacy writer calls this first. On version 3 it is a
+# no-op: user entries live in .replicant/entries.json and the vault index, and
+# no track file is ever created.
 ensure_track_file() {
+  repo_is_v3 && return 0
   [[ -f "$USER_TRACK_FILE" ]] && return 0
   mkdir -p "$(dirname "$USER_TRACK_FILE")" 2>/dev/null || true
   local -a seed=() entry
@@ -112,6 +121,13 @@ core_track() {
   fi
 
   ensure_track_file
+  if repo_is_v3; then
+    v3_track_entry "$path" "$rel" "$kind" || return 1
+    load_user_manifest
+    briefcache_invalidate
+    echo "tracking ${path/#$HOME/\~} as $rel" >&2
+    return 0
+  fi
   local -a keep=()
   while IFS= read -r entry; do keep+=("$entry"); done < <(read_track_lines)
   keep+=("$(track_line_for "$path" "$rel" "$kind")")
@@ -119,6 +135,30 @@ core_track() {
   load_user_manifest
   briefcache_invalidate
   echo "tracking ${path/#$HOME/\~} as $rel" >&2
+}
+
+# v3_track_entry <path> <rel> <config|secret>: record one user entry in the
+# canonical v3 stores. Config and directory entries go to entries.json with
+# the currently resolved scope; secrets go straight to the encrypted vault
+# index, which is their only record. Fails before mutation when validation
+# fails, and leaves the stores untouched then.
+v3_track_entry() {
+  local path="$1" rel="$2" kind="$3"
+  if [[ "$kind" == secret ]]; then
+    vault_identity_ok || return 1
+    local idx
+    idx=$(vault_index_decrypt) || return 1
+    [[ -z "$(vault_index_blob "$idx" "$rel")" ]] || {
+      echo "track: already tracked as '$rel'" >&2; return 0; }
+    idx=$(vault_save_entry "$path" "$rel" "$idx" user) || return 1
+    vault_index_write "$idx" || return 1
+    return 0
+  fi
+  local dirkind=config scope
+  [[ "$path" == */ ]] && dirkind=dir
+  scope=$(scope_for "$rel")
+  v3_entries_upsert "$rel" "$path" "$dirkind" "$scope" user || return 1
+  return 0
 }
 
 # core_untrack <rel> — drop one entry from the user's list. Only the user's:
@@ -139,6 +179,13 @@ core_untrack() {
   # Before the list surgery below: untracking removes the very entry that
   # makes is_secret_rel true, so the vault branch after it would never fire.
   is_secret_rel "$rel" && was_secret=true
+  if repo_is_v3; then
+    v3_untrack_entry "$rel" "$was_secret" || return 1
+    load_user_manifest
+    briefcache_invalidate
+    echo "$rel is no longer tracked (the copy in your repo was removed too)" >&2
+    return 0
+  fi
   ensure_track_file
   local -a keep=()
   while IFS= read -r line; do
@@ -151,7 +198,7 @@ core_untrack() {
   # the next save anyway, and leaving it until then means the panel shows a row
   # for a file nothing tracks. Encrypted secrets live in the vault instead of
   # next to the configs, so they leave through it.
-  if [[ "$was_secret" == true && "$(repo_data_version)" == 2 ]]; then
+  if [[ "$was_secret" == true ]] && repo_has_vault; then
     vault_drop_entry "$rel" || return 1
   else
     local copy; copy=$(repo_copy_for_rel "$rel")
@@ -159,6 +206,26 @@ core_untrack() {
   fi
   briefcache_invalidate
   echo "$rel is no longer tracked (the copy in your repo was removed too)" >&2
+}
+
+# v3_untrack_entry <rel> <was-secret>: drop one user entry from the canonical
+# v3 stores. A shipped entry is refused above; only the user's own records go.
+v3_untrack_entry() {
+  local rel="$1" was_secret="$2" copy
+  if [[ "$was_secret" == true ]]; then
+    vault_drop_entry "$rel" || return 1
+    return 0
+  fi
+  v3_require_valid_entries || return 1
+  local rec
+  rec=$(jq -r --arg id "$rel" '.[$id] // empty | [.path, .kind, .scope, .source] | @tsv' \
+    "$REPO_DIR/.replicant/entries.json" 2>/dev/null || true)
+  [[ -n "$rec" ]] || { echo "untrack: $rel is not in your list" >&2; return 1; }
+  [[ "$(cut -f4 <<<"$rec")" == user ]] || { echo "untrack: $rel is not in your list" >&2; return 1; }
+  v3_entries_remove "$rel" || return 1
+  copy=$(repo_copy_for_rel "$rel")
+  [[ -e "$copy" ]] && rm -rf -- "$copy"
+  return 0
 }
 
 # core_forget <rel>: a file is gone from this machine, and its copy leaves the
@@ -181,7 +248,7 @@ core_forget() {
     return 1
   fi
   if is_user_entry "$rel"; then core_untrack "$rel"; return; fi
-  if is_secret_rel "$rel" && [[ "$(repo_data_version)" == 2 ]]; then
+  if is_secret_rel "$rel" && repo_has_vault; then
     vault_drop_entry "$rel" || return 1
     briefcache_invalidate
     echo "$rel is gone from your repo too. Git history keeps it: 'recover' brings it back" >&2

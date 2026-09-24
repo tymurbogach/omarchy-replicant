@@ -115,7 +115,7 @@ build_secrets_json() {
     # many entries an env file holds without naming any of them. A locked
     # row reports no count either, since even the live names are not shown
     # without the key.
-    if [[ "$(repo_data_version 2>/dev/null)" == 2 ]]; then
+    if repo_has_vault 2>/dev/null; then
       if [[ "$locked" == "true" ]]; then
         vars=""; nvars=0
       else
@@ -199,12 +199,13 @@ build_entries_json() {
 }
 
 status_encryption_json() {
-  local state=unconfigured v
+  local state=unconfigured v format="age-pq-v1"
   v=$(repo_data_version 2>/dev/null || echo 1)
-  if [[ "$v" == 2 && -f "$REPO_DIR/.replicant/recipient.txt" ]]; then
+  if [[ "$v" == 3 ]]; then format="age-pq-v2"; fi
+  if [[ ( "$v" == 2 || "$v" == 3 ) && -f "$REPO_DIR/.replicant/recipient.txt" ]]; then
     if vault_unlocked; then state=ready; else state=locked; fi
   fi
-  jq -nc --arg state "$state" '{format:"age-pq-v1",state:$state}'
+  jq -nc --arg state "$state" --arg format "$format" '{format:$format,state:$state}'
 }
 
 status_migration_json() {
@@ -462,7 +463,8 @@ core_status() {
       --argjson setting_groups "$groups_json" --argjson machines "$machines_json" \
       --arg profile "$(current_profile)" --argjson profiles "$profiles_json" \
       --argjson pending_reinstalls "$pending_reinstalls_json" --argjson plugins "$plugins_json" \
-      '{initialized:true, schema_version:2, branch:$branch, remote:$remote, remote_name:$remote_name, remote_state:$remote_state,
+      --argjson schema_version "$SCHEMA_VERSION" \
+      '{initialized:true, schema_version:$schema_version, branch:$branch, remote:$remote, remote_name:$remote_name, remote_state:$remote_state,
         repo_dir:$repo_dir, machine:$machine, plugin_version:$plugin_version, home:$home,
         profile:$profile, profiles:$profiles,
         last_save:$last_save, last_subject:$last_subject,
@@ -512,7 +514,7 @@ core_diff() {
         esac
       done < <(state_facts "$regrow")
     fi
-    if [[ "$(repo_data_version)" == 2 ]]; then
+    if repo_has_vault; then
       case "$locked_v:$same_v" in
         *:true) echo "identical to the copy in your repo"; return 0 ;;
         true:*) echo "This secret is locked on this machine: import the key to compare it." ;;

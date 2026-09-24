@@ -278,7 +278,7 @@ save_push() {
 # secret copies at 600 under a 700 secrets dir, so re-apply both after the
 # fast-forward. Vault blobs keep checkout modes: they were never mode-managed.
 save_fix_modes() {
-  [[ "$(repo_data_version 2>/dev/null)" == 2 ]] && return 0
+  repo_has_vault 2>/dev/null && return 0
   local entry rel dst
   [[ -d "$SECRETS_DIR" ]] && chmod 700 -- "$SECRETS_DIR" 2>/dev/null || true
   for entry in ${TRACKED_SECRETS[@]+"${TRACKED_SECRETS[@]}"}; do
@@ -310,7 +310,7 @@ snapshot_one() {
     echo "snapshot: $rel is switched off — scope it back on before saving it" >&2
     return 1
   fi
-  if [[ "$kind" == "secret" && "$(repo_data_version)" == 2 ]]; then
+  if [[ "$kind" == "secret" ]] && repo_has_vault; then
     [[ -f "$live" ]] || { echo "$live does not exist on this machine" >&2; return 1; }
     if [[ -f "$live" && ! -r "$live" ]]; then
       echo "  · ${live/#$HOME/\~} is readable by root only. To save it: sudo install -D -m600 -o $(id -un) -g $(id -gn) $live $repo" >&2

@@ -200,6 +200,42 @@ vault_new_blob_id() {
   return 1
 }
 
+# vault_index_version: the index version this repo uses. Version 1 carries
+# {id, scope, blob}; version 2 adds the secret path and source, so custom
+# secrets are discoverable from the encrypted index alone.
+vault_index_version() { if repo_is_v3; then printf '2\n'; else printf '1\n'; fi; }
+
+# vault_index_validate [index-json]: 0 when the decrypted index is sound for
+# this repo. Every failure names the entry and the rule. Validation reads,
+# never writes: callers fail before mutation.
+vault_index_validate() {
+  local idx="${1:-}" want
+  want=$(vault_index_version)
+  [[ -n "$idx" ]] || { printf 'replicant: vault/index.age is empty\n' >&2; return 1; }
+  jq -e --argjson want "$want" '.version == $want and (.secrets | type) == "array"' <<<"$idx" >/dev/null 2>&1 || {
+    printf 'replicant: vault/index.age is not a version %s secret index\n' "$want" >&2; return 1; }
+  local bad
+  bad=$(jq -r --argjson want "$want" '
+    def need(c; msg): if c then . else error(msg) end;
+    .secrets | to_entries | sort_by(.value.id) | .[]
+    | .value as $e
+    | need(($e.id | type) == "string" and ($e.id | test("^[A-Za-z0-9._/\\-]+$")); "bad id \($e.id)")
+    | need(($e.scope | type) == "string" and ($e.scope == "shared" or $e.scope == "profile" or $e.scope == "off"); "bad scope for \($e.id)")
+    | need(($e.blob | type) == "string" and ($e.blob | test("^[0-9a-f]{32}$")); "bad blob for \($e.id)")
+    | need(($want == 1 and (.value | has("path") | not)) or (($e.path | type) == "string" and ($e.path | startswith("/")) and (($e.path | test("[\u0000-\u001f\u007f]|(^|/)\\.\\.(/|$)")) | not)); "bad path for \($e.id)")
+    | need(($want == 1 and (.value | has("source") | not)) or ($e.source == "user" or $e.source == "override"); "bad source for \($e.id)")
+    | "\($e.id)\t\($e.path // "")\t\($e.blob)"' <<<"$idx" 2>&1) || {
+    printf 'replicant: vault index is invalid: %s\n' "$(sed -e 's/^jq: error ([^)]*): //' <<<"$bad" | head -n1)" >&2; return 1; }
+  local dups
+  dups=$(jq -r '.secrets[].id' <<<"$idx" | sort | uniq -d | head -n1)
+  if [[ -n "$dups" ]]; then printf 'replicant: vault index holds duplicate id %s\n' "$dups" >&2; return 1; fi
+  dups=$(jq -r '.secrets[] | select(has("path")) | .path' <<<"$idx" | sort | uniq -d | head -n1)
+  if [[ -n "$dups" ]]; then printf 'replicant: vault index holds duplicate path %s\n' "$dups" >&2; return 1; fi
+  dups=$(jq -r '.secrets[].blob' <<<"$idx" | sort | uniq -d | head -n1)
+  if [[ -n "$dups" ]]; then printf 'replicant: vault index holds duplicate blob for another secret\n' >&2; return 1; fi
+  return 0
+}
+
 # vault_index_decrypt: the index as JSON on stdout. A missing index is an
 # empty registry, not an error: no secret saved yet. Anything else that fails
 # (no key, tampered file) fails, and the caller treats it as locked.
@@ -208,7 +244,7 @@ vault_index_decrypt() {
   local idx
   idx=$(vault_index_file)
   if [[ ! -f "$idx" ]]; then
-    printf '{"version":1,"secrets":[]}\n'
+    if repo_is_v3; then printf '{"version":2,"secrets":[]}\n'; else printf '{"version":1,"secrets":[]}\n'; fi
     return 0
   fi
   local idf plaindir plain
@@ -222,13 +258,18 @@ vault_index_decrypt() {
     printf 'replicant: vault/index.age does not decrypt with this key\n' >&2
     return 1
   fi
-  jq -e '.version == 1 and (.secrets | type) == "array"' "$plain" >/dev/null 2>&1 || {
-    _vault_drop_tree "$plaindir"
-    printf 'replicant: vault/index.age is not a secret index\n' >&2
-    return 1
-  }
-  cat -- "$plain"
+  local content
+  content=$(cat -- "$plain")
   _vault_drop_tree "$plaindir"
+  vault_index_validate "$content" || return 1
+  printf '%s\n' "$content"
+}
+# vault_index_user_entries <index-json>: the user-sourced secrets as
+# id<TAB>path<TAB>scope<TAB>source, sorted by id. The manifest reads this to
+# discover custom secrets directly from the encrypted index.
+vault_index_user_entries() {
+  jq -r '[.secrets[] | select(.source == "user")] | sort_by(.id)[]
+    | [.id, (.path // ""), .scope, .source] | @tsv' <<<"$1" 2>/dev/null || true
 }
 # vault_index_blob <index-json> <id>: the blob id for a secret, or nothing.
 vault_index_blob() {
@@ -239,11 +280,18 @@ vault_index_scope() {
   jq -r --arg id "$2" '.secrets[] | select(.id == $id) | .scope // empty' <<<"$1" 2>/dev/null || true
 }
 
-# vault_save_entry <src> <rel> <index-json>: encrypt one live secret into the
-# vault. Prints the (possibly unchanged) index JSON. An unchanged plaintext
-# keeps its ciphertext byte for byte, so git stays quiet when nothing moved.
+# vault_save_entry <src> <rel> <index-json> [source]: encrypt one live secret
+# into the vault. Prints the (possibly unchanged) index JSON. An unchanged
+# plaintext keeps its ciphertext byte for byte, so git stays quiet when
+# nothing moved. On version 3 the index entry also records the live path and
+# the source; on older layouts the version 1 shape is preserved byte for byte.
 vault_save_entry() {
-  local src="$1" rel="$2" idx="$3" rec blob blobs plain
+  local src="$1" rel="$2" idx="$3" source="${4:-}"
+  if [[ -z "$source" ]]; then
+    if is_user_entry "$rel" 2>/dev/null; then source=user; else source=override; fi
+  fi
+  case "$source" in user|override) ;;
+    *) printf 'replicant: secret source is not user or override\n' >&2; return 1 ;; esac
   rec=$(vault_recipient) || return 1
   blobs=$(vault_blobs_dir)
   mkdir -p "$blobs" || return 1
@@ -286,8 +334,14 @@ vault_save_entry() {
   _vault_drop_tree "$encdir"
   local scope
   scope_into scope "$rel"
-  jq -c --arg id "$rel" --arg scope "$scope" --arg blob "$blob" \
-    '.secrets |= (map(select(.id != $id)) + [{id: $id, scope: $scope, blob: $blob}])' <<<"$idx"
+  if repo_is_v3; then
+    jq -c --arg id "$rel" --arg path "$src" --arg scope "$scope" \
+      --arg source "$source" --arg blob "$blob" \
+      '.secrets |= (map(select(.id != $id)) + [{id: $id, path: $path, scope: $scope, source: $source, blob: $blob}])' <<<"$idx"
+  else
+    jq -c --arg id "$rel" --arg scope "$scope" --arg blob "$blob" \
+      '.secrets |= (map(select(.id != $id)) + [{id: $id, scope: $scope, blob: $blob}])' <<<"$idx"
+  fi
 }
 
 # vault_empty: true when the repo holds no vault at all: no index and no
@@ -357,12 +411,14 @@ vault_save_all() {
 }
 
 # vault_index_write <index-json>: encrypt the index, preserving the current
-# ciphertext when the registry did not change.
+# ciphertext when the registry did not change. The canonical shape follows
+# the repo's index version.
 vault_index_write() {
-  local idx="$1" cur canon_old canon_new rec tmp enc
-  idx=$(jq -c -S '{version: 1, secrets: (.secrets | sort_by(.id))}' <<<"$1") || return 1
+  local idx="$1" cur canon_old canon_new rec tmp enc want
+  want=$(vault_index_version)
+  idx=$(jq -c -S --argjson want "$want" '{version: $want, secrets: (.secrets | sort_by(.id))}' <<<"$1") || return 1
   if cur=$(vault_index_decrypt 2>/dev/null); then
-    canon_old=$(jq -c -S '{version: 1, secrets: (.secrets | sort_by(.id))}' <<<"$cur" 2>/dev/null || true)
+    canon_old=$(jq -c -S --argjson want "$want" '{version: $want, secrets: (.secrets | sort_by(.id))}' <<<"$cur" 2>/dev/null || true)
     [[ "$canon_old" == "$idx" ]] && return 0
   fi
   rec=$(vault_recipient) || return 1
@@ -472,13 +528,14 @@ vault_restore_entry() {
 
 # key_init: one shared post-quantum identity for this setup, plus the repo's
 # recipient. Refuses to overwrite an existing identity (rotate is the way to
-# replace one) and refuses v1 repos (their secrets live in plaintext under
-# secrets/ until the section 9 migration).
+# replace one) and refuses repos older than version 3 (their secrets live in
+# plaintext under secrets/ on v1, or in a version 1 index on v2, until the
+# migrate-v3 migration).
 key_init() {
   crypto_require_keygen_pq || return 1
   [[ -e "$REPO_DIR/.git" ]] || { printf 'key: no repo here — run create, clone or init first\n' >&2; return 1; }
-  [[ "$(repo_data_version)" == 2 ]] || {
-    printf 'key: this repo uses the version 1 layout, which keeps secrets in plaintext under secrets/ — encrypted secrets need a version 2 repo\n' >&2
+  [[ "$(repo_data_version)" == 3 ]] || {
+    printf 'key: this repo uses the version %s layout — encrypted secrets need a version 3 repo\n' "$(repo_data_version)" >&2
     return 1
   }
   local idf recf
@@ -680,7 +737,7 @@ key_rotate() {
   local new_index_tmp
   new_index_tmp="$work/index.json"
   _vault_note_temp "$new_index_tmp"
-  jq -c -S '{version: 1, secrets: (.secrets | sort_by(.id))}' <<<"$idx" > "$new_index_tmp" || {
+  jq -c -S --argjson want "$(vault_index_version)" '{version: $want, secrets: (.secrets | sort_by(.id))}' <<<"$idx" > "$new_index_tmp" || {
     _vault_drop_tree "$work"
     return 1
   }

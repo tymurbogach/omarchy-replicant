@@ -142,7 +142,7 @@ core_backup() {
   fi
 
   echo "→ Copying secrets (private repo, 600)" >&2
-  if [[ "$(repo_data_version)" == 2 ]]; then
+  if repo_has_vault; then
     # Encrypted per secret into vault/, never as plaintext. The key check
     # inside fails the backup before anything mutates when this machine has
     # no usable key: a save that silently skipped secrets would lose backups.

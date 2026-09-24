@@ -488,7 +488,7 @@ cmd_sync() {
   [[ -n "$id" && -n "$want" ]] || fail "usage: omarchy-replicant sync <id> on|off"
   load_core
   core_sync "$id" "$want" || exit 1
-  commit_repo_shape "sync: turn $id $want" .replicant-sync
+  commit_repo_shape "sync: turn $id $want" .replicant-sync .replicant/entries.json
 }
 
 # cmd_scope <id> <shared|profile|off> — the three-state version of `sync`, and
@@ -506,6 +506,8 @@ cmd_scope() {
   # the move between them as a rename.
   commit_repo_shape "scope: $id is now $want" \
     .replicant-sync \
+    .replicant/entries.json \
+    vault/index.age \
     "config/$id" \
     "profiles/$(current_profile)/config/$id"
 }
@@ -525,7 +527,7 @@ cmd_policy() {
   done
   [[ -n "$scope" && $# -gt 0 ]] || fail "usage: policy set --scope <scope> -- <id...>"
   load_core
-  local -a ids=("$@") paths=(.replicant-sync)
+  local -a ids=("$@") paths=(.replicant-sync .replicant/entries.json vault/index.age)
   for id in "${ids[@]}"; do
     paths+=("config/$id" "profiles/$(current_profile)/config/$id")
   done
@@ -639,12 +641,12 @@ cmd_bulk() {
 cmd_track() {
   [[ $# -gt 0 ]] || fail "usage: omarchy-replicant track <path> [name-in-repo] [--secret]"
   load_core
-  local before; before=$(cat "$USER_TRACK_FILE" 2>/dev/null || true)
+  local before; before=$(policy_store_state)
   core_track "$@" || exit 1
-  [[ "$(cat "$USER_TRACK_FILE" 2>/dev/null || true)" == "$before" ]] && return 0
+  [[ "$(policy_store_state)" == "$before" ]] && return 0
   # Only the list itself. The copy of the file arrives with the next save, in a
   # commit about the file — this one is about the decision.
-  commit_repo_shape "track: $1" .replicant-track
+  commit_repo_shape "track: $1" .replicant-track .replicant/entries.json vault/index.age
   info "saved with the next 'omarchy-replicant save --auto'"
 }
 
@@ -655,6 +657,7 @@ cmd_untrack() {
   core_untrack "$id" || exit 1
   commit_repo_shape "untrack: $id" \
     .replicant-track \
+    .replicant/entries.json \
     "config/$id" \
     "profiles/$(current_profile)/config/$id" \
     "secrets/$id" \
@@ -695,6 +698,7 @@ cmd_forget() {
   core_forget "$id" || exit 1
   commit_repo_shape "forget: $id (gone from $MACHINE)" \
     .replicant-track \
+    .replicant/entries.json \
     "config/$id" \
     "profiles/$(current_profile)/config/$id" \
     "secrets/$id" \
@@ -724,7 +728,7 @@ cmd_recover() {
   local first="${RECOVERED[0]}" more=$(( ${#RECOVERED[@]} - 1 )) subject
   subject="recover: $(rel_for_repo_path "$first")"
   (( more > 0 )) && subject+=", +$more more"
-  commit_repo_shape "$subject (from ${sha:0:7})" .replicant-track "${RECOVERED[@]}"
+  commit_repo_shape "$subject (from ${sha:0:7})" .replicant-track .replicant/entries.json vault/index.age "${RECOVERED[@]}"
 }
 
 # ── the plugin itself ────────────────────────────────────────────────────────
@@ -801,7 +805,7 @@ cmd_profile() {
     return $?
   fi
   profile_report "$want" || exit 1
-  commit_repo_shape "profile: $MACHINE is now '$want'" .replicant-profiles
+  commit_repo_shape "profile: $MACHINE is now '$want'" .replicant-profiles .replicant/machines
   echo "Files scoped to a profile will now be saved and restored from profiles/$want/." >&2
 }
 
@@ -1070,7 +1074,7 @@ cmd_doctor() {
   # Version 1 repos keep secrets in plaintext and have no vault: nothing to
   # check here beyond the Tools section above. Version 2 reports the exact
   # remediation, the same string the failing save prints.
-  if [[ -d "$REPO_DIR/.git" ]] && [[ "$(repo_data_version 2>/dev/null)" == 2 ]]; then
+  if [[ -d "$REPO_DIR/.git" ]] && repo_has_vault 2>/dev/null; then
     local key_out key_rc
     if key_out=$(bash "$CORE" key status 2>&1); then key_rc=0; else key_rc=$?; fi
     if (( key_rc == 0 )); then

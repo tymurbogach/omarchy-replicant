@@ -72,8 +72,8 @@ bulk_validate_track_path() {
 }
 
 bulk_require_secret_ready() {
-  [[ "$(repo_data_version)" == 2 ]] || {
-    echo "bulk: encrypted secret operations require a version 2 repository" >&2
+  repo_has_vault || {
+    echo "bulk: encrypted secret operations require a version 2 or 3 repository" >&2
     return 1
   }
   vault_identity_ok

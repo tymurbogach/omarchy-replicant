@@ -64,7 +64,7 @@ check_true "the new identity matches the repository recipient" \
 
 section "full status publishes the v2 contract"
 full_status=$(bash "$CORE" status --json --no-fetch 2>/dev/null)
-check "status schema version" "2" "$(jq -r .schema_version <<<"$full_status")"
+check "status schema version" "3" "$(jq -r .schema_version <<<"$full_status")"
 check "migration is complete" "false" "$(jq -r .migration.required <<<"$full_status")"
 check "legacy cleanup warning remains" "true" "$(jq -r .migration.legacy_warning <<<"$full_status")"
 check_true "the panel confirmation clears the warning" core_migration_confirm

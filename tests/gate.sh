@@ -142,7 +142,12 @@ gate_g0() {
 gate_g1() {
   section "G1 v3 schema gate"
   "$HERE/coverage-check.sh" >/dev/null 2>&1 && ok "coverage manifest is complete" || bad "coverage manifest is incomplete"
-  if grep -q '"dataVersion": 3' "$ROOT/bin/lib/schema.sh" 2>/dev/null; then ok "v3 schema is canonical"; else bad "v3 schema is not canonical (expected after G1)"; fi
+  if grep -q 'SCHEMA_VERSION=3' "$ROOT/bin/lib/schema.sh" 2>/dev/null; then ok "v3 schema is canonical"; else bad "v3 schema is not canonical (expected after G1)"; fi
+  if grep -q 'schema_version:$schema_version' "$ROOT/bin/lib/status.sh" 2>/dev/null; then ok "status payload follows the schema version"; else bad "status payload hardcodes a schema version"; fi
+  grep -q 'SCHEMA_FORMAT="age-pq-v2"' "$ROOT/bin/lib/schema.sh" 2>/dev/null && ok "secret format is age-pq-v2" || bad "secret format is not age-pq-v2"
+  [[ -f "$ROOT/bin/lib/legacy.sh" ]] && ok "legacy readers live in the migration-only module" || bad "bin/lib/legacy.sh is missing"
+  if "$HERE/test-v3schema.sh" >/dev/null 2>&1; then ok "v3 schema suite passes"; else bad "v3 schema suite fails"; fi
+  if "$HERE/test-schema.sh" >/dev/null 2>&1; then ok "legacy schema suite still passes"; else bad "legacy schema suite fails"; fi
 }
 
 gate_g2() { section "G2 bootstrap gate"; bad "G2 is not implemented yet"; }

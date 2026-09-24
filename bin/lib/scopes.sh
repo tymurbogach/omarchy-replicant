@@ -100,23 +100,27 @@ ensure_profile_recorded() {
 }
 
 read_profile_map() {
-  [[ -f "$PROFILE_FILE" ]] || return 0
-  sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$PROFILE_FILE" 2>/dev/null || true
+  if repo_is_v3; then return 0; fi
+  legacy_read_profile_map
 }
 
 profile_for_machine() {
-  local want="$1" line k v
-  while IFS= read -r line; do
-    k="${line%%=*}"; v="${line#*=}"
-    k="${k//[[:space:]]/}"; v="${v//[[:space:]]/}"
-    [[ "$k" == "$want" ]] && { printf '%s\n' "$v"; return 0; }
-  done < <(read_profile_map)
-  return 1
+  if repo_is_v3; then machine_profile "$1"; return; fi
+  legacy_profile_for_machine "$@"
 }
 
-# Resolved once per process: every scope lookup needs it.
+# Resolved once per process: every scope lookup needs it. On version 3 the
+# machine JSON record is the only store: the test override wins for suites,
+# then the recorded profile, then the chassis guess.
 current_profile() {
   if [[ -n "${REPLICANT_PROFILE:-}" ]]; then printf '%s\n' "$REPLICANT_PROFILE"; return; fi
+  if repo_is_v3; then
+    local recorded
+    recorded=$(machine_profile "$MACHINE" 2>/dev/null || true)
+    [[ -n "$recorded" ]] || recorded=$(guess_profile)
+    printf '%s\n' "$recorded"
+    return
+  fi
   profile_for_machine "$MACHINE" && return
   guess_profile
 }
@@ -146,6 +150,8 @@ profile_report() {
 }
 
 # core_profile_set <name> — assign this machine to a profile, creating it.
+# On version 3 the machine JSON record is the only store: no profile file is
+# written. On older layouts the file backend stays for the migration.
 core_profile_set() {
   require_writable_schema || return 1
   local want="$1" line k v
@@ -153,6 +159,23 @@ core_profile_set() {
   [[ "$want" =~ ^[a-z0-9][a-z0-9_-]{0,31}$ ]] || {
     echo "profile: use lowercase letters, digits, '-' or '_' (max 32)" >&2; return 1; }
   ensure_repo_layout
+  if repo_is_v3; then
+    v3_require_valid_entries || return 1
+    local dir="$REPO_DIR/.replicant/machines"
+    mkdir -p "$dir"
+    if [[ -f "$dir/$MACHINE.json" ]]; then
+      jq --arg profile "$want" --arg client "$(running_version)" \
+        --argjson schema "$SCHEMA_VERSION" \
+        '.profile = $profile | .clientVersion = $client | .schemaVersion = $schema' \
+        "$dir/$MACHINE.json" > "$dir/$MACHINE.json.new" || return 1
+      mv -f -- "$dir/$MACHINE.json.new" "$dir/$MACHINE.json"
+    else
+      REPLICANT_PROFILE="$want" machine_metadata_write "$MACHINE" || return 1
+    fi
+    briefcache_invalidate
+    echo "$MACHINE is now in the '$want' profile" >&2
+    return 0
+  fi
   while IFS= read -r line; do
     k="${line%%=*}"; k="${k//[[:space:]]/}"
     [[ "$k" == "$MACHINE" ]] || keep+=("$line")
@@ -190,11 +213,28 @@ invalidate_scopes_cache() { SCOPES_CACHED=0; SCOPES_CACHE=""; SCOPE_MAP_READY=0;
 
 # load_scope_map: the scope list as an associative array, built in this shell.
 # The first valid line for a path wins, as in scope_for, and the v0.5 off-list
-# counts only while no .replicant-sync exists.
+# counts only while no .replicant-sync exists. On version 3 the entries
+# records fill the map, with the shipped defaults behind them, so the
+# fork-free scope_into answers from one snapshot per process.
 load_scope_map() {
   (( SCOPE_MAP_READY )) && return 0
   SCOPE_MAP_READY=1; SCOPE_OF=()
-  local line k v
+  local line k v vid vsc
+  if repo_is_v3; then
+    if [[ -f "$REPO_DIR/.replicant/entries.json" ]]; then
+      while IFS=$'\t' read -r vid vsc; do
+        [[ -n "${vid:-}" ]] || continue
+        case "$vsc" in shared|profile|off) [[ -n "${SCOPE_OF[$vid]:-}" ]] || SCOPE_OF[$vid]="$vsc" ;; esac
+      done < <(jq -r 'to_entries | sort_by(.key)[] | [.key, (.value.scope // "")] | @tsv' \
+        "$REPO_DIR/.replicant/entries.json" 2>/dev/null || true)
+    fi
+    local entry
+    for entry in "${DEFAULT_SCOPES[@]}"; do
+      k="${entry%%=*}"; v="${entry##*=}"
+      [[ -n "${SCOPE_OF[$k]:-}" ]] || SCOPE_OF[$k]="$v"
+    done
+    return 0
+  fi
   read_scopes >/dev/null
   while IFS= read -r line; do
     k="${line%%=*}"; v="${line#*=}"
@@ -205,12 +245,18 @@ load_scope_map() {
     while IFS= read -r line; do
       line="${line//[[:space:]]/}"
       [[ -n "$line" && -z "${SCOPE_OF[$line]:-}" ]] && SCOPE_OF[$line]=off
-    done < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$LEGACY_EXCLUDE_FILE" 2>/dev/null || true)
+    done < <(legacy_exclude_map)
   fi
   return 0
 }
 
-# scope_into <var> <rel> and repo_path_into <var> <rel> <profile>: the answers
+# entries_scope_for <rel>: the scope recorded in .replicant/entries.json, or
+# nothing. The single scope source on version 3. Best effort: registry_build
+# validates the file first and fails loudly, so resolution never has to.
+entries_scope_for() {
+  [[ -f "$REPO_DIR/.replicant/entries.json" ]] || return 0
+  jq -r --arg id "$1" '.[$id].scope // empty' "$REPO_DIR/.replicant/entries.json" 2>/dev/null || true
+}
 # of scope_for and repo_path_for, written into <var> without a fork. The loops
 # over every row call these. `$(scope_for ...)` is one fork for each call, and
 # the bar runs count_changes once a minute.
@@ -236,9 +282,31 @@ read_scopes() {
   return 0
 }
 
+# shipped_default_scope <rel>: the scope the plugin ships for an id, or
+# nothing. On version 3 there is no scope file to seed, so these defaults
+# apply without explicit override records: only a decision that differs from
+# them is written down.
+shipped_default_scope() {
+  local rel="$1" entry
+  for entry in "${DEFAULT_SCOPES[@]}"; do
+    [[ "${entry%%=*}" == "$rel" ]] && { printf '%s\n' "${entry##*=}"; return 0; }
+  done
+  return 1
+}
+
 # scope_for <rel> → shared | profile | off   (unlisted files are shared)
+# On version 3 the entries record is the only store, with the shipped
+# defaults behind it. On older layouts the scope file wins, then the legacy
+# off-list, then the shared default.
 scope_for() {
-  local rel="$1" line k v
+  local rel="$1" line k v scoped
+  if repo_is_v3; then
+    scoped=$(entries_scope_for "$rel")
+    case "$scoped" in shared|profile|off) printf '%s\n' "$scoped"; return 0 ;; esac
+    shipped_default_scope "$rel" && return 0
+    printf 'shared\n'
+    return 0
+  fi
   while IFS= read -r line; do
     k="${line%%=*}"; v="${line#*=}"
     k="${k//[[:space:]]/}"; v="${v//[[:space:]]/}"
@@ -252,7 +320,7 @@ scope_for() {
   if [[ ! -f "$SCOPE_FILE" && -f "$LEGACY_EXCLUDE_FILE" ]]; then
     while IFS= read -r line; do
       [[ "${line//[[:space:]]/}" == "$rel" ]] && { printf 'off\n'; return 0; }
-    done < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$LEGACY_EXCLUDE_FILE" 2>/dev/null || true)
+    done < <(legacy_exclude_map)
   fi
   printf 'shared\n'
 }
@@ -281,6 +349,10 @@ repo_path_for() {
 print_lines() { (( $# )) || return 0; printf '%s\n' "$@"; }
 
 write_scope_file() {
+  if repo_is_v3; then
+    echo "scope: refusing to write the legacy scope file in a version 3 repo" >&2
+    return 1
+  fi
   local -a keep=("$@")
   {
     echo "# What Replicant does with each tracked file, one per line:"
@@ -293,27 +365,25 @@ write_scope_file() {
   invalidate_scopes_cache
 }
 
-# Seed the scope list on a fresh repo, and migrate the v0.5 flat off-list.
-# .replicant-exclude only had two states; every path in it meant "off", which is
-# still exactly what it means here — so the migration is a straight translation
-# and nothing a user chose is reinterpreted.
+# Seed the scope list on a fresh legacy repo, and migrate the v0.5 flat
+# off-list. On version 3 this is a no-op: scopes live in .replicant/entries.json
+# and no scope file is ever created.
 #
-# EVERY writer must call this before rewriting the file. core_scope once did not,
-# and because read_scopes() sees no .replicant-sync it rebuilt the list from
-# nothing — silently discarding a v0.5 user's entire off-list the first time they
-# touched any file's scope. Reading has a fallback; writing needs the real thing.
+# EVERY legacy writer must call this before rewriting the file. core_scope once
+# did not, and because read_scopes() sees no .replicant-sync it rebuilt the
+# list from nothing — silently discarding a v0.5 user's entire off-list the
+# first time they touched any file's scope. Reading has a fallback; writing
+# needs the real thing.
 ensure_scope_file() {
+  repo_is_v3 && return 0
   [[ -f "$SCOPE_FILE" ]] && return 0
   mkdir -p "$(dirname "$SCOPE_FILE")" 2>/dev/null || true
   local -a seed=()
+  local migrated
   if [[ -f "$LEGACY_EXCLUDE_FILE" ]]; then
-    local ln
-    while IFS= read -r ln; do
-      ln="${ln//[[:space:]]/}"
-      [[ -n "$ln" ]] && seed+=("$ln = off")
-    done < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$LEGACY_EXCLUDE_FILE" 2>/dev/null || true)
+    migrated=$(legacy_migrate_exclude || true)
+    while IFS= read -r line; do [[ -n "$line" ]] && seed+=("$line"); done <<<"$migrated"
     write_scope_file "${seed[@]}"
-    rm -f -- "$LEGACY_EXCLUDE_FILE"
     echo "  · migrated .replicant-exclude to .replicant-sync (${#seed[@]} entries kept off)" >&2
   else
     write_scope_file "${DEFAULT_SCOPES[@]/=/ = }"
@@ -347,13 +417,17 @@ core_scope() {
   ensure_scope_file
   old=$(scope_for "$rel")
   [[ "$old" == "$want" ]] && { echo "$rel is already '$want'" >&2; return 0; }
-  mkdir -p "$(dirname "$SCOPE_FILE")"
-  while IFS= read -r line; do
-    k="${line%%=*}"; k="${k//[[:space:]]/}"
-    [[ "$k" == "$rel" ]] || keep+=("$line")
-  done < <(read_scopes)
-  [[ "$want" != "shared" ]] && keep+=("$rel = $want")
-  write_scope_file "${keep[@]}"
+  if repo_is_v3; then
+    v3_scope_store "$rel" "$want" || return 1
+  else
+    mkdir -p "$(dirname "$SCOPE_FILE")"
+    while IFS= read -r line; do
+      k="${line%%=*}"; k="${k//[[:space:]]/}"
+      [[ "$k" == "$rel" ]] || keep+=("$line")
+    done < <(read_scopes)
+    [[ "$want" != "shared" ]] && keep+=("$rel = $want")
+    write_scope_file "${keep[@]}"
+  fi
 
   # Moving between scopes moves the copy the repo already holds, so changing
   # your mind does not silently strand a backup at the old path.
@@ -373,6 +447,38 @@ core_scope() {
     off)     echo "$rel will no longer sync" >&2 ;;
   esac
   briefcache_invalidate
+}
+
+# v3_scope_store <rel> <scope>: record one scope decision in the canonical
+# v3 stores. Secrets update their vault index entry; everything else updates
+# .replicant/entries.json, creating an override record for shipped entries
+# that carry non-default policy. Fails before mutation when validation fails.
+v3_scope_store() {
+  local rel="$1" want="$2" src kind scope source
+  if is_secret_rel "$rel"; then
+    vault_identity_ok || return 1
+    local idx blob
+    idx=$(vault_index_decrypt) || return 1
+    blob=$(vault_index_blob "$idx" "$rel")
+    [[ -n "$blob" ]] || { echo "scope: $rel is not saved in your repo yet — save it first" >&2; return 1; }
+    idx=$(jq -c --arg id "$rel" --arg scope "$want" \
+      '.secrets |= map(if .id == $id then .scope = $scope else . end)' <<<"$idx") || return 1
+    vault_index_write "$idx" || return 1
+    return 0
+  fi
+  v3_require_valid_entries || return 1
+  src=$(resolve_manifest_src "$rel") || { echo "unknown id: $rel" >&2; return 1; }
+  kind=config; is_dir_entry "$rel" && kind=dir
+  scope=$(entries_scope_for "$rel")
+  if [[ -n "$scope" ]]; then
+    source=$(jq -r --arg id "$rel" '.[$id].source // "override"' \
+      "$REPO_DIR/.replicant/entries.json" 2>/dev/null)
+    [[ "$source" == user || "$source" == override ]] || source=override
+  else
+    source=override
+  fi
+  v3_entries_upsert "$rel" "$src" "$kind" "$want" "$source" || return 1
+  return 0
 }
 
 # core_scope_bulk <scope> <id...> — apply one scope decision to every id.
@@ -414,15 +520,21 @@ core_scope_bulk() {
   done
 
   ensure_scope_file
-  while IFS= read -r line; do
-    local key="${line%%=*}"
-    key="${key//[[:space:]]/}"
-    [[ -z "${seen[$key]:-}" ]] && lines+=("$line")
-  done < <(read_scopes)
-  for id in "${ids[@]}"; do
-    [[ "$want" == shared ]] || lines+=("$id = $want")
-  done
-  write_scope_file "${lines[@]}"
+  if repo_is_v3; then
+    for id in "${ids[@]}"; do
+      v3_scope_store "$id" "$want" || return 1
+    done
+  else
+    while IFS= read -r line; do
+      local key="${line%%=*}"
+      key="${key//[[:space:]]/}"
+      [[ -z "${seen[$key]:-}" ]] && lines+=("$line")
+    done < <(read_scopes)
+    for id in "${ids[@]}"; do
+      [[ "$want" == shared ]] || lines+=("$id = $want")
+    done
+    write_scope_file "${lines[@]}"
+  fi
 
   local i
   for i in "${!ids[@]}"; do

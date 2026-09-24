@@ -23,15 +23,15 @@ printf 'my own input\n'  > "$HOME/.config/hypr/input.lua"
 source "$CORE" 2>/dev/null
 set +e +u
 
-section "a fresh repo is born v2"
+section "a fresh repo is born v3"
 core_backup >/dev/null 2>&1
-check "schema marker says version 2" "2" \
+check "schema marker says version 3" "3" \
   "$(jq -r .dataVersion "$REPO_DIR/.replicant/schema.json" 2>/dev/null)"
-check "…and names the coming secret format" "age-pq-v1" \
+check "…and names the v2 secret format" "age-pq-v2" \
   "$(jq -r .secretFormat "$REPO_DIR/.replicant/schema.json" 2>/dev/null)"
 check "the entry registry starts empty" "{}" \
   "$(jq -c . "$REPO_DIR/.replicant/entries.json" 2>/dev/null)"
-check "an empty registry loads as no rows" "" "$(load_v2_entries)"
+check "an empty registry loads as no rows" "" "$(load_v3_entries)"
 check "the repo version is recorded, so older clients will not prune it" \
   "$(running_version)" "$(repo_written_by)"
 git -C "$REPO_DIR" add -A >/dev/null 2>&1
@@ -42,7 +42,7 @@ mfile="$REPO_DIR/.replicant/machines/$MACHINE.json"
 check_true "this machine recorded itself" test -f "$mfile"
 check "…with exactly the four fields" "clientVersion machineId profile schemaVersion" \
   "$(jq -r 'keys | sort | join(" ")' "$mfile" 2>/dev/null)"
-check "…at schema version 2" "2" "$(jq -r .schemaVersion "$mfile" 2>/dev/null)"
+check "…at schema version 3" "3" "$(jq -r .schemaVersion "$mfile" 2>/dev/null)"
 check "…for this client version" "$(running_version)" "$(jq -r .clientVersion "$mfile" 2>/dev/null)"
 check "…and no path or secret ever lands in it" "0" \
   "$(grep -c -E '/home|/tmp|secret|token|key' "$mfile" || true)"
@@ -84,7 +84,7 @@ section "v1 repos keep working and gain no v2 files"
 rm -rf "$REPO_DIR/.replicant"
 section "v1 writers stop before mutation"
 guard_out=$(env -u REPLICANT_TEST_ALLOW_LEGACY_WRITES bash -c 'source "$1" 2>/dev/null; core_backup' _ "$CORE" 2>&1)
-check_contains "backup requires migration" "Migrate it before saving" "$guard_out"
+check_contains "backup requires migration" "migrate it to version 3" "$guard_out"
 check_false "tracking is blocked" env -u REPLICANT_TEST_ALLOW_LEGACY_WRITES "$CLI" track "$HOME/.config/hypr/input.lua"
 check_false "scope changes are blocked" env -u REPLICANT_TEST_ALLOW_LEGACY_WRITES bash -c 'source "$1" 2>/dev/null; core_scope hypr/input.lua off' _ "$CORE"
 check_false "secret mutations are blocked" env -u REPLICANT_TEST_ALLOW_LEGACY_WRITES bash -c 'source "$1" 2>/dev/null; core_key init' _ "$CORE"

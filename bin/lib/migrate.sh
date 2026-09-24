@@ -177,8 +177,9 @@ core_migrate_v2() {
   chmod +x "$stage/.githooks/pre-commit" "$stage/bin/scan-secrets.sh"
   migration_make_entries "$entries" || return 1
   mv -- "$entries" "$stage/.replicant/entries.json"
-  jq -nc --argjson v "$SCHEMA_VERSION" --arg f "$SCHEMA_FORMAT" \
-    '{dataVersion:$v,secretFormat:$f}' > "$stage/.replicant/schema.json"
+  # Pinned to version 2 until migrate-v3 replaces this staging in phase G3.
+  # New repositories are born v3; this path only ever stages a v2 migration.
+  jq -nc '{dataVersion:2,secretFormat:"age-pq-v1"}' > "$stage/.replicant/schema.json"
   ( umask 077; age-keygen -pq -o "$identity" >/dev/null 2>&1 ) || {
     migration_error "post-quantum identity generation failed"; rm -rf -- "$root"; return 1;
   }
@@ -191,8 +192,7 @@ core_migrate_v2() {
   }
   rm -f -- "$index_file"
   jq -nc --arg client "$(running_version)" --arg machine "$MACHINE" --arg profile "$(current_profile)" \
-    --argjson schema "$SCHEMA_VERSION" \
-    '{clientVersion:$client,machineId:$machine,profile:$profile,schemaVersion:$schema}' \
+    '{clientVersion:$client,machineId:$machine,profile:$profile,schemaVersion:2}' \
     > "$stage/.replicant/machines/$MACHINE.json"
   git -C "$stage" init -q -b main
   git -C "$stage" config user.name "${GIT_AUTHOR_NAME:-$(git config --global user.name 2>/dev/null || id -un)}"

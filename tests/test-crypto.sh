@@ -43,7 +43,7 @@ RECIPIENT="$REPO_DIR/.replicant/recipient.txt"
 
 section "key init makes one shared identity"
 core_backup >/dev/null 2>&1
-check "a fresh repo is version 2" "2" "$(repo_data_version)"
+check "a fresh repo is version 3" "3" "$(repo_data_version)"
 check_true "key init works" key_init
 check_true "the identity exists" test -f "$KEYS"
 check "…at mode 600" "600" "$(stat -c '%a' "$KEYS" 2>/dev/null)"

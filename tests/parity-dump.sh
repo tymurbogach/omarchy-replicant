@@ -4,12 +4,12 @@
 # after a refactor, the suite rebuilds the same world and diffs against them.
 #
 # Usage: parity-dump.sh <world> <outdir>
-#   world: v1 (plaintext secrets) or v2 (vault; needs age with -pq)
+#   world: v1 (plaintext secrets) or v3 (vault; needs age with -pq)
 # Everything runs against a throwaway $HOME. PATH must carry the test stubs
 # and GIT_CONFIG_GLOBAL a test identity (tests/lib.sh provides both).
 set -uo pipefail
 
-WORLD="${1:-v2}"
+WORLD="${1:-v3}"
 OUT="$2"
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CORE="$HERE/../bin/replicant-core.sh"
@@ -33,7 +33,7 @@ printf 'init.lua body\n'  > "$HOME/.config/nvim/init.lua"
 printf 'K=parity-base\n'  > "$HOME/.config/environment.d/60-secrets.conf"
 
 # A v1 world keeps its history: initializing git before the first backup means
-# no v2 skeleton is ever written. A v2 world is born fresh.
+# no skeleton is ever written. A v3 world is born fresh.
 if [[ "$WORLD" == v1 ]]; then
   mkdir -p "$OMARCHY_REPLICANT_HOME/repo"
   git -C "$OMARCHY_REPLICANT_HOME/repo" init -q -b main 2>/dev/null
@@ -49,11 +49,15 @@ git_init_remote() {
   git -C "$REPO_DIR" push -q -u origin main 2>/dev/null
 }
 
-# No legacy seeding: the seed pass copies whatever this host happens to have
-# (a fingerprint unit under /etc exists here and not in CI), so the track file
-# is pre-created empty and the world is identical on every machine.
+# No legacy seeding on the v1 world: the seed pass copies whatever this host
+# happens to have (a fingerprint unit under /etc exists here and not in CI),
+# so the track file is pre-created empty and the world is identical on every
+# machine. The v3 world needs no such file: nothing seeds it, and creating one
+# would contaminate a version 3 repository.
 mkdir -p "$REPO_DIR"
-printf '# empty on purpose: no legacy seed, no user entries\n' > "$REPO_DIR/.replicant-track"
+if [[ "$WORLD" == v1 ]]; then
+  printf '# empty on purpose: no legacy seed, no user entries\n' > "$REPO_DIR/.replicant-track"
+fi
 load_user_manifest
 
 # Before any copy: profile-scoped files land under this profile's tree, and
@@ -64,7 +68,7 @@ core_backup >/dev/null 2>&1
 git -C "$REPO_DIR" add -A >/dev/null 2>&1
 git -C "$REPO_DIR" commit -qm base >/dev/null 2>&1
 git_init_remote
-if [[ "$WORLD" == v2 ]]; then
+if [[ "$WORLD" == v3 ]]; then
   key_init >/dev/null 2>&1
   core_backup >/dev/null 2>&1
   git -C "$REPO_DIR" add -A >/dev/null 2>&1
@@ -108,7 +112,7 @@ core_diff env/60-secrets.conf 2>&1 | norm_text > "$OUT/diff-secret.txt"
 core_diff nvim/ 2>&1 | norm_text > "$OUT/diff-tree.txt"
 
 # Without the key the vault cannot be compared: same world, locked verdicts.
-if [[ "$WORLD" == v2 ]]; then
+if [[ "$WORLD" == v3 ]]; then
   mv "$REPLICANT_HOME/keys/identity.txt" "$TMP/identity.keep"
   build_secrets_json | norm_json > "$OUT/secrets-keyless.json"
   core_status --json --brief --no-fetch 2>/dev/null | norm_json > "$OUT/brief-keyless.json"

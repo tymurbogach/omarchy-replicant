@@ -56,9 +56,42 @@ ensure_repo_layout() {
       mv -- "$flat" "$STATE_DIR/$name" 2>/dev/null || true
     fi
   done
+  # git init if needed. A repo born here is born v3: the schema marks the
+  # format every writer after it must understand. The skeleton lands before
+  # the scope and track ensures below, so those gates see the marker and a
+  # fresh v3 repo never grows legacy policy files. A repo that already has
+  # history keeps whatever it has: v1 and v2 stay readable until the
+  # migrate-v3 migration, and a v3 clone only refreshes this machine's own
+  # metadata below.
+  # -e, not -d: a save transaction works in a linked worktree, whose .git is
+  # a file pointing at the main repo. Re-running init there would break it.
+  if [[ ! -e "$REPO_DIR/.git" ]]; then
+    git -C "$REPO_DIR" init -q -b main
+    git -C "$REPO_DIR" config init.defaultBranch main 2>/dev/null || true
+    # $USER is not set everywhere (a container, a systemd unit). Under set -u its
+    # absence wrote an empty identity, and every commit after it failed. Ask the
+    # system instead.
+    local who; who=$(id -un)
+    git -C "$REPO_DIR" config user.name  "${GIT_AUTHOR_NAME:-$(git config --global user.name 2>/dev/null || echo "$who")}"
+    git -C "$REPO_DIR" config user.email "${GIT_AUTHOR_EMAIL:-$(git config --global user.email 2>/dev/null || echo "$who@omarchy-replicant")}"
+    git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
+    ensure_v3_layout
+    # The tracked lists were built at source time, before this repo existed:
+    # a fallback read then may have invented entries the canonical stores do
+    # not hold. Rebuild them now, so the copy and prune passes below see the
+    # version 3 records and never copy a file nothing tracks.
+    load_user_manifest
+    load_auto_manifest
+    invalidate_scopes_cache
+  else
+    git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
+    if [[ "$(repo_data_version)" == 3 ]]; then machine_metadata_write; fi
+  fi
   ensure_scope_file
-  ensure_track_file
-  migrate_retired_shipped
+  if ! repo_is_v3; then
+    ensure_track_file
+    migrate_retired_shipped
+  fi
   record_repo_version
   mkdir -p "$REPO_DIR/profiles/$(current_profile)/config" 2>/dev/null || true
   install -d -m 700 "$SECRETS_DIR" 2>/dev/null || mkdir -p "$SECRETS_DIR"
@@ -96,38 +129,32 @@ ensure_repo_layout() {
 **/Cache/
 GI
   fi
-  # git init if needed. A repo born here is born v2: the schema marks the
-  # format every writer after it must understand. A repo that already has
-  # history keeps whatever it has: v1 stays v1 until the section 9 migration,
-  # and a v2 clone only refreshes this machine's own metadata below.
-  # -e, not -d: a save transaction works in a linked worktree, whose .git is
-  # a file pointing at the main repo. Re-running init there would break it.
-  if [[ ! -e "$REPO_DIR/.git" ]]; then
-    git -C "$REPO_DIR" init -q -b main
-    git -C "$REPO_DIR" config init.defaultBranch main 2>/dev/null || true
-    # $USER is not set everywhere (a container, a systemd unit). Under set -u its
-    # absence wrote an empty identity, and every commit after it failed. Ask the
-    # system instead.
-    local who; who=$(id -un)
-    git -C "$REPO_DIR" config user.name  "${GIT_AUTHOR_NAME:-$(git config --global user.name 2>/dev/null || echo "$who")}"
-    git -C "$REPO_DIR" config user.email "${GIT_AUTHOR_EMAIL:-$(git config --global user.email 2>/dev/null || echo "$who@omarchy-replicant")}"
-    git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
-    ensure_v2_layout
-  else
-    git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
-    if [[ "$(repo_data_version)" == 2 ]]; then machine_metadata_write; fi
-  fi
 }
 
-# ensure_v2_layout: the v2 skeleton for a repo born here: the schema marker,
+# ensure_v3_layout: the v3 skeleton for a repo born here: the schema marker,
 # an empty entry registry, and this machine's metadata. It never overwrites:
-# schema.json and entries.json belong to the migration once written.
-ensure_v2_layout() {
+# schema.json and entries.json belong to the migration once written. It never
+# creates legacy policy files: scopes live in entries.json, the profile lives
+# in the machine record, and secrets live in the encrypted vault index.
+ensure_v3_layout() {
   local rdir="$REPO_DIR/.replicant"
   mkdir -p "$rdir/machines" "$REPO_DIR/vault/blobs"
   if [[ ! -f "$rdir/schema.json" ]]; then
     jq -nc --argjson v "$SCHEMA_VERSION" --arg f "$SCHEMA_FORMAT" \
       '{dataVersion: $v, secretFormat: $f}' > "$rdir/schema.json"
+  fi
+  [[ -f "$rdir/entries.json" ]] || printf '{}\n' > "$rdir/entries.json"
+  machine_metadata_write
+}
+
+# ensure_v2_layout: the version 2 skeleton. Only the migration path and the
+# legacy parity suites use it: every fresh repo is born v3. It stays until
+# migrate-v3 replaces the version 2 staging in phase G3.
+ensure_v2_layout() {
+  local rdir="$REPO_DIR/.replicant"
+  mkdir -p "$rdir/machines" "$REPO_DIR/vault/blobs"
+  if [[ ! -f "$rdir/schema.json" ]]; then
+    jq -nc '{dataVersion: 2, secretFormat: "age-pq-v1"}' > "$rdir/schema.json"
   fi
   [[ -f "$rdir/entries.json" ]] || printf '{}\n' > "$rdir/entries.json"
   machine_metadata_write

@@ -205,25 +205,25 @@ why: a plugin installed after the last save is not called recorded
 ---
 file: bin/lib/schema.sh
 suite: test-schema.sh
-from:     2) return 0 ;;
-to:     2|99) return 0 ;;
+from:     1|2)
+to:     1|2|99)
 why: a newer data format blocks writes
 ---
 file: bin/lib/schema.sh
 suite: test-schema.sh
-from:   v=$(jq -r '.dataVersion // empty' "$file" 2>/dev/null || true)
+from:   v=$(jq -r '.dataVersion | if type == "number" then tostring else empty end' "$file" 2>/dev/null || true)
 to:   v=1
 why: the write gate reads the version from the schema file
 ---
 file: bin/lib/layout.sh
 suite: test-schema.sh
-from:     ensure_v2_layout
+from:     ensure_v3_layout
 to:     :
-why: a fresh repo is born v2
+why: a fresh repo is born v3
 ---
 file: bin/lib/schema.sh
 suite: test-schema.sh
-from:   dups=$(_v2_top_keys "$file" | sort | uniq -d)
+from:   dups=$(_schema_top_keys "$file" | sort | uniq -d)
 to:   dups=
 why: a duplicate entry id is rejected
 ---
@@ -259,9 +259,9 @@ why: rotation re-encrypts every blob from readable plaintext
 ---
 file: bin/lib/crypto.sh
 suite: test-crypto.sh
-from:   [[ "$(repo_data_version)" == 2 ]] || {
+from:   [[ "$(repo_data_version)" == 3 ]] || {
 to:   :
-why: key init refuses a version 1 repo
+why: key init refuses a repo older than version 3
 ---
 file: bin/lib/status.sh
 suite: test-crypto.sh

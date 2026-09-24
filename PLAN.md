@@ -129,36 +129,36 @@
     ]
   }
 
-  - [ ] Make v3 the only writable repository version.
-  - [ ] Keep v1 and v2 readable for inspection and migration.
-  - [ ] Move legacy readers into a migration-only module.
-  - [ ] Stop creating .replicant-track, .replicant-sync, and .replicant-profiles.
-  - [ ] Retain .replicant-version as the old-client prune guard.
-  - [ ] Store the active profile only in the current machine JSON record.
-  - [ ] Validate machine IDs before constructing paths.
-  - [ ] Validate every entries record before use.
-  - [ ] Validate every decrypted vault index before use.
-  - [ ] Reject duplicate IDs, paths, blobs, and secret paths.
-  - [ ] Reject control characters and path traversal.
-  - [ ] Reject invalid kinds, scopes, sources, and blob identifiers.
-  - [ ] Reject legacy policy files inside a v3 repository.
-  - [ ] Fail before mutation when validation fails.
-  - [ ] Build the registry from validated canonical records.
-  - [ ] Preserve shipped defaults without explicit overrides.
-  - [ ] Discover custom secrets directly from the encrypted index.
-  - [ ] Remove duplicate scope and profile resolution paths.
+  - [x] Make v3 the only writable repository version.
+  - [x] Keep v1 and v2 readable for inspection and migration.
+  - [x] Move legacy readers into a migration-only module.
+  - [x] Stop creating .replicant-track, .replicant-sync, and .replicant-profiles.
+  - [x] Retain .replicant-version as the old-client prune guard.
+  - [x] Store the active profile only in the current machine JSON record.
+  - [x] Validate machine IDs before constructing paths.
+  - [x] Validate every entries record before use.
+  - [x] Validate every decrypted vault index before use.
+  - [x] Reject duplicate IDs, paths, blobs, and secret paths.
+  - [x] Reject control characters and path traversal.
+  - [x] Reject invalid kinds, scopes, sources, and blob identifiers.
+  - [x] Reject legacy policy files inside a v3 repository.
+  - [x] Fail before mutation when validation fails.
+  - [x] Build the registry from validated canonical records.
+  - [x] Preserve shipped defaults without explicit overrides.
+  - [x] Discover custom secrets directly from the encrypted index.
+  - [x] Remove duplicate scope and profile resolution paths.
 
   Tests:
 
-  - [ ] Create and validate an empty v3 repository.
-  - [ ] Reject each malformed schema field.
-  - [ ] Reject duplicate JSON keys before jq collapses them.
-  - [ ] Track, save, reload, and untrack a custom secret.
-  - [ ] Change an entry scope and reload the registry.
-  - [ ] Restore the original scope and verify zero pending changes.
-  - [ ] Change a profile and reload machine metadata.
-  - [ ] Verify that fresh v3 repositories contain no legacy policy files.
-  - [ ] Reject writes after simulated legacy-file contamination.
+  - [x] Create and validate an empty v3 repository.
+  - [x] Reject each malformed schema field.
+  - [x] Reject duplicate JSON keys before jq collapses them.
+  - [x] Track, save, reload, and untrack a custom secret.
+  - [x] Change an entry scope and reload the registry.
+  - [x] Restore the original scope and verify zero pending changes.
+  - [x] Change a profile and reload machine metadata.
+  - [x] Verify that fresh v3 repositories contain no legacy policy files.
+  - [x] Reject writes after simulated legacy-file contamination.
 
   Gate and commit:
 

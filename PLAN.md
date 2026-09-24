@@ -288,36 +288,36 @@
 
   ## Phase G5: Status, Bulk Operations, and Settings
 
-  - [ ] Exclude implicit entries missing from live and repository state.
-  - [ ] Keep explicitly tracked missing entries visible.
-  - [ ] Derive full and brief counts from one state model.
-  - [ ] Assert full and brief count equality for identical snapshots.
-  - [ ] Return saved: null for locked secrets.
-  - [ ] Include vault index changes in secret unpushed state.
-  - [ ] Rebuild status after every successful mutation.
-  - [ ] Fix newline, tab, and carriage-return validation.
-  - [ ] Measure total directory bytes before bulk tracking.
-  - [ ] Enforce the 10 MiB threshold for files and directories.
-  - [ ] Preserve the 400-file hard limit.
-  - [ ] Warn above 100 directory files.
-  - [ ] Reject .git files and directories.
-  - [ ] Detect binary content by encoding.
-  - [ ] Permit textual JSON, scripts, and application MIME types.
-  - [ ] Implement successful v3 bulk secret workflows.
-  - [ ] Make settings save only their owning entries.
-  - [ ] Preserve unrelated pending changes.
-  - [ ] Report when a local setting change was not persisted.
-  - [ ] Provide the exact retry command.
+  - [x] Exclude implicit entries missing from live and repository state.
+  - [x] Keep explicitly tracked missing entries visible.
+  - [x] Derive full and brief counts from one state model.
+  - [x] Assert full and brief count equality for identical snapshots.
+  - [x] Return saved: null for locked secrets.
+  - [x] Include vault index changes in secret unpushed state.
+  - [x] Rebuild status after every successful mutation.
+  - [x] Fix newline, tab, and carriage-return validation.
+  - [x] Measure total directory bytes before bulk tracking.
+  - [x] Enforce the 10 MiB threshold for files and directories.
+  - [x] Preserve the 400-file hard limit.
+  - [x] Warn above 100 directory files.
+  - [x] Reject .git files and directories.
+  - [x] Detect binary content by encoding.
+  - [x] Permit textual JSON, scripts, and application MIME types.
+  - [x] Implement successful v3 bulk secret workflows.
+  - [x] Make settings save only their owning entries.
+  - [x] Preserve unrelated pending changes.
+  - [x] Report when a local setting change was not persisted.
+  - [x] Provide the exact retry command.
 
   Tests:
 
-  - [ ] Test every status state.
-  - [ ] Test full and brief count parity.
-  - [ ] Test large files, trees, binaries, and .git artifacts.
-  - [ ] Test every bulk action.
-  - [ ] Test remote rejection and concurrent bulk operations.
-  - [ ] Test settings persistence failures.
-  - [ ] Verify that settings never save unrelated entries.
+  - [x] Test every status state.
+  - [x] Test full and brief count parity.
+  - [x] Test large files, trees, binaries, and .git artifacts.
+  - [x] Test every bulk action.
+  - [x] Test remote rejection and concurrent bulk operations.
+  - [x] Test settings persistence failures.
+  - [x] Verify that settings never save unrelated entries.
 
   Gate and commit:
 

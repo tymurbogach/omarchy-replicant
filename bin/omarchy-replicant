@@ -426,14 +426,42 @@ cmd_get() {
   get_setting_value "$id" || fail "unknown or unreadable setting: $id"
 }
 
+# Persist a setting through its owning entry, not every tracked file. A failed
+# push can still leave a local commit, so check the saved value before we say
+# that the setting was not saved and print the matching retry command.
+cmd_save_setting() {
+  local id="$1" value="$2" subject="$3" owner rc=0 saved=false
+  local setting_entry setting_file
+  local -a save_args=()
+  if ! owner=$(setting_save_id "$id"); then
+    setting_entry=$(find_setting "$id") || return 1
+    setting_file=$(setting_field "$setting_entry" 3)
+    printf 'The setting changed on this machine but has no tracked entry. Retry: omarchy-replicant track %q && omarchy-replicant set %q %q\n' \
+      "$setting_file" "$id" "$value" >&2
+    return 1
+  fi
+  save_args=(--id "$owner")
+  cmd_save "${save_args[@]}" -m "$subject" || rc=$?
+  (( rc == 0 )) && return 0
+
+  setting_value_saved "$id" "$value" && saved=true
+  if [[ "$saved" == true ]]; then
+    echo "The setting is saved locally, but the push failed. Retry: omarchy-replicant push" >&2
+  else
+    printf 'The setting changed on this machine but was not saved. Retry: omarchy-replicant save --id %q -m %q\n' \
+      "$owner" "$subject" >&2
+  fi
+  return "$rc"
+}
+
 cmd_set() {
   local id="${1:-}" value="${2:-}"
   [[ -n "$id" && -n "$value" ]] || fail "usage: set <setting-id> <value>"
   load_core
   set_setting_value "$id" "$value" || fail "could not set $id"
-  # this is a real decision (a value you chose), so it gets its own commit —
-  # same "one commit per decision, with the why" rule as a manual edit
-  cmd_save --all -m "config: $id = $value"
+  # This is a real decision, so its owner gets one reasoned commit. Other live
+  # files remain pending until their own save action.
+  cmd_save_setting "$id" "$value" "config: $id = $value"
 }
 
 # save-file — commit and push exactly one tracked file. The panel's per-file
@@ -728,9 +756,11 @@ cmd_revert() {
   [[ -n "$id" ]] || fail "usage: omarchy-replicant revert <setting-id> [--to default|repo]"
   load_core
   core_revert "$id" "$to" || exit 1
-  # Committed the same way as `set`. This used to stage only config/, so the
-  # revert of a setting whose file is kept per profile was never committed.
-  if [[ -d "$REPO_DIR/.git" ]]; then cmd_save --all -m "revert: $id -> $to"; fi
+  if [[ -d "$REPO_DIR/.git" ]]; then
+    local value
+    value=$(get_setting_value "$id") || exit 1
+    cmd_save_setting "$id" "$value" "revert: $id -> $to"
+  fi
 }
 
 # cmd_restore_file <id> — bring one tracked file back from the repo, backed up

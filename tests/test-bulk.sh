@@ -54,9 +54,54 @@ check "tracking creates one commit" "1" "$(git -C "$REPO" log --format=%s "$befo
 section "bulk rejects unsafe trees before mutation"
 printf '\0binary\n' > "$HOME/.config/binary.conf"
 before=$(git -C "$REPO" rev-parse HEAD)
+check_false "the bulk validator detects binary encoding" \
+  bulk_validate_track_path "$HOME/.config/binary.conf" config
 check_false "binary secret is rejected" "$CLI" bulk track --kind secret --yes -- "$HOME/.config/alpha.conf" "$HOME/.config/binary.conf"
 check "binary rejection leaves HEAD unchanged" "$before" "$(git -C "$REPO" rev-parse HEAD)"
 check "binary rejection leaves tracking unchanged" "2" "$(grep -Ec 'alpha.conf|beta.conf' "$REPO/.replicant-track")"
+
+section "bulk rejects control characters in paths"
+for control in $'\n' $'\t' $'\r'; do
+  bad_path="$HOME/.config/control${control}name.conf"
+  printf 'plain text\n' > "$bad_path"
+  check_false "path with control byte is rejected" \
+    "$CLI" bulk track --kind config --yes -- "$bad_path"
+done
+
+section "bulk accepts textual application MIME content"
+printf '{"name":"replicant"}\n' > "$HOME/.config/settings.json"
+printf '#!/bin/sh\nprintf ok\\n\n' > "$HOME/.config/tool.sh"
+check_true "textual JSON is accepted" \
+  "$CLI" bulk track --kind config --yes -- "$HOME/.config/settings.json"
+check_true "a text script is accepted" \
+  "$CLI" bulk track --kind config --yes -- "$HOME/.config/tool.sh"
+
+section "bulk measures the total tree size"
+mkdir -p "$HOME/.config/large-tree"
+head -c 5767168 /dev/zero | tr '\0' x > "$HOME/.config/large-tree/one.txt"
+head -c 5767168 /dev/zero | tr '\0' x > "$HOME/.config/large-tree/two.txt"
+check_false "a tree over 10 MiB needs allow-large" \
+  "$CLI" bulk track --kind config --yes -- "$HOME/.config/large-tree"
+check_true "allow-large accepts a large tree" \
+  "$CLI" bulk track --kind config --yes --allow-large -- "$HOME/.config/large-tree"
+
+section "bulk warns above 100 files and rejects git files"
+mkdir -p "$HOME/.config/many-files"
+for i in $(seq 1 101); do printf '%s\n' "$i" > "$HOME/.config/many-files/$i.txt"; done
+many_output=$("$CLI" bulk track --kind config --yes -- "$HOME/.config/many-files" 2>&1)
+check_contains "a 101-file tree emits its warning" "more than 100 files" "$many_output"
+mkdir -p "$HOME/.config/gitfile-tree/.git-parent"
+printf 'gitdir: ../.git\n' > "$HOME/.config/gitfile-tree/.git"
+check_false "a .git file inside a tree is rejected" \
+  "$CLI" bulk track --kind config --yes -- "$HOME/.config/gitfile-tree"
+printf 'git metadata\n' > "$HOME/.config/gitfile-tree/.git"
+check_false "a single .git file is rejected" \
+  "$CLI" bulk track --kind config --yes -- "$HOME/.config/gitfile-tree/.git"
+ln -s "$HOME/.config/alpha.conf" "$HOME/.config/alpha-link.conf"
+check_false "the bulk validator rejects a symlink path" \
+  bulk_validate_track_path "$HOME/.config/alpha-link.conf" config
+check_false "a symlink path is rejected" \
+  "$CLI" bulk track --kind config --yes -- "$HOME/.config/alpha-link.conf"
 
 mkdir -p "$HOME/.config/nested-repo/.git"
 before=$(git -C "$REPO" rev-parse HEAD)
@@ -66,6 +111,8 @@ check "nested repository leaves HEAD unchanged" "$before" "$(git -C "$REPO" rev-
 mkdir -p "$HOME/.config/too-many"
 for i in $(seq 1 401); do printf '%s\n' "$i" > "$HOME/.config/too-many/$i.conf"; done
 before=$(git -C "$REPO" rev-parse HEAD)
+check_false "the bulk validator enforces its 400-file limit" \
+  bulk_validate_track_path "$HOME/.config/too-many" config
 check_false "trees over 400 files are rejected" "$CLI" bulk track --kind config --yes -- "$HOME/.config/too-many"
 check "large tree rejection leaves HEAD unchanged" "$before" "$(git -C "$REPO" rev-parse HEAD)"
 
@@ -91,5 +138,20 @@ check_false "mixed user and shipped entries are rejected" "$CLI" bulk untrack --
 check "rejected untrack leaves list unchanged" "2" "$(grep -Ec 'alpha.conf|beta.conf' "$REPO/.replicant-track")"
 check_true "user entries untrack together" "$CLI" bulk untrack --yes -- alpha.conf beta.conf
 check "untrack creates one commit" "1" "$(git -C "$REPO" log --format=%s "$before"..HEAD | grep -c '^bulk: untrack 2 entries$')"
+
+section "bulk keeps the active repo unchanged when the remote rejects"
+remote="$TMP/remote.git"
+git init --bare -q -b main "$remote"
+git -C "$REPO" remote add origin "$remote"
+git -C "$REPO" push -q -u origin main
+mkdir -p "$remote/hooks"
+printf '#!/bin/sh\nexit 1\n' > "$remote/hooks/pre-receive"
+chmod +x "$remote/hooks/pre-receive"
+printf 'rejected bulk\n' > "$HOME/.config/rejected.conf"
+before=$(git -C "$REPO" rev-parse HEAD)
+reject_out=$("$CLI" bulk track --kind config --yes -- "$HOME/.config/rejected.conf" 2>&1); reject_rc=$?
+(( reject_rc != 0 )) && t_ok "a rejected bulk push fails" || t_bad "a rejected bulk push fails"
+check "remote rejection leaves active HEAD unchanged" "$before" "$(git -C "$REPO" rev-parse HEAD)"
+check_contains "remote rejection names the retained transaction" "transaction" "$reject_out"
 
 summary

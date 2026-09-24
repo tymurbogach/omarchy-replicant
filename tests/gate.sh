@@ -200,7 +200,52 @@ gate_g4() {
   if "$HERE/test-save.sh" >/dev/null 2>&1; then ok "save suite still passes"; else bad "save suite fails"; fi
   if "$HERE/test-bulk.sh" >/dev/null 2>&1; then ok "bulk suite still passes"; else bad "bulk suite fails"; fi
 }
-gate_g5() { section "G5 status gate"; bad "G5 is not implemented yet"; }
+gate_g5() {
+  section "G5 status, bulk and settings gate"
+  "$HERE/coverage-check.sh" >/dev/null 2>&1 && ok "coverage manifest is complete" || bad "coverage manifest is incomplete"
+  grep -Fq 'if [[ "$source" == manifest || "$source" == auto ]]' "$ROOT/bin/lib/status.sh" 2>/dev/null \
+    && ok "implicit missing entries are excluded from full status" \
+    || bad "full status does not exclude implicit missing entries"
+  grep -q 'savedKnown:($r\[19\]|flag)' "$ROOT/bin/lib/status.sh" 2>/dev/null \
+    && ok "locked secret persistence is represented as unknown" \
+    || bad "savedKnown is missing from the status contract"
+  grep -q 'path_unpushed "vault/index.age"' "$ROOT/bin/lib/state.sh" 2>/dev/null \
+    && ok "vault index changes reach secret state" \
+    || bad "secret state ignores vault index changes"
+  grep -q 'gitdirty' "$ROOT/bin/lib/incoming.sh" 2>/dev/null \
+    && ok "full and brief unsaved counts include uncommitted copies" \
+    || bad "brief count state omits uncommitted copies"
+  grep -q 'more than 400 files' "$ROOT/bin/lib/bulk.sh" 2>/dev/null \
+    && ok "bulk preserves the 400-file hard limit" \
+    || bad "bulk has no 400-file hard limit"
+  grep -q 'more than 100 files' "$ROOT/bin/lib/bulk.sh" 2>/dev/null \
+    && ok "bulk warns above 100 files" \
+    || bad "bulk has no 100-file warning"
+  grep -q 'bytes > BULK_LARGE_LIMIT_BYTES' "$ROOT/bin/lib/bulk.sh" 2>/dev/null \
+    && ok "bulk measures total directory bytes" \
+    || bad "bulk does not measure total directory bytes"
+  if grep -Fq 'type d -o -type f' "$ROOT/bin/lib/bulk.sh" 2>/dev/null && grep -Fq -- '-name .git' "$ROOT/bin/lib/bulk.sh" 2>/dev/null; then
+    ok "bulk rejects .git files and directories"
+  else
+    bad "bulk does not reject .git files and directories"
+  fi
+  grep -q 'bulk_require_text_encoding' "$ROOT/bin/lib/bulk.sh" 2>/dev/null \
+    && ok "bulk checks content encoding" \
+    || bad "bulk does not check content encoding"
+  grep -q 'setting_save_id' "$ROOT/bin/lib/settings.sh" 2>/dev/null \
+    && grep -q 'cmd_save_setting' "$ROOT/bin/omarchy-replicant" 2>/dev/null \
+    && ok "settings save through their owning entry" \
+    || bad "settings still save all entries"
+  grep -q 'changed on this machine but was not saved' "$ROOT/bin/omarchy-replicant" 2>/dev/null \
+    && grep -q 'Retry: omarchy-replicant push' "$ROOT/bin/omarchy-replicant" 2>/dev/null \
+    && ok "settings report persistence and push retries" \
+    || bad "settings do not report exact retry commands"
+  if "$HERE/test-state.sh" >/dev/null 2>&1; then ok "state parity suite passes"; else bad "state parity suite fails"; fi
+  if "$HERE/test-bulk.sh" >/dev/null 2>&1; then ok "bulk validation suite passes"; else bad "bulk validation suite fails"; fi
+  if "$HERE/test-bulk-v3.sh" >/dev/null 2>&1; then ok "v3 bulk secret suite passes"; else bad "v3 bulk secret suite fails"; fi
+  if "$HERE/test-settings.sh" >/dev/null 2>&1; then ok "settings unit suite passes"; else bad "settings unit suite fails"; fi
+  if "$HERE/test-settings-save.sh" >/dev/null 2>&1; then ok "settings persistence suite passes"; else bad "settings persistence suite fails"; fi
+}
 gate_g6() { section "G6 secret restore gate"; bad "G6 is not implemented yet"; }
 gate_g7() { section "G7 controller gate"; bad "G7 is not implemented yet"; }
 gate_g8() { section "G8 release gate"; bad "G8 is not implemented yet"; }

@@ -675,12 +675,50 @@ setting_default_value() {
 # The value saved in the user's own repo — "what my other machine has".
 setting_repo_value() {
   local entry; entry=$(find_setting "$1") || return 1
-  local file rel copy
+  local file type rel copy
   file=$(setting_field "$entry" 3)
+  type=$(setting_field "$entry" 5)
+  [[ "$type" == theme ]] && file="$HOME/.local/state/omarchy/current/theme.name"
   [[ "$file" != "-" ]] || return 1
   rel=$(rel_for_src "$file") || return 1
   copy=$(repo_copy_for_rel "$rel")
+  if [[ "$type" == theme ]]; then
+    head -n1 "$copy" 2>/dev/null | tr -d '\r'
+    return "${PIPESTATUS[0]}"
+  fi
   read_setting_from "$entry" "$copy"
+}
+
+# setting_save_id <id>: the one tracked entry that owns this setting's file.
+# The active theme uses its tracked theme-name file. Other settings use the
+# registry's live-path mapping, which also resolves profile-scoped copies.
+setting_save_id() {
+  local entry type file rel row
+  entry=$(find_setting "$1") || return 1
+  type=$(setting_field "$entry" 5)
+  file=$(setting_field "$entry" 3)
+  [[ "$type" == theme ]] && file="$HOME/.local/state/omarchy/current/theme.name"
+  [[ "$file" != "-" ]] || return 1
+  rel=$(rel_for_src "$file") || return 1
+  registry_build || return 1
+  row=$(registry_row_for "$rel") || return 1
+  [[ "$(registry_field "$row" 2)" == config ]] || return 1
+  printf '%s\n' "$rel"
+}
+
+setting_value_saved() {
+  local entry type live repo live_norm repo_norm
+  entry=$(find_setting "$1") || return 1
+  type=$(setting_field "$entry" 5)
+  repo=$(setting_repo_value "$1") || return 1
+  live="$2"
+  if [[ "$type" == theme ]]; then
+    live_norm=$(tr -cd '[:alnum:]' <<<"${live,,}")
+    repo_norm=$(tr -cd '[:alnum:]' <<<"${repo,,}")
+    [[ -n "$live_norm" && "$live_norm" == "$repo_norm" ]]
+  else
+    [[ "$repo" == "$live" ]]
+  fi
 }
 
 # core_revert <id> <default|repo> — put one setting back without touching the

@@ -169,31 +169,43 @@ build_entries_json() {
       elif [[ "$exists" == true && "$kind" != secret ]]; then
         size=$(stat -c '%s' -- "$live" 2>/dev/null || echo 0)
       fi
-      # state_eval cannot inspect an encrypted index without the key. The
-      # index itself still proves that a locked v2 secret has a saved copy.
-      saved="${vf[10]}"
-      if [[ "$kind" == secret && "$locked" == true && -f "$REPO_DIR/vault/index.age" ]]; then
-        saved=true
+      # An implicit row missing from both sides draws no row: a shipped entry
+      # this machine never had, and the repo never held, is not a row worth
+      # drawing, and the brief counts never counted it either. Explicit user
+      # and override rows always show: "it was here and now it is not" must
+      # not be hidden.
+      if [[ "$source" == manifest || "$source" == auto ]] && [[ "$exists" == false && "${vf[10]}" == false ]]; then
+        continue
+      fi
+      # A locked secret has unknown persistence: the vault cannot be read, so
+      # no byte comparison proves anything. The JSON carries null, never a
+      # guess, with savedKnown saying so.
+      saved="${vf[10]}"; saved_known=true
+      if [[ "$kind" == secret && "$locked" == true ]]; then
+        saved=""; saved_known=false
       fi
       label="$id"
       [[ "$source" == auto ]] && label="${AUTO_LABEL[$id]:-$id}"
       mapped_source=user
       [[ "$source" != user ]] && mapped_source=override
-      printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+      printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
         "$id" "$label" "$live" "$kind" "$mapped_source" "$category" "$scope" \
         "$exists" "$saved" "$is_default" "$dirty" "$unpushed" "$incoming" "$sync_state" \
-        "$is_dir" "$nfiles" "$size" "$locked" "$REMOTE_STATE"
+        "$is_dir" "$nfiles" "$size" "$locked" "$REMOTE_STATE" "$saved_known"
     done
   } | jq -Rsc '
     def flag: . == "true";
     def row:
       split("\u001f") as $r |
       {id:$r[0], label:$r[1], src:$r[2], kind:$r[3], source:$r[4], category:$r[5],
-       scope:$r[6], exists:($r[7]|flag), saved:($r[8]|flag), is_default:($r[9]|flag),
-       dirty:($r[10]|flag), unpushed:($r[11]|flag), incoming:($r[12]|flag),
-       sync_state:$r[13], is_dir:($r[14]|flag), nfiles:(($r[15]|tonumber?) // 0),
-       size:(($r[16]|tonumber?) // 0), locked:(($r[17]|flag) or $r[13] == "locked"),
-       remote_state:$r[18]}
+        scope:$r[6], exists:($r[7]|flag),
+        saved:(if $r[8] == "" then null elif ($r[8]|flag) then true else false end),
+        savedKnown:($r[19]|flag),
+        is_default:($r[9]|flag),
+        dirty:($r[10]|flag), unpushed:($r[11]|flag), incoming:($r[12]|flag),
+        sync_state:$r[13], is_dir:($r[14]|flag), nfiles:(($r[15]|tonumber?) // 0),
+        size:(($r[16]|tonumber?) // 0), locked:(($r[17]|flag) or $r[13] == "locked"),
+        remote_state:$r[18]}
       | if .kind == "secret" and .locked then del(.src) else . end;
     split("\n") | map(select(length > 0 and . != "false") | row)'
 }

@@ -83,11 +83,12 @@ count_changes() {
     mapfile -t rf < <(row_split "$regrow" 9)
     scope="${rf[4]}"
     [[ "$scope" == "off" ]] && continue
-    live=false; same=false; member=false; locked=false; repo=false
+    live=false; same=false; member=false; locked=false; repo=false; gitdirty=false
     while IFS='=' read -r k v; do
       case "$k" in
         live) live="$v" ;; same) same="$v" ;; repo) repo="$v" ;;
         incoming) member="$v" ;; locked) locked="$v" ;;
+        git_dirty) gitdirty="$v" ;;
       esac
     done < <(state_facts "$regrow")
     if [[ "$locked" == true ]]; then n_locked=$(( n_locked + 1 )); continue; fi
@@ -97,10 +98,11 @@ count_changes() {
       [[ "$repo" == true ]] && n_missing=$(( n_missing + 1 ))
       continue
     fi
-    # Exclusive, exactly as the badge precedence is: a file the repo has a newer
-    # copy of is asking for Restore, not for Save, and counting it in both
-    # totals put the same file behind two contradictory buttons.
-    [[ "$same" == true ]] && continue
+    # Unsaved is either half, exactly as the badge precedence is: content that
+    # differs, or a repo copy that is not committed yet. A file the repo has a
+    # newer copy of is asking for Restore, not for Save, and counting it in
+    # both totals put the same file behind two contradictory buttons.
+    [[ "$same" == false || "$gitdirty" == true ]] || continue
     if [[ "$member" == true ]]; then n_incoming=$(( n_incoming + 1 ))
     else n_unsaved=$(( n_unsaved + 1 )); fi
   done

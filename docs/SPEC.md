@@ -255,15 +255,18 @@ commits arrive knows which one is right, so that moment writes it down.
   first push. It says what happened: pushed, no remote, held with `--no-push`, or failed.
 - A failed push exits 1. With two machines on one repo, a push that another machine beat is the
   normal case, and the answer is to pull and save again. The next save retries the push.
-- `set` and `revert` commit through `save --all -m`, which commits every pending file together with the
-  setting. That is intended. `scope`, `track` and `untrack` commit only their own paths.
+- `set` and `revert` save only the registry entry that owns the setting. Other live edits stay out of
+  that commit. If persistence fails, the CLI prints the exact save or push command to retry.
+- `scope`, `track` and `untrack` commit only their own paths.
 - `policy set --scope <scope> -- <id...>` validates the complete selection before it changes
   `.replicant-sync`. It changes all selected scopes together and commits the repository shape once.
   Entry type conversion uses a separate command and never happens through this scope operation.
 - `bulk save|scope|track|convert-secret|untrack` applies one validated selection in one transaction.
   Tracking requires confirmation. Destructive scope changes and type conversion require `--yes`.
-  Files larger than 10 MiB require `--allow-large`; `BULK_LARGE_LIMIT_BYTES` changes that threshold.
-  Secret operations require a version 2 repository and a valid local identity.
+  Files and trees larger than 10 MiB require `--allow-large`; `BULK_LARGE_LIMIT_BYTES` changes that
+  threshold. A tree can hold at most 400 files, and the CLI warns above 100. Bulk tracking rejects
+  `.git` files and directories, and it accepts text based on file encoding rather than MIME type.
+  Secret operations require a version 3 repository and a valid local identity.
 - A lock (`flock` on `~/.local/share/omarchy-replicant/.replicant.lock`) serialises every command
   that writes, key init, import, rotate and export included. `undo`, `backups`, `purge` and `recover`
   take it only when they apply, because a dry run must not create the lock file.
@@ -336,6 +339,10 @@ commits arrive knows which one is right, so that moment writes it down.
 - Full `status --json` carries `schema_version: 2` and one `entries` array. Each entry carries
   `id`, `label`, `kind`, `source`, `category`, `scope`, `exists`, `saved`, `is_default`, `dirty`,
   `unpushed`, `incoming`, `sync_state`, `is_dir`, `nfiles` and `locked`. A locked secret omits `src`.
+- A locked secret carries `saved: null` and `savedKnown: false`, because the client cannot inspect the
+  encrypted index. Other entries carry a boolean `saved` and `savedKnown: true`.
+- Full and brief status derive their unsaved, incoming, locked and missing counts from the same entry
+  state. Full status excludes implicit entries that are absent on the machine and in the repo.
 - The full payload also carries `counts`, `encryption` and `migration`. The old `configs` and
   `secrets` arrays remain for one compatibility release. The brief payload keeps its small shape.
 - `source` is `user` for a personal entry and `override` for shipped, discovered or v2 override

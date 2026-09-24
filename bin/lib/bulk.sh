@@ -4,6 +4,29 @@
 # the active repository.
 BULK_LARGE_LIMIT_BYTES="${BULK_LARGE_LIMIT_BYTES:-10485760}"
 
+bulk_tree_find0() {
+  local root="${1%/}" exclude
+  local -a prune=()
+  for exclude in "${TREE_EXCLUDES[@]}"; do
+    prune+=(-name "$exclude" -o)
+  done
+  find -H "$root" \( "${prune[@]}" -false \) -prune -o -type f -print0 2>/dev/null
+}
+
+bulk_require_text_encoding() {
+  local path="$1" encoding
+  encoding=$(file --brief --mime-encoding -- "$path" 2>/dev/null) || {
+    echo "bulk: cannot detect the file encoding: $path" >&2
+    return 1
+  }
+  case "$encoding" in
+    binary|unknown|unknown-8bit)
+      echo "bulk: binary files are not trackable: $path" >&2
+      return 1
+      ;;
+  esac
+}
+
 bulk_require_ids() {
   local id
   (( $# > 0 )) || { echo "bulk: no entries selected" >&2; return 1; }
@@ -33,41 +56,63 @@ bulk_validate_scope() {
 }
 
 bulk_validate_track_path() {
-  local path="$1" kind="${2:-config}" real count
+  local path="$1" kind="${2:-config}" candidate real count bytes=0 file file_size
   [[ "$kind" == config || "$kind" == secret ]] || { echo "bulk: invalid tracking kind: $kind" >&2; return 1; }
-  case "$path" in -*|*\$'\n'*|*\$'\t'*) echo "bulk: invalid path" >&2; return 1 ;; esac
-  real="${path/#\~/$HOME}"
-  [[ "$real" == /* ]] || real="$PWD/$real"
-  real=$(realpath -m -- "$real")
+  case "$path" in -*|*$'\n'*|*$'\t'*|*$'\r'*) echo "bulk: invalid path" >&2; return 1 ;; esac
+  [[ "$BULK_LARGE_LIMIT_BYTES" =~ ^[0-9]+$ ]] || {
+    echo "bulk: BULK_LARGE_LIMIT_BYTES must be a non-negative integer" >&2
+    return 1
+  }
+  candidate="${path/#\~/$HOME}"
+  [[ "$candidate" == /* ]] || candidate="$PWD/$candidate"
+  [[ ! -L "${candidate%/}" ]] || { echo "bulk: symlinks are not trackable: $path" >&2; return 1; }
+  real=$(realpath -m -- "$candidate")
   [[ "$real" != "$REPLICANT_HOME" && "$real" != "$REPLICANT_HOME/"* ]] || {
     echo "bulk: paths inside the data repository are not trackable: $path" >&2; return 1; }
+  [[ "$(basename -- "$real")" != .git ]] || {
+    echo "bulk: .git files and directories are not trackable: $path" >&2
+    return 1
+  }
   [[ -e "${real%/}" ]] || { echo "bulk: path does not exist: $path" >&2; return 1; }
   [[ ! -L "${real%/}" ]] || { echo "bulk: symlinks are not trackable: $path" >&2; return 1; }
   [[ -f "${real%/}" || -d "${real%/}" ]] || { echo "bulk: path is not a file or directory: $path" >&2; return 1; }
   [[ -r "${real%/}" ]] || { echo "bulk: path is not readable: $path" >&2; return 1; }
   if [[ -d "${real%/}" ]]; then
+    if find "${real%/}" -xdev \( -type d -o -type f \) -name .git -print -quit 2>/dev/null | grep -q .; then
+      echo "bulk: .git files and directories are not trackable: $path" >&2
+      return 1
+    fi
     if find "${real%/}" -xdev ! -readable -print -quit 2>/dev/null | grep -q .; then
       echo "bulk: directory contains unreadable files: $path" >&2; return 1
-    fi
-    if find "${real%/}" -xdev -type d -name .git -print -quit 2>/dev/null | grep -q .; then
-      echo "bulk: nested repositories are not trackable: $path" >&2; return 1
     fi
     if find "${real%/}" -xdev \( -type s -o -type b -o -type c -o -type p -o -type l \) -print -quit 2>/dev/null | grep -q .; then
       echo "bulk: trees with special files or symlinks are not trackable: $path" >&2; return 1
     fi
-    count=$(find "${real%/}" -xdev -type f 2>/dev/null | wc -l)
+    count=0
+    while IFS= read -r -d '' file; do
+      count=$((count + 1))
+      file_size=$(stat -c '%s' -- "$file" 2>/dev/null) || {
+        echo "bulk: cannot measure file size: $file" >&2
+        return 1
+      }
+      bytes=$((bytes + file_size))
+      bulk_require_text_encoding "$file" || return 1
+    done < <(bulk_tree_find0 "${real%/}")
     (( count <= 400 )) || { echo "bulk: directory contains more than 400 files: $path" >&2; return 1; }
-    if find "${real%/}" -xdev -type f -exec file --brief --mime-type -- {} + 2>/dev/null | grep -q '^application/'; then
-      echo "bulk: binary files are not trackable: $path" >&2; return 1
+    (( count > 100 )) && echo "bulk: warning: directory contains more than 100 files: $path" >&2
+    if (( bytes > BULK_LARGE_LIMIT_BYTES )) && [[ "${BULK_ALLOW_LARGE:-0}" != 1 ]]; then
+      echo "bulk: directory exceeds 10 MiB total; use --allow-large: $path" >&2
+      return 1
     fi
   else
-    count=$(stat -c '%s' -- "${real%/}" 2>/dev/null || echo 0)
+    count=$(stat -c '%s' -- "${real%/}" 2>/dev/null) || {
+      echo "bulk: cannot measure file size: $path" >&2
+      return 1
+    }
     if (( count > BULK_LARGE_LIMIT_BYTES )) && [[ "${BULK_ALLOW_LARGE:-0}" != 1 ]]; then
       echo "bulk: file exceeds 10 MiB; use --allow-large: $path" >&2; return 1
     fi
-    if file --brief --mime-type -- "${real%/}" 2>/dev/null | grep -q '^application/'; then
-      echo "bulk: binary files are not trackable: $path" >&2; return 1
-    fi
+    bulk_require_text_encoding "${real%/}" || return 1
   fi
 }
 

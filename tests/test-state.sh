@@ -254,4 +254,71 @@ for world in v1 v3; do
   done
 done
 
+section "one state model: full and brief counts agree"
+# A clean slate, so both payloads evaluate the same world.
+git -C "$REPO_DIR" add -A >/dev/null 2>&1
+git -C "$REPO_DIR" commit -qm "g5 clean slate" >/dev/null 2>&1 || true
+rm -f "$OMARCHY_REPLICANT_HOME/cache/state-v2.json" 2>/dev/null || true
+full_status_g5=$(core_status --json --no-fetch 2>/dev/null)
+brief_status_g5=$(core_status --json --brief --no-fetch 2>/dev/null)
+for k in unsaved incoming locked missing; do
+  check "full and brief agree on $k" \
+    "$(jq -r --arg k "$k" '.counts[$k]' <<<"$full_status_g5")" \
+    "$(jq -r --arg k "$k" '.[$k]' <<<"$brief_status_g5")"
+done
+check "no implicit row missing from both sides" "0" \
+  "$(jq -r '[.entries[] | select(.source == "override" and .exists == false and .saved == false)] | length' <<<"$full_status_g5")"
+
+section "explicitly tracked missing entries stay visible"
+cp "$HOME/.config/notes.conf" "$TMP/notes.keep2"
+rm -f "$HOME/.config/notes.conf"
+check "a deleted user entry keeps its row" "missing" \
+  "$(core_status --json --no-fetch 2>/dev/null | jq -r '[.entries[] | select(.id == "notes.conf")][0].sync_state')"
+check "…and the brief counts it" "1" \
+  "$(core_status --json --brief --no-fetch 2>/dev/null | jq -r .missing)"
+cp "$TMP/notes.keep2" "$HOME/.config/notes.conf"
+
+section "a copied but uncommitted file counts as unsaved"
+printf 'staged change\n' >> "$HOME/.config/hypr/input.lua"
+core_backup >/dev/null 2>&1
+invalidate_git_cache
+check "the git half joins the content half" "1 0 0 0" \
+  "$(count_changes 2>/dev/null)"
+check "full counts agree" "1" \
+  "$(core_status --json --no-fetch 2>/dev/null | jq -r '.counts.unsaved')"
+git -C "$REPO_DIR" add -A >/dev/null 2>&1
+git -C "$REPO_DIR" commit -qm "g5 staged" >/dev/null 2>&1 || true
+
+section "locked secrets carry unknown persistence"
+if repo_has_vault 2>/dev/null; then
+  mv "$REPLICANT_HOME/keys/identity.txt" "$TMP/identity.g5"
+  locked_g5=$(core_status --json --no-fetch 2>/dev/null)
+  check "a locked secret reports saved null" "null" \
+    "$(jq -r '[.entries[] | select(.kind == "secret" and .exists == true)][0].saved | tostring' <<<"$locked_g5" | sed 's/^$/null/')"
+  check "…and savedKnown false" "false" \
+    "$(jq -r '[.entries[] | select(.kind == "secret" and .exists == true)][0].savedKnown' <<<"$locked_g5")"
+  mv "$TMP/identity.g5" "$REPLICANT_HOME/keys/identity.txt"
+  check "an unlocked secret reports savedKnown true" "true" \
+    "$(core_status --json --no-fetch 2>/dev/null | jq -r '[.entries[] | select(.kind == "secret" and .exists == true)][0].savedKnown')"
+else
+  check "no vault here, persistence checks need one" "true" "true"
+fi
+
+section "vault index changes mark secrets unpushed"
+if repo_has_vault 2>/dev/null; then
+  git init -q --bare -b main "$TMP/up-g5.git" 2>/dev/null
+  git -C "$REPO_DIR" remote add origin "$TMP/up-g5.git" 2>/dev/null || true
+  git -C "$REPO_DIR" add -A >/dev/null 2>&1
+  git -C "$REPO_DIR" commit -qm "g5 pushed base" >/dev/null 2>&1 || true
+  git -C "$REPO_DIR" push -q -u origin main >/dev/null 2>&1 || true
+  check "a pushed secret is not unpushed" "false" \
+    "$(core_status --json --no-fetch 2>/dev/null | jq -r '[.entries[] | select(.id == "env/60-secrets.conf")][0].unpushed')"
+  core_scope env/60-secrets.conf off >/dev/null 2>&1
+  check "an index-only change marks the secret unpushed" "true" \
+    "$(core_status --json --no-fetch 2>/dev/null | jq -r '[.entries[] | select(.id == "env/60-secrets.conf")][0].unpushed')"
+  core_scope env/60-secrets.conf shared >/dev/null 2>&1
+else
+  check "no vault here, index checks need one" "true" "true"
+fi
+
 summary

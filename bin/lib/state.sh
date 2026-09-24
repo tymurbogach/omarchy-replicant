@@ -77,9 +77,16 @@ state_facts() {
   fi
   local git_rel="${repo#"$REPO_DIR"/}"
   local git_dirty=false git_unpushed=false
-  if [[ -n "$blob" ]]; then
-    path_dirty "vault/blobs/$blob.age" && git_dirty=true
-    path_unpushed "vault/blobs/$blob.age" && git_unpushed=true
+  if [[ "$kind" == secret ]]; then
+    if [[ -n "$blob" ]]; then
+      path_dirty "vault/blobs/$blob.age" && git_dirty=true
+      path_unpushed "vault/blobs/$blob.age" && git_unpushed=true
+    fi
+    # The encrypted index names every secret: re-scoping or re-keying one
+    # rewrites the index while its blob stays byte-identical, and that change
+    # still needs a commit and a push of its own.
+    path_dirty "vault/index.age" && git_dirty=true
+    path_unpushed "vault/index.age" && git_unpushed=true
   elif [[ -n "$repo" ]]; then
     path_dirty "$git_rel" && git_dirty=true
     path_unpushed "$git_rel" && git_unpushed=true

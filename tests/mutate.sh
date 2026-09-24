@@ -431,6 +431,90 @@ from:   if ! _repo_clone_build "$url" "$stage"; then
 to:   if false; then
 why: a failed clone leaves no partial repository
 ---
+file: bin/lib/status.sh
+suite: test-state.sh
+from:       if [[ "$source" == manifest || "$source" == auto ]] && [[ "$exists" == false && "${vf[10]}" == false ]]; then
+to:       if false; then
+why: full status omits implicit entries absent from both sides
+---
+file: bin/lib/incoming.sh
+suite: test-state.sh
+from:     [[ "$same" == false || "$gitdirty" == true ]] || continue
+to:     [[ "$same" == false ]] || continue
+why: brief counts include copied but uncommitted entries
+---
+file: bin/lib/status.sh
+suite: test-state.sh
+from:         savedKnown:($r[19]|flag),
+to:         savedKnown:true,
+why: locked secrets report unknown saved state
+---
+file: bin/lib/state.sh
+suite: test-state.sh
+from:     path_unpushed "vault/index.age" && git_unpushed=true
+to:     :
+why: secret status includes unpushed vault index changes
+---
+file: bin/lib/bulk.sh
+suite: test-bulk.sh
+from:   case "$path" in -*|*$'\n'*|*$'\t'*|*$'\r'*) echo "bulk: invalid path" >&2; return 1 ;; esac
+to:   case "$path" in -*) echo "bulk: invalid path" >&2; return 1 ;; esac
+why: bulk rejects newline tab and carriage return paths
+---
+file: bin/lib/bulk.sh
+suite: test-bulk.sh
+from:     (( count <= 400 ))
+to:     (( count <= 9999 ))
+why: bulk keeps the hard directory file limit
+---
+file: bin/lib/bulk.sh
+suite: test-bulk.sh
+from:     (( count > 100 ))
+to:     (( count > 9999 ))
+why: bulk warns before a large directory surprises the user
+---
+file: bin/lib/bulk.sh
+suite: test-bulk.sh
+from:     if (( bytes > BULK_LARGE_LIMIT_BYTES ))
+to:     if (( bytes > 99999999999 ))
+why: bulk measures the total bytes in a directory
+---
+file: bin/lib/bulk.sh
+suite: test-bulk.sh
+from: binary|unknown|unknown-8bit)
+to: unknown|unknown-8bit)
+why: bulk rejects binary content by encoding
+---
+file: bin/lib/bulk.sh
+suite: test-bulk.sh
+from: \( -type d -o -type f \) -name .git
+to: \( -type d -o -type f \) -name .notgit
+why: bulk rejects .git files as well as .git directories
+---
+file: bin/lib/bulk.sh
+suite: test-bulk.sh
+from:   [[ "$(basename -- "$real")" != .git ]] || {
+to:   [[ "$(basename -- "$real")" == .git ]] || {
+why: bulk rejects a single .git file as well as tree artifacts
+---
+file: bin/omarchy-replicant
+suite: test-settings-save.sh
+from:   save_args=(--id "$owner")
+to:   save_args=(--all)
+why: setting writes never save unrelated entries
+---
+file: bin/omarchy-replicant
+suite: test-settings-save.sh
+from:     echo "The setting is saved locally, but the push failed. Retry: omarchy-replicant push" >&2
+to:     echo "The setting is saved locally, but the push failed." >&2
+why: setting push failures print an exact retry command
+---
+file: bin/lib/bulk.sh
+suite: test-bulk.sh
+from:   [[ ! -L "${candidate%/}" ]]
+to:   [[ ! -L "${real%/}" ]]
+why: bulk rejects a symlink before resolving its target
+---
 DATA
 )
 

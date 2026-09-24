@@ -24,11 +24,12 @@ A **+** appears in the bar. Click it: the panel says that there is no repo yet.
 
 ## 2. Create your repo
 
-Press **Create private repo**. A terminal opens and walks you through two steps:
+Press **Create private repo**. The panel checks both GitHub connection methods and opens a setup dialog:
 
-1. **GitHub login.** This is `gh auth login`. If you already use the GitHub CLI, it skips this step.
-2. **The repo.** The plugin creates `<your-hostname>-replicant` as a private repo, puts your
-   configs, secrets and package inventory into it, and pushes.
+1. **GitHub login.** If HTTPS is not ready, press **Log in to GitHub**. This runs `gh auth login`
+   with the browser flow.
+2. **The repo.** Accept or edit the suggested name, then choose HTTPS or SSH. The plugin creates
+   the private repo, puts your configs, secrets and package inventory into it, and pushes.
 
 Open the panel again. It shows the repo name and every tracked file.
 

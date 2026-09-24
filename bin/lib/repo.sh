@@ -29,8 +29,9 @@ commit_repo_shape() {
 }
 
 repo_create() {
-  local name="$1" do_push="${2:-0}" gh_user current_url url vis resp
-  [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "invalid name: $name" >&2; return 1; }
+  local name="$1" do_push="${2:-0}" transport="${3:-https}" gh_user current_url url vis resp
+  [[ "$name" =~ ^[A-Za-z0-9._-]+$ && ${#name} -le 100 && "$name" != "." && "$name" != ".." ]] || { echo "invalid name: $name" >&2; return 1; }
+  [[ "$transport" == https || "$transport" == ssh ]] || { echo "invalid transport: $transport" >&2; return 1; }
   if [[ ! -d "$REPO_DIR/.git" ]]; then core_init; else core_backup; fi
   gh_user=$(gh api user --jq .login 2>/dev/null || gh auth status 2>&1 | grep -oP 'account \K\w+' | head -n1)
   [[ -n "$gh_user" ]] || { echo "no gh user" >&2; return 1; }
@@ -43,7 +44,11 @@ repo_create() {
       echo "gh create failed" >&2; return 1;
     }
   fi
-  url="https://github.com/$gh_user/$name.git"
+  if [[ "$transport" == ssh ]]; then
+    url="git@github.com:$gh_user/$name.git"
+  else
+    url="https://github.com/$gh_user/$name.git"
+  fi
   current_url=$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null || true)
   if [[ -n "$current_url" && "$current_url" != "$url" ]]; then
     echo "repository already points at $current_url" >&2

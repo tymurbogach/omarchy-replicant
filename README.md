@@ -17,8 +17,8 @@
 omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --enable --yes
 ```
 
-Click the icon in your bar, then **Create private repo**. The plugin creates a private GitHub repo,
-copies your configs and secrets into it, and pushes. [First-time setup](docs/getting-started.md)
+Click the icon in your bar, then **Create private repo**. The panel checks GitHub HTTPS and SSH,
+then lets you edit the private repo name and choose the Git transport. [First-time setup](docs/getting-started.md)
 walks through it.
 
 ## Update

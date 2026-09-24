@@ -43,6 +43,12 @@ Panel {
   // "no repo yet — create one" screen: showing it before we know the state let
   // a stray click re-point an already-configured remote (a real incident).
   property bool asked: false
+  property var setupStatus: ({ default_repo_name: "", github: {}, ssh: {} })
+  property bool setupStatusLoaded: false
+  property int setupPollAttempts: 0
+  property string createRepoName: ""
+  property string createTransport: "https"
+  property bool createDialogOpen: false
 
   property string lastOutput: ""
   property bool lastOk: true
@@ -620,6 +626,31 @@ Panel {
   function doPull()     { root.busyLabel = "Pulling from GitHub…"; controller.run("pull", [root.cli, "pull"], { label: "Pull" }) }
   function doBackup()   { root.busyLabel = "Copying files into the repo…"; controller.run("backup", [root.cli, "backup"], { label: "Copy" }) }
   function doDoctor()   { root.busyLabel = "Running the health check…"; controller.run("doctor", [root.cli, "doctor"], { label: "Health check" }) }
+  function loadSetupStatus() { controller.run("setup-status", [root.cli, "setup-status", "--json"], { busy: false }) }
+  function githubReady() { return root.setupStatus.github && root.setupStatus.github.authenticated === true && root.setupStatus.github.reachable === true }
+  function sshReady() { return root.setupStatus.ssh && root.setupStatus.ssh.authenticated === true && root.setupStatus.ssh.reachable === true }
+  function setupState(value, kind) {
+    if (!value || value.installed === false && kind === "github") return "Not installed"
+    if (value.authenticated === true && value.reachable === true) return "Ready"
+    if (value.reachable === false) return "No connection"
+    if (value.configured === false || value.authenticated === false) return "Not configured"
+    return "Checking…"
+  }
+  function openCreateDialog() {
+    root.createRepoName = String(root.setupStatus.default_repo_name || "replicant")
+    root.createTransport = "https"
+    root.createDialogOpen = true
+    Qt.callLater(function() { createNameField.forceActiveFocus(); createNameField.selectAll() })
+  }
+  function createRepo() {
+    var name = root.createRepoName.trim()
+    if (!R.repoNameValid(name) || !root.githubReady()) return
+    root.createDialogOpen = false
+    root.ask("create-repo", name + "|" + root.createTransport,
+             "Create the private GitHub repo " + name + " using " + root.createTransport.toUpperCase() + " and push this machine into it?",
+             "Create private repo")
+  }
+  function startGithubLogin() { root.setupPollAttempts = 10; root.setupStatusLoaded = false; root.runVisible(root.cli + " login") }
 
   function loadShortcuts() { controller.run("shortcuts", [root.cli, "shortcuts", "--json"], { busy: false }) }
   function loadLog() {
@@ -944,6 +975,12 @@ Panel {
     else if (a === "prune-backups") { root.doPruneBackups(); return }
     else if (a === "update")        { root.busyLabel = "Updating Replicant…"; controller.run("update", [root.cli, "update", "--yes", "--restart"], { label: "Update" }); return }
     else if (a === "migration-confirm") { root.busyLabel = "Recording migration confirmation…"; command = [root.cli, "migration-confirm"]; label = "Migration" }
+    else if (a === "create-repo") {
+      var createParts = arg.split("|")
+      root.busyLabel = "Creating your private repo…"
+      command = [root.cli, "create", createParts[0], "--push", "--transport", createParts[1] || "https"]
+      label = "Create repo"
+    }
     else if (a.indexOf("bulk:") === 0) { root.executeBulk(a.slice(5)); return }
     else return
     if (command) controller.run("danger", command, { label: label })
@@ -993,7 +1030,9 @@ Panel {
     target: controller
     function onCompleted(job, code, stdoutText, stderrText, meta) {
       var text = root.clean(stderrText + "\n" + stdoutText)
-      if (job === "log") {
+      if (job === "setup-status") {
+        try { root.setupStatus = JSON.parse(stdoutText || "{}"); root.setupStatusLoaded = true } catch (e) { root.setupStatusLoaded = false }
+      } else if (job === "log") {
         try { root.recent = JSON.parse(stdoutText || "[]") } catch (e) { root.recent = [] }
       } else if (job === "shortcuts") {
         try { root.shortcuts = JSON.parse(stdoutText || "{}"); root.shortcutsLoaded = true } catch (e) { root.shortcutsLoaded = false }
@@ -1058,7 +1097,7 @@ Panel {
   // prompt for a GitHub login / a repo URL. Everything else runs headless.
   function run(cmd) { if (bar) bar.run(cmd) }
   function runVisible(cmd) { root.run("omarchy-launch-floating-terminal-with-presentation " + root.shellQuote(cmd)) }
-  function doCreate() { root.runVisible(root.cli + " create --push"); root.close() }
+  function doCreate() { root.openCreateDialog() }
   function doClone()  { root.runVisible(root.cli + " clone"); root.close() }
   function openUrl(url) { root.run("xdg-open " + root.shellQuote(url)); root.close() }
   function openRepoFolder() { root.openUrl(root.repoState.repo_dir || "") }
@@ -1074,14 +1113,21 @@ Panel {
   property bool opened: false
   function open() {
     root.opened = true; root.refresh()
+    root.loadSetupStatus()
     if (!root.shortcutsLoaded) root.loadShortcuts()
     if (!root.suggestLoaded) root.loadSuggestions()
     root.loadBackups()
     root.loadDeleted()
     if (!root.updateCheckedOnce) root.checkUpdates(false)
   }
-  function close() { root.opened = false; root.viewerOpen = false; root.keyboardHelpOpen = false; confirmDialog.opened = false; root.focusedField = null }
+  function close() { root.opened = false; root.viewerOpen = false; root.keyboardHelpOpen = false; root.createDialogOpen = false; confirmDialog.opened = false; root.focusedField = null }
   function toggle() { root.opened ? root.close() : root.open() }
+  Timer {
+    interval: 1500
+    repeat: true
+    running: root.opened && root.setupPollAttempts > 0
+    onTriggered: { root.setupPollAttempts -= 1; root.loadSetupStatus() }
+  }
   // Open straight onto one tab. The keys 1-4 already do this for someone
   // looking at the panel; this is the same jump for a keybinding or a script,
   // and it is what makes the panel checkable without synthesising a keystroke.
@@ -1134,17 +1180,18 @@ Panel {
         if (root.keyboardHelpOpen) root.keyboardHelpOpen = false
         else if (root.viewerOpen) root.closeViewer()
         else if (confirmDialog.opened) confirmDialog.opened = false
+        else if (root.createDialogOpen) { root.createDialogOpen = false; root.releaseFocus() }
         else if (root.openRow !== "") root.openRow = ""
         else if (root.keyboardFocus.kind === "card" && root.isOpen(root.keyboardFocus.id))
           root.toggleCard(root.keyboardFocus.id)
         else root.close()
       }
       onTextKey: function(t) {
-        if (t === "?" && !root.viewerOpen && !confirmDialog.opened) {
+        if (t === "?" && !root.viewerOpen && !confirmDialog.opened && !root.createDialogOpen) {
           root.keyboardHelpOpen = !root.keyboardHelpOpen; return
         }
         if (root.keyboardHelpOpen) return
-        if (root.viewerOpen || confirmDialog.opened) return
+        if (root.viewerOpen || confirmDialog.opened || root.createDialogOpen) return
         if (t === "1") root.activeTab = "overview"
         else if (t === "2") root.activeTab = "configs"
         else if (t === "3") root.activeTab = "settings"
@@ -1274,13 +1321,36 @@ Panel {
               text: "Replicant keeps your configs, secrets and package inventory in a private GitHub repo of your own. Create one now, or clone the one you already made on another machine."
               color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
             }
+            Column {
+              width: parent.width
+              spacing: Style.space(3)
+              visible: root.setupStatusLoaded
+              Text {
+                text: "GitHub HTTPS: " + root.setupState(root.setupStatus.github, "github")
+                      + (root.setupStatus.github && root.setupStatus.github.login ? " (" + root.setupStatus.github.login + ")" : "")
+                color: root.githubReady() ? root.okColor : root.warnColor
+                font.family: root.ff; font.pixelSize: Style.font.caption
+              }
+              Text {
+                text: "GitHub SSH: " + root.setupState(root.setupStatus.ssh, "ssh")
+                color: root.sshReady() ? root.okColor : root.warnColor
+                font.family: root.ff; font.pixelSize: Style.font.caption
+              }
+            }
             Row {
               spacing: Style.space(8)
               Button {
                 text: "Create private repo"; iconText: root.icPlus; bordered: true
                 foreground: root.fg; accent: Color.accent; fontFamily: root.ff
-                tooltipText: "Creates <hostname>-replicant on your GitHub account, private, and pushes this machine into it"
+                enabled: root.setupStatusLoaded && root.githubReady()
+                tooltipText: !root.setupStatusLoaded ? "Checking GitHub setup." : !root.githubReady() ? "Log in to GitHub before creating the repo." : "Creates the private repo and pushes this machine into it"
                 onClicked: root.doCreate()
+              }
+              Button {
+                visible: root.setupStatusLoaded && !root.githubReady()
+                text: "Log in to GitHub"; iconText: root.icGithub; bordered: true
+                foreground: root.warnColor; fontFamily: root.ff
+                onClicked: root.startGithubLogin()
               }
               Button {
                 text: "Clone existing…"; iconText: root.icBranch; bordered: true
@@ -1318,6 +1388,86 @@ Panel {
 
       // ─────────────────────────────── overlays ──────────────────────────────
       TextViewer { panel: root; anchors.fill: parent; z: 50 }
+
+      BorderSurface {
+        id: createDialog
+        visible: root.createDialogOpen
+        anchors.centerIn: parent
+        width: Math.min(parent.width - Style.space(24), Style.space(520))
+        implicitHeight: createColumn.implicitHeight + Style.space(24)
+        z: 55
+        color: Color.popups.background
+        borderSpec: Border.controlSpec("focus", root.fg, Color.accent)
+        radius: Style.cornerRadius
+        Column {
+          id: createColumn
+          anchors.fill: parent
+          anchors.margins: Style.space(12)
+          spacing: Style.space(8)
+          Text {
+            text: "Create your private data repo"
+            color: root.fg; font.family: root.ff; font.pixelSize: Style.font.title; font.bold: true
+          }
+          Text {
+            width: parent.width
+            text: "Choose a name and the Git transport. GitHub keeps the repo private."
+            color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
+          }
+          TextField {
+            id: createNameField
+            width: parent.width
+            text: root.createRepoName
+            placeholderText: "Repository name"
+            foreground: root.fg; accent: Color.accent; font.family: root.ff
+            onTextChanged: root.createRepoName = text
+            onActiveFocusChanged: root.noteFocus(createNameField, activeFocus)
+            onAccepted: root.createRepo()
+          }
+          Text {
+            visible: createDialog.createRepoNameFieldInvalid()
+            text: "Use only letters, numbers, dots, underscores and hyphens."
+            color: "#e05d5d"; font.family: root.ff; font.pixelSize: Style.font.caption
+          }
+          Row {
+            spacing: Style.space(6)
+            Text { text: "Transport"; color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption }
+            Button {
+              text: "HTTPS"; bordered: true; fontFamily: root.ff
+              foreground: root.createTransport === "https" ? Color.accent : root.dim
+              onClicked: root.createTransport = "https"
+            }
+            Button {
+              text: root.sshReady() ? "SSH" : "SSH unavailable"; bordered: true; fontFamily: root.ff
+              foreground: root.createTransport === "ssh" ? Color.accent : root.dim
+              enabled: root.sshReady()
+              tooltipText: root.sshReady() ? "Use GitHub SSH for push and pull" : "Configure a working SSH key first"
+              onClicked: root.createTransport = "ssh"
+            }
+          }
+          Text {
+            text: "GitHub HTTPS: " + root.setupState(root.setupStatus.github, "github")
+                  + "    SSH: " + root.setupState(root.setupStatus.ssh, "ssh")
+            color: root.githubReady() ? root.okColor : root.warnColor
+            font.family: root.ff; font.pixelSize: Style.font.caption
+          }
+          Row {
+            spacing: Style.space(8)
+            Button {
+              text: "Cancel"; bordered: true; fontFamily: root.ff; foreground: root.dim
+              onClicked: { root.createDialogOpen = false; root.releaseFocus() }
+            }
+            Button {
+              text: "Create private repo"; iconText: root.icPlus; bordered: true
+              foreground: Color.accent; accent: Color.accent; fontFamily: root.ff
+              enabled: root.githubReady() && !createDialog.createRepoNameFieldInvalid()
+              onClicked: root.createRepo()
+            }
+          }
+        }
+        function createRepoNameFieldInvalid() {
+          return !R.repoNameValid(root.createRepoName)
+        }
+      }
 
       ConfirmDialog {
         id: confirmDialog

@@ -117,21 +117,74 @@ cmd_login() {
   else fail "gh not installed: omarchy pkg add github-cli"; fi
 }
 
+json_string() {
+  local value="${1:-}"
+  value=${value//\\/\\\\}
+  value=${value//\"/\\\"}
+  value=${value//$'\n'/\\n}
+  value=${value//$'\r'/\\r}
+  printf '%s' "$value"
+}
+
+cmd_setup_status() {
+  local installed=false authenticated=false reachable=false login=""
+  local ssh_configured=false ssh_authenticated=false ssh_reachable=false
+  local gh_login gh_status ssh_output
+
+  if command -v gh >/dev/null 2>&1; then
+    installed=true
+    gh_status=$(gh auth status >/dev/null 2>&1; echo $?)
+    if gh_login=$(gh api user --jq .login 2>/dev/null) && [[ -n "$gh_login" ]]; then
+      authenticated=true; reachable=true; login="$gh_login"
+    elif gh api rate_limit >/dev/null 2>&1; then
+      reachable=true
+    elif (( gh_status == 0 )); then
+      authenticated=true
+    fi
+  fi
+
+  if command -v ssh >/dev/null 2>&1; then
+    local identity_file
+    while read -r identity_file; do
+      identity_file=${identity_file#identityfile }
+      [[ -f "$identity_file" ]] && { ssh_configured=true; break; }
+    done < <(ssh -G -o BatchMode=yes -o ConnectTimeout=5 git@github.com 2>/dev/null | grep '^identityfile ' || true)
+    ssh_output=$(ssh -T -o BatchMode=yes -o ConnectTimeout=5 git@github.com 2>&1) || true
+    case "$ssh_output" in
+      *"successfully authenticated"*)
+        ssh_configured=true; ssh_authenticated=true; ssh_reachable=true ;;
+      *"Permission denied"*|*"permission denied"*)
+        ssh_reachable=true ;;
+      *"Connection timed out"*|*"Could not resolve hostname"*|*"Network is unreachable"*|*"Connection refused"*)
+        ssh_reachable=false ;;
+    esac
+  fi
+  if [[ "$ssh_authenticated" == true ]]; then ssh_configured=true; fi
+
+  printf '{"default_repo_name":"%s",' "$(json_string "$DEFAULT_REPO_NAME")"
+  printf '"github":{"installed":%s,"authenticated":%s,"reachable":%s,"login":"%s"},' \
+    "$installed" "$authenticated" "$reachable" "$(json_string "$login")"
+  printf '"ssh":{"configured":%s,"authenticated":%s,"reachable":%s}}\n' \
+    "$ssh_configured" "$ssh_authenticated" "$ssh_reachable"
+}
+
 cmd_create() {
-  local name="$DEFAULT_REPO_NAME" do_push=0
+  local name="$DEFAULT_REPO_NAME" do_push=0 transport=https
   while (( $# )); do case "$1" in
     --private) shift;; # always private, ignore
     --public) warn "replicant is always private (it holds secrets/) — ignoring --public"; shift;;
     --push) do_push=1; shift;;
-    --help|-h) echo "Usage: omarchy-replicant create [name] [--push] (always --private)"; return 0;;
+    --transport) transport="${2:-}"; shift 2;;
+    --help|-h) echo "Usage: omarchy-replicant create [name] [--push] [--transport https|ssh] (always --private)"; return 0;;
     -*) fail "unknown option: $1";;
     *) name="$1"; shift;;
   esac; done
-  [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || fail "invalid name: $name"
+  [[ $name =~ ^[A-Za-z0-9._-]+$ && ${#name} -le 100 && "$name" != "." && "$name" != ".." ]] || fail "invalid name: $name"
+  [[ "$transport" == https || "$transport" == ssh ]] || fail "invalid transport: $transport"
   cmd_login
   ensure_core
   load_core
-  repo_create "$name" "$do_push" || fail "create failed"
+  repo_create "$name" "$do_push" "$transport" || fail "create failed"
 }
 
 # savegame — system -> repo -> GitHub (ported from savegame.sh)
@@ -1320,6 +1373,7 @@ omarchy-replicant — back up, restore and replicate your Omarchy setup
 
 First machine
   create [name] [--push]      Make the PRIVATE GitHub repo and push this machine into it
+  setup-status --json         Show GitHub HTTPS and SSH setup without credentials
   login                       gh auth, if you are not logged in yet
   init [--savegame]           Prepare the local repo without touching GitHub
 
@@ -1442,7 +1496,10 @@ Dry-run by default, like everything here that writes.
   Log in to GitHub with gh, if you are not logged in already. Nothing else."
   [create]="create [name] [--push]
   Make the PRIVATE GitHub repo for YOUR data and push this machine into it.
+  Add --transport https or --transport ssh to choose the Git URL.
   Defaults to <hostname>-replicant. Always private. Asks; run it in a terminal."
+  [setup-status]="setup-status --json
+  Report GitHub HTTPS and SSH readiness without exposing credentials."
   [backup]="backup
   Deprecated read-only alias for changes. It copies nothing, commits nothing
   and pushes nothing. Review with changes, save with save."
@@ -1631,6 +1688,7 @@ main() {
     init) shift; cmd_init "$@";;
     login) shift; cmd_login "$@";;
     create) shift; cmd_create "$@";;
+    setup-status) shift; [[ "${1:-}" == "--json" ]] || fail "usage: setup-status --json"; cmd_setup_status;;
     backup) shift; cmd_backup "$@";;
     changes) shift; cmd_changes "$@";;
     tx) shift; cmd_tx "$@";;

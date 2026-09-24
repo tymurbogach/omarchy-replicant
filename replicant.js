@@ -574,3 +574,18 @@ function agoText(epoch, now) {
   if (s < 129600) return plural(Math.round(s / 3600), "hour") + " ago"
   return plural(Math.round(s / 86400), "day") + " ago"
 }
+
+// GitHub repository names use letters, numbers, dots, underscores and hyphens.
+// Keep this client check useful, but let the CLI validate again before creation.
+function repoNameValid(name) {
+  var value = String(name || "").trim()
+  return value.length > 0 && value.length <= 100 && value !== "." && value !== ".."
+      && /^[A-Za-z0-9._-]+$/.test(value)
+}
+
+function repoTransportUrl(login, name, transport) {
+  var owner = String(login || "")
+  var repo = String(name || "")
+  return transport === "ssh" ? "git@github.com:" + owner + "/" + repo + ".git"
+                             : "https://github.com/" + owner + "/" + repo + ".git"
+}

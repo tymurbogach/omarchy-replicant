@@ -26,6 +26,15 @@ TestCase {
     compare(R.plural(2, "entry", "entries"), "2 entries")
   }
 
+  function test_repository_name_and_transport_rules() {
+    verify(R.repoNameValid("hostname-replicant"))
+    verify(R.repoNameValid("my_data.repo"))
+    verify(!R.repoNameValid("bad name"))
+    verify(!R.repoNameValid("a".repeat(101)))
+    compare(R.repoTransportUrl("user", "data", "https"), "https://github.com/user/data.git")
+    compare(R.repoTransportUrl("user", "data", "ssh"), "git@github.com:user/data.git")
+  }
+
   function test_mdi_builds_one_character_above_ffff() {
     var s = R.mdi(0xF06E1)
     compare(s.codePointAt(0), 0xF06E1)

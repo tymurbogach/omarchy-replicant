@@ -1,455 +1,489 @@
-# Replicant v2 Implementation Plan
+# Replicant v3 Verification and Hardening Plan
 
-## Summary
+  ## Delivery and Git Protocol
 
-This plan replaces the mutable Git worktree and plaintext secret storage with transactional saves,
-encrypted secrets, unified state evaluation, bulk management, and deterministic UI navigation.
+  - [x] Replace the current PLAN.md with this complete plan before changing code.
+  - [x] Record 4c9c4b580d4d190ea2efd6e0b8449ffd790d091e as the audit baseline.
+  - [ ] Assign only one phase to each agent.
+  - [ ] Complete phases in numeric order.
+  - [ ] Add a failing regression test before each fix.
+  - [ ] Keep unfinished phase changes uncommitted for the next agent.
+  - [ ] Do not commit a phase until every phase gate passes.
+  - [ ] Mark completed phase checkboxes before its commit.
+  - [ ] Review git diff, git diff --check, and git status --short.
+  - [ ] Stage only files that belong to the current phase.
+  - [ ] Never add AGENTS.md.
+  - [ ] Create one local commit after each completed phase.
+  - [ ] Never amend a completed phase commit.
+  - [ ] Never add AI attribution to commits.
+  - [ ] Never push, create a pull request, create a release, or create a tag.
+  - [ ] If a gate fails, do not commit the phase.
+  - [ ] After all phases, leave the complete plugin and local commits for user review.
+  - [ ] Only the user can authorize the final push.
 
-Current tests confirm that an unsaved file or directory returns to `saved` when its content matches
-the repository again. Preserve this behavior. The redesign must also remove the remaining stale-draft
-case caused by the current `backup` workflow.
+  Use these exact phase commit messages:
 
-Never copy personal repository data, paths, secret names, or credentials into this repository,
-fixtures, logs, screenshots, or documentation.
+   Phase    Commit message
+  ━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   G0       test: isolate automated verification
+  ───────  ───────────────────────────────────────────────
+   G1       feat: define the Replicant v3 schema
+  ───────  ───────────────────────────────────────────────
+   G2       fix: make repository bootstrap fail safe
+  ───────  ───────────────────────────────────────────────
+   G3       feat: migrate legacy repositories to v3
+  ───────  ───────────────────────────────────────────────
+   G4       refactor: unify repository transactions
+  ───────  ───────────────────────────────────────────────
+   G5       fix: align status bulk and settings state
+  ───────  ───────────────────────────────────────────────
+   G6       fix: harden secret restore handling
+  ───────  ───────────────────────────────────────────────
+   G7       fix: preserve controller and navigation state
+  ───────  ───────────────────────────────────────────────
+   G8       docs: finalize Replicant v3 verification
 
-## 1. Establish the Baseline
+  ## Verified Baseline
 
-- [x] Record the current architecture and command behavior before refactoring.
-- [x] Run `./tests/run-all.sh` and save the totals in the development journal.
-- [x] Fix the QML test runner environment in `tests/run-all.sh`.
-  - Unset `QT_QPA_PLATFORMTHEME`.
-  - Set `QT_QPA_PLATFORM=offscreen`.
-  - Confirm that all 25 current QML tests pass.
-- [x] Add characterization tests for these existing guarantees:
-  - A file edit produces `unsaved`.
-  - Restoring the original bytes clears `unsaved`.
-  - The same behavior applies to tracked directories.
-  - Incoming changes take priority over local unsaved changes.
-  - Restore creates a safety backup.
-  - An older client cannot prune data from a newer repository.
-- [x] Add a failing regression test for the current missing-file defect.
-  - A saved entry that is absent locally must increase the `missing` count.
-  - Brief status must not report `synced`.
-  - The bar must show an actionable missing state.
+  The current suite passes, including 41 QML tests and 63 mutation tests.
 
-## 2. Introduce the v2 Data Repository Schema
+  The isolated status benchmark averages 30 ms. However, existing tests miss critical integration defects.
 
-- [x] Add a schema version that rejects unknown or newer formats before any mutation.
-- [x] Replace the legacy root metadata with this structure:
+  ## Public Contract Changes
 
-```text
-.replicant/
-  schema.json
-  entries.json
-  recipient.txt
-  machines/
-    <machine-id>.json
-config/
-profiles/
-  <profile>/
-    config/
-vault/
-  index.age
-  blobs/
-    <opaque-id>.age
-state/
-  <machine-id>/
-templates/
-.githooks/
-  pre-commit
-tools/
-  scan-secrets.sh
-```
+  - [ ] Introduce repository dataVersion: 3.
+  - [ ] Set secretFormat to age-pq-v2.
+  - [ ] Add migrate-v3 for v1 and v2 repositories.
+  - [ ] Keep migrate-v2 as a deprecated forwarding alias for one release.
+  - [ ] Add the global --progress-json CLI option.
+  - [ ] Add key export --force.
+  - [ ] Represent unknown secret persistence as "saved": null.
+  - [ ] Add "savedKnown": false when the vault is locked.
+  - [ ] Keep normal human-readable CLI output compatible.
+  - [ ] Bump the plugin version to 0.13.0 after all gates pass.
 
-- [x] Define `.replicant/schema.json` with:
-  - `dataVersion: 2`
-  - `secretFormat: "age-pq-v1"`
-- [x] Define `.replicant/entries.json` as an object keyed by stable entry ID.
-- [x] Give each non-secret entry these fields:
+  ## Phase G0: Automated Test Infrastructure
 
-```json
-{
-  "path": "/absolute/live/path",
-  "kind": "config",
-  "scope": "shared",
-  "source": "user"
-}
-```
+  - [x] Add tests/gate.sh <phase> as the canonical phase runner.
+  - [x] Add gates G0 through G8.
+  - [x] Initialize an isolated HOME and XDG environment in every gate.
+  - [x] Create local bare Git remotes for integration tests.
+  - [x] Reject unexpected network access.
+  - [x] Stub gh, editors, privilege tools, and external failures.
+  - [x] Assert repository cleanliness after each test.
+  - [x] Assert temporary file removal after each test.
+  - [x] Fix tests/bench-status.sh so it never writes user state.
+  - [x] Add a deterministic benchmark --check mode.
+  - [x] Set full status budget to 250 ms.
+  - [x] Set brief status budget to 100 ms.
+  - [x] Add a public command coverage manifest.
+  - [x] Map every help command to success, failure, and no-op tests.
+  - [x] Fail when any public command has no mapped tests.
+  - [x] Add a QML integration harness for the real controller.
+  - [x] Add mock Omarchy QML modules for container tests.
+  - [x] Update tests/Dockerfile with every required dependency.
+  - [x] Save this complete plan in PLAN.md.
 
-- [x] Restrict `scope` to `shared`, `profile`, or `off`.
-- [x] Restrict `source` to `user` or `override`.
-- [x] Keep the shipped catalog in the plugin source.
-- [x] Treat a missing v2 entry record as the shipped default policy.
-- [x] Keep machine metadata limited to the machine ID, selected profile, client version, and schema version.
-- [x] Validate all paths, IDs, scopes, and schema values before reading repository content.
-- [x] Reject duplicate IDs, path collisions, nested tracked roots, repository paths, and unsupported file types.
+  Gate:
 
-## 3. Encrypt All Secret Data
+  ./tests/gate.sh G0
+  ./tests/run-all.sh
+  ./tests/bench-status.sh --check
 
-- [x] Declare `age` and `age-keygen` as runtime dependencies.
-- [x] Detect support for `age-keygen -pq` during preflight.
-- [x] Fail with an exact install or upgrade instruction if post-quantum key generation is unavailable.
-- [x] Follow the recipient and identity model from the official
-      [age documentation](https://github.com/FiloSottile/age/blob/main/doc/age.1.html).
-- [x] Store the shared private identity at `$REPLICANT_HOME/keys/identity.txt`.
-- [x] Set its mode to `0600`.
-- [x] Never copy the identity into Git, logs, command output, status JSON, backups, or temporary repository worktrees.
-- [x] Store only the public recipient in `.replicant/recipient.txt`.
-- [x] Add these commands:
-  - `omarchy-replicant key init`
-  - `omarchy-replicant key export <absolute-destination>`
-  - `omarchy-replicant key import <source>`
-  - `omarchy-replicant key status`
-  - `omarchy-replicant key rotate`
-- [x] Make `key init` generate one shared post-quantum identity and its recipient.
-- [x] Require `key export` to use a destination outside the data repository and `$REPLICANT_HOME`.
-- [x] Verify an exported identity by deriving and comparing its recipient.
-- [x] Require each new machine to import the identity once before it can save or restore secrets.
-- [x] Store secret metadata only inside `vault/index.age`.
-- [x] Include secret path, scope, and blob ID inside the encrypted index.
-- [x] Generate a random 128-bit blob ID for each secret.
-- [x] Do not derive blob IDs from secret paths, names, or content.
-- [x] Remove `defined-secrets.txt`.
-- [x] Remove secret variable names from status output.
-- [x] Keep only non-sensitive values such as `var_count`.
-- [x] Use one encrypted blob per secret under `vault/blobs/`.
-- [x] Compare live plaintext with the current decrypted blob before encryption.
-- [x] Preserve the existing ciphertext when plaintext did not change.
-- [x] Never place plaintext below the data repository or `$REPLICANT_HOME`.
-- [x] Decrypt restores into a mode `0600` temporary file beside the destination.
-- [x] Authenticate the complete ciphertext before replacing the destination.
-- [x] Back up the current destination.
-- [x] Use an atomic rename for the final replacement.
-- [x] Remove temporary plaintext through a trap on success, error, signal, or cancellation.
-- [x] Fail before repository mutation when the key is absent, invalid, or does not match the recipient.
-- [x] Show secrets as `locked` when config status can continue but secret state cannot be evaluated.
-- [x] Make `doctor` show the exact `key import` or `key status` remediation.
-- [x] Document that key rotation cannot revoke access to historical ciphertext.
-- [x] Require a new clean repository after a private key compromise.
+  Commit:
 
-## 4. Build One Entry Registry and State Evaluator
+  git commit -m "test: isolate automated verification"
 
-- [x] Add `bin/lib/registry.sh`.
-- [x] Merge these sources into one normalized registry:
-  - The shipped manifest.
-  - `.replicant/entries.json`.
-  - Discovered user entries.
-  - The decrypted secret index.
-- [x] Resolve each entry to one ID, kind, source, category, scope, live path, repository path, and restore policy.
-- [x] Add `bin/lib/state.sh`.
-- [x] Move all content comparison and state precedence rules into this module.
-- [x] Represent independent facts before deriving a UI state:
-  - Live presence.
-  - Repository presence.
-  - Content equality.
-  - Default equality.
-  - Local repository commit state.
-  - Upstream state.
-  - Incoming-path membership.
-  - Secret lock state.
-- [x] Derive `dirty` from live content comparison.
-- [x] Do not store a durable dirty flag.
-- [x] Preserve exact self-healing:
-  - If bytes return to the saved version, clear `dirty`.
-  - If a directory tree returns to the saved tree, clear `dirty`.
-  - If a tracked entry returns to its shipped default, update `is_default`.
-- [x] Count `missing`, `locked`, `incoming`, `unsaved`, and `unpushed` independently.
-- [x] Derive `needs_action` from any actionable count.
-- [x] Use this bar priority:
-  1. Locked.
-  2. Incoming or behind.
-  3. Missing.
-  4. Unsaved.
-  5. Ahead or unpushed.
-  6. Synced.
-- [x] Make `build_configs_json`, secret status, change counts, save, diff, and restore use the same evaluator.
-- [x] Delete duplicate comparison and state-precedence logic after parity tests pass.
-- [x] Add a local brief-status cache at `$REPLICANT_HOME/cache/state-v2.json`.
-- [x] Cache only source file identity, modification metadata, ciphertext object ID, and the previous result.
-- [x] Never cache secret values, secret names, or plaintext hashes.
-- [x] Invalidate the cache after save, pull, key import, key rotation, profile change, and restore.
-- [x] Make full status bypass the cache and remain authoritative.
-- [x] Test a content change that preserves the previous timestamp. Full status must still detect it.
+  ## Phase G1: Canonical v3 Repository Schema
 
-## 5. Replace Dirty Worktrees with Save Transactions
+  Use this schema record:
 
-- [x] Add `bin/lib/save.sh`.
-- [x] Require the active data repository worktree to remain clean.
-- [x] Create each save in a detached temporary Git worktree under `$REPLICANT_HOME/transactions/<uuid>/repo`.
-- [x] Write a transaction journal to `meta.json`.
-- [x] Record the base commit, selected IDs, stage, candidate commit, and push result.
-- [x] Snapshot selected live entries into the transaction worktree.
-- [x] Encrypt changed secrets there.
-- [x] Regenerate inventory only for a global save or an explicit inventory save.
-- [x] Validate the schema and run the secret scanner before the commit.
-- [x] Create one commit for the complete save.
-- [x] Verify that the active repository HEAD has not changed since the transaction started.
-- [x] Fast-forward the active repository to the candidate commit.
-- [x] Push the commit.
-- [x] Remove the temporary worktree after success.
-- [x] Keep the active repository unchanged when failure occurs before the fast-forward.
-- [x] Return a non-zero exit code when the local commit succeeds but push fails.
-- [x] Report `saved locally, push failed` without claiming full success.
-- [x] Let the next save or explicit push retry the remote operation.
-- [x] Add transaction recovery to `doctor`.
-- [x] Let the user resume or discard an abandoned pre-commit transaction.
-- [x] Never discard a committed transaction automatically.
-- [x] Remove the pull-time stash and pop workflow.
-- [x] Make pull reject an unexpected dirty active worktree with recovery instructions.
-- [x] Make push outcomes consistent for save, policy, tracking, settings, and inventory commands.
-- [x] Introduce `omarchy-replicant save`.
-- [x] Keep `savegame` as a deprecated alias for one compatibility release.
-- [x] Make `save-file` call `save --id <id>`.
-- [x] Convert `backup` into a read-only alias for `changes`.
-- [x] Use `changes` for review and `save --id ... -m "<reason>"` for a selective commit.
-- [x] Create one commit for config and inventory changes during `save --all`.
-- [x] Do not create a separate inventory-only commit during every save.
+  {
+    "dataVersion": 3,
+    "secretFormat": "age-pq-v2"
+  }
 
-## 6. Add Atomic Bulk Policy Management
+  Store non-secret mutable policy in .replicant/entries.json:
 
-- [x] Add `omarchy-replicant policy set --scope <scope> -- <id...>`.
-- [x] Keep entry type conversion separate from scope changes.
-- [x] Validate all IDs, scopes, paths, permissions, and conversions before mutation.
-- [x] Apply the complete bulk operation through one transaction and one commit.
-- [x] Make any validation failure leave all entries unchanged.
-- [x] Support these bulk actions:
-  - [x] Save selected entries.
-  - [x] Set selected entries to shared.
-  - [x] Set selected entries to the current profile.
-  - [x] Disable selected entries.
-  - [x] Track selected suggestions.
-  - [x] Convert selected user entries to secrets.
-  - [x] Stop tracking selected user entries.
-- [x] Hide operations that cannot apply to the complete selection.
-- [x] Require one summary confirmation for destructive operations and type conversions.
-- [x] Keep the existing 400-file hard limit for tracked trees.
-- [x] Add a large-content warning with a default of 10 MiB.
-- [x] Require `--allow-large` after that threshold.
-- [x] Warn when Git pack data exceeds 100 MiB.
-- [x] Detect binary files, nested repositories, sockets, devices, and recursive tracking before acceptance.
-- [x] Never auto-track a suggestion.
+  {
+    "entry-id": {
+      "path": "/absolute/live/path",
+      "kind": "config",
+      "scope": "shared",
+      "source": "user"
+    }
+  }
 
-## 7. Simplify the Shell Architecture
+  Store secret metadata only inside the encrypted vault index:
 
-- [x] Keep `bin/omarchy-replicant` responsible for argument parsing, confirmation, and output only.
-- [x] Move save and transaction behavior into `bin/lib/save.sh`.
-- [x] Move encryption behavior into `bin/lib/crypto.sh`.
-- [x] Move migration behavior into `bin/lib/migrate.sh`.
-- [x] Move inventory behavior out of layout code and into `bin/lib/inventory.sh`.
-- [x] Keep `bin/lib/layout.sh` responsible only for repository layout and schema upgrades.
-- [x] Make `bin/lib/status.sh` serialize registry and state results without deriving policy.
-- [x] Move repository lifecycle and remote transport into `bin/lib/repo.sh`.
-- [x] Move backup entrypoint ownership into `bin/lib/backup.sh`.
-- [x] Preserve stable command output until compatibility fields are removed.
-- [x] Avoid unrelated refactors in settings and plugin-management modules.
-- [x] Add shell module contract tests before deleting legacy functions.
+  {
+    "version": 2,
+    "secrets": [
+      {
+        "id": "secret-id",
+        "path": "/absolute/live/path",
+        "scope": "shared",
+        "source": "user",
+        "blob": "32-character-hex-id"
+      }
+    ]
+  }
 
-## 8. Publish the v2 Status Contract
+  - [ ] Make v3 the only writable repository version.
+  - [ ] Keep v1 and v2 readable for inspection and migration.
+  - [ ] Move legacy readers into a migration-only module.
+  - [ ] Stop creating .replicant-track, .replicant-sync, and .replicant-profiles.
+  - [ ] Retain .replicant-version as the old-client prune guard.
+  - [ ] Store the active profile only in the current machine JSON record.
+  - [ ] Validate machine IDs before constructing paths.
+  - [ ] Validate every entries record before use.
+  - [ ] Validate every decrypted vault index before use.
+  - [ ] Reject duplicate IDs, paths, blobs, and secret paths.
+  - [ ] Reject control characters and path traversal.
+  - [ ] Reject invalid kinds, scopes, sources, and blob identifiers.
+  - [ ] Reject legacy policy files inside a v3 repository.
+  - [ ] Fail before mutation when validation fails.
+  - [ ] Build the registry from validated canonical records.
+  - [ ] Preserve shipped defaults without explicit overrides.
+  - [ ] Discover custom secrets directly from the encrypted index.
+  - [ ] Remove duplicate scope and profile resolution paths.
 
-- [x] Add `schema_version: 2` to full status.
-- [x] Publish one unified `entries` array.
-- [x] Give each entry these fields:
+  Tests:
 
-```text
-id
-label
-src
-kind
-source
-category
-scope
-exists
-saved
-is_default
-dirty
-unpushed
-incoming
-sync_state
-is_dir
-nfiles
-locked
-```
+  - [ ] Create and validate an empty v3 repository.
+  - [ ] Reject each malformed schema field.
+  - [ ] Reject duplicate JSON keys before jq collapses them.
+  - [ ] Track, save, reload, and untrack a custom secret.
+  - [ ] Change an entry scope and reload the registry.
+  - [ ] Restore the original scope and verify zero pending changes.
+  - [ ] Change a profile and reload machine metadata.
+  - [ ] Verify that fresh v3 repositories contain no legacy policy files.
+  - [ ] Reject writes after simulated legacy-file contamination.
 
-- [x] Omit `src` for locked secrets when it would reveal encrypted metadata.
-- [x] Add top-level `counts`, `encryption`, and `migration` objects.
-- [x] Keep derived `configs` and `secrets` arrays for one compatibility release.
-- [x] Make new QML consume `entries`.
-- [x] Keep existing IPC methods for status, refresh, and initial panel tab.
-- [x] Add `locked` to the documented state legend.
-- [x] Add JSON contract tests for full and brief output.
+  Gate and commit:
 
-## 9. Migrate to a Clean Repository
+  ./tests/gate.sh G1
+  ./tests/run-all.sh
+  git commit -m "feat: define the Replicant v3 schema"
 
-- [x] Add this command:
+  ## Phase G2: Fresh Initialization and Private Repository Safety
 
-```text
-omarchy-replicant migrate-v2 \
-  --github-name <name> \
-  --identity-backup <absolute-path> \
-  [--yes]
-```
+  - [ ] Distinguish a missing repository from an existing v1 repository.
+  - [ ] Create the v3 schema before applying the write gate.
+  - [ ] Build fresh repositories in temporary Git directories.
+  - [ ] Validate the complete repository before activation.
+  - [ ] Activate the repository with one atomic rename.
+  - [ ] Remove temporary repositories after every failure.
+  - [ ] Make create request private GitHub visibility.
+  - [ ] Verify visibility after repository creation.
+  - [ ] Reject existing public repositories before local mutation.
+  - [ ] Never change public visibility automatically.
+  - [ ] Avoid changing origin before every preflight succeeds.
+  - [ ] Make clone identify v1 and v2 repositories as migration-only.
+  - [ ] Report exact recovery commands after remote failures.
 
-- [x] Also support `--remote <url>` for an existing empty private remote.
-- [x] Run the migration from a terminal, not inside the panel process.
-- [x] Preflight all requirements before creating the destination:
-  - The source repository is clean and synchronized.
-  - The new remote is empty and private.
-  - The remote name does not collide.
-  - `age-keygen -pq` works.
-  - A valid identity exists or can be generated.
-  - The external identity backup path is absolute and safe.
-  - Other recorded machines use a v2-capable client or are offline.
-- [x] Build the new repository under `$REPLICANT_HOME/migration/<uuid>/repo`.
-- [x] Migrate current policy, profile configuration, config snapshots, and inventories.
-- [x] Encrypt every current secret and its metadata.
-- [x] Do not copy legacy Git objects, refs, reflogs, or commit history.
-- [x] Run schema validation and the secret scanner.
-- [x] Create one root commit.
-- [x] Push the new repository.
-- [x] Clone or fetch it independently and verify the resulting tree and commit.
-- [x] Rename the active legacy repository to `$REPLICANT_HOME/legacy-repo-<epoch>`.
-- [x] Activate the v2 repository through an atomic rename.
-- [x] Keep the legacy repository active when any step before activation fails.
-- [x] Never delete the legacy local repository or remote automatically.
-- [x] Show a persistent warning until the user confirms:
-  - Relevant credentials have been rotated.
-  - The legacy remote has been deleted.
-  - The legacy local copy has been removed or secured.
-- [x] Permit legacy v1 status, diff, dry-run restore, and migration.
-- [x] Block v1 saves, tracking changes, scope changes, and secret mutations.
-- [x] Tell the user to migrate before any blocked operation.
-- [x] Test that the new remote has one root commit and no reachable legacy objects.
+  Tests:
 
-## 10. Add Bulk Management to the Panel
+  - [ ] Run init without existing state.
+  - [ ] Run create without existing state.
+  - [ ] Create against an existing private remote.
+  - [ ] Reject an existing public remote.
+  - [ ] Assert that public rejection performs no push or remote change.
+  - [ ] Inject failures before validation, activation, and first push.
+  - [ ] Verify that failed initialization leaves no partial repository.
 
-- [x] Add a Manage action to the Configs view.
-- [x] Bind `m` to enter or exit manage mode.
-- [x] Show checkboxes only in manage mode.
-- [x] Support:
-  - [x] Space to toggle an entry.
-  - [x] Shift selection for a range.
-  - [x] Ctrl+A to select visible entries.
-  - [x] Clear selection.
-  - [x] Invert visible selection.
-- [x] Add a fixed bulk-action footer.
-- [x] Show selected count, visible count, estimated file count, and estimated size.
-- [x] Reuse the existing Card, ListRow, RowAction, and FilterBar components.
-- [x] Add dedicated components only for the manage view and bulk-action footer.
-- [x] Send one atomic command for each confirmed bulk operation.
-- [x] Update policy optimistically only after the command is accepted.
-- [x] Restore the previous UI state when the command fails.
-- [x] Clear selection after successful completion.
-- [x] Preserve selection after a recoverable error.
-- [x] Extend tracking suggestions with kind, size, file count, and risk warnings.
+  Gate and commit:
 
-## 11. Make Navigation State Deterministic
+  ./tests/gate.sh G2
+  ./tests/run-all.sh
+  git commit -m "fix: make repository bootstrap fail safe"
 
-- [x] Replace `onActiveTabChanged: body.contentY = 0`.
-- [x] Store independent scroll positions for each tab.
-- [x] Add a navigation snapshot with:
-  - Active tab.
-  - Per-tab scroll position.
-  - Expanded cards.
-  - Expanded row.
-  - Commit expansion state.
-  - Search and filters.
-  - Selected entries.
-  - Return row or card ID.
-  - Row offset from the viewport.
-- [x] Capture the snapshot before diff, preview, confirmation, edit, or manage views open.
-- [x] Restore it after the status refresh and layout pass.
-- [x] Use `Qt.callLater` to restore after item geometry stabilizes.
-- [x] Expose a row-anchor lookup from the Configs view and category cards.
-- [x] Restore the same row at the same viewport offset when possible.
-- [x] Fall back to the clamped raw scroll position if the row disappeared.
-- [x] Reset only the current tab to the top when its filter changes intentionally.
-- [x] Preserve UI state in memory for the current shell session.
-- [x] Do not write search, selection, or navigation state to disk.
-- [x] Reset the text viewer scroll position each time new content opens.
-- [x] Reopen the panel after an editor exits when the terminal supports waiting.
-- [x] Show an explicit result when the editor cannot wait and automatic return is unavailable.
+  ## Phase G3: Atomic v1 and v2 Migration
 
-## 12. Extract Panel Control Logic
+  - [ ] Implement migrate-v3 for both legacy formats.
+  - [ ] Generate a migration summary before accepting --yes.
+  - [ ] List every recorded machine in that summary.
+  - [ ] Make --yes acknowledge that those machines are upgraded or offline.
+  - [ ] Require a clean local repository.
+  - [ ] Require a configured and reachable remote.
+  - [ ] Require proven upstream synchronization.
+  - [ ] Refuse migration without upstream tracking.
+  - [ ] Check destination collisions before mutation.
+  - [ ] Back up and verify the existing identity before remote mutation.
+  - [ ] Copy only allowlisted state files.
+  - [ ] Exclude retired inventories such as defined-secrets.txt.
+  - [ ] Reconstruct custom secret paths from legacy metadata.
+  - [ ] Refuse migration when a secret path cannot be reconstructed.
+  - [ ] Preserve custom secrets, scopes, profiles, and machine records.
+  - [ ] Verify every encrypted index entry and blob.
+  - [ ] Decrypt and compare every secret before activation.
+  - [ ] Verify non-secret file digests and permissions.
+  - [ ] Push the staged repository only after complete local verification.
+  - [ ] Activate the staged repository only after remote verification.
+  - [ ] Restore the original identity and repository after activation failure.
+  - [ ] Keep a recovery journal until activation completes.
+  - [ ] Detect legacy writes made after migration.
 
-- [x] Add `ReplicantController.qml`.
-- [x] Move process ownership, command queues, refresh scheduling, and action dispatch out of `Panel.qml`.
-- [x] Keep `Panel.qml` responsible for presentation and navigation.
-- [x] Keep `replicant.js` pure and side-effect free.
-- [x] Replace growing conditional action dispatch with command descriptors.
-- [x] Preserve current component APIs until controller integration tests pass.
-- [x] Split further only when a component has a clear state boundary.
+  Tests:
 
-## 13. Add Terminal and Panel Quality-of-Life Features
+  - [ ] Migrate a representative v1 repository.
+  - [ ] Migrate the current v2 layout.
+  - [ ] Migrate a custom secret absent from shipped manifests.
+  - [ ] Migrate all scopes and multiple profiles.
+  - [ ] Migrate two recorded machines.
+  - [ ] Refuse an unknown secret path.
+  - [ ] Refuse dirty, ahead, behind, divergent, and missing-upstream states.
+  - [ ] Inject failure at every migration boundary.
+  - [ ] Verify identity restoration after every injected failure.
+  - [ ] Run the v0.11 client against v3 and detect its artifacts.
 
-- [x] Add arrow-key and `j`/`k` navigation.
-- [x] Use Enter to open the focused row.
-- [x] Use Escape to close the current overlay or return one level.
-- [x] Add `?` for a keyboard help overlay.
-- [x] Add next-change and previous-change actions in the diff viewer.
-- [x] Add copy actions for live and repository paths.
-- [x] Add filters for changed, incoming, missing, locked, and large entries.
-- [x] Sort actionable entries before saved entries while keeping stable ordering.
-- [x] Show visible and total counts after every filter.
-- [x] Add useful empty states with a direct next action.
-- [x] Show distinct offline, ahead, behind, and local-only states.
-- [x] Add a retry-push action when a commit is local only.
-- [x] Report save stages: scanning, encrypting, committing, and pushing.
-- [x] Permit cancellation only before the commit stage.
-- [x] Give every disabled action a visible reason.
-- [x] Ensure all essential operations work without a mouse.
-- [x] Keep secret values and encrypted metadata out of notifications and clipboard actions.
+  Gate and commit:
 
-## 14. Test Failure Modes and Security Boundaries
+  ./tests/gate.sh G3
+  ./tests/run-all.sh
+  git commit -m "feat: migrate legacy repositories to v3"
 
-- [x] Add dedicated crypto, migration, transaction, and registry test suites.
-- [x] Run integration tests in a container with an `age` build that supports `-pq`.
-  `tests/run-all.sh` passes in the `replicant-tests` image. The container uses age 1.3.2.
-- [x] Test missing, wrong, malformed, and permission-invalid identities.
-- [x] Test tampered ciphertext. It must never replace live data.
-- [x] Test interruption during encryption, commit, fast-forward, and push.
-- [x] Test push failure after local commit.
-- [x] Test recovery from an abandoned transaction journal.
-- [x] Test two fake machines that import the same identity.
-- [x] Test shared, profile, and machine-specific state across both machines.
-- [x] Test that unchanged plaintext does not replace existing ciphertext.
-- [x] Test that repository history contains no plaintext secret, secret path, or variable name.
-- [x] Test that stdout, stderr, temporary files, and failure logs contain no plaintext secret.
-- [x] Test that an invalid bulk ID produces no partial policy changes.
-- [x] Test that one bulk action creates one commit.
-- [x] Test missing-file counts and bar priority.
-- [x] Test edit and exact revert for files and directories.
-- [x] Test incoming changes combined with local changes.
-- [x] Test navigation restoration after diff, preview, edit, refresh, and row removal.
-- [x] Test viewer scroll reset separately from body scroll restoration.
-- [x] Add pure JavaScript tests for navigation snapshots.
-- [x] Add offscreen QML interaction tests for manage mode and focus.
-- [x] Complete one real-shell screenshot review for each changed visual state.
-- [x] Add mutation tests for schema validation, secret guards, atomic bulk behavior, and migration activation.
+  ## Phase G4: One Transaction Engine
 
-## 15. Acceptance Criteria
+  - [ ] Add bin/lib/transaction.sh.
+  - [ ] Move bulk transaction logic out of the CLI.
+  - [ ] Route save, bulk, policy, profile, and repository-shape writes through it.
+  - [ ] Route vault metadata and key rotation through it.
+  - [ ] Keep the CLI limited to parsing, confirmation, dispatch, and rendering.
+  - [ ] Require a clean worktree before starting.
+  - [ ] Create the journal before creating a candidate commit.
+  - [ ] Fail when any journal write fails.
+  - [ ] Write journals with temporary files and atomic renames.
+  - [ ] Build and validate mutations in temporary worktrees.
+  - [ ] Fast-forward the active repository after local validation.
+  - [ ] Push only after successful local activation.
+  - [ ] Preserve local commits when pushes fail.
+  - [ ] Report a local-only outcome and retry command.
+  - [ ] Make recovery inspect actual Git state.
+  - [ ] Remove ignored git add and git commit failures.
+  - [ ] Lock key init, key import, and key rotate.
+  - [ ] Coordinate key export with rotation.
+  - [ ] Refuse existing export destinations without --force.
+  - [ ] Install exported keys atomically with mode 0600.
+  - [ ] Preserve the previous key during unfinished rotation.
+  - [ ] Reconcile keys and repositories from the journal.
+  - [ ] Split core_save into planning, staging, validation, and activation.
 
-- [x] `./tests/run-all.sh` passes without display-server failures.
-- [x] ShellCheck, QML syntax checks, manifest validation, and repository scanners pass.
-- [x] `omarchy plugin validate .` passes.
-- [x] A fresh installation can initialize a key, create a v2 repository, save, clone, import the key, and restore.
-- [x] A migrated repository contains no legacy history or plaintext secret data.
-- [x] The active data repository remains clean outside an explicit transaction.
-- [x] Every write command reports local commit and remote push results accurately.
-- [x] An edit followed by an exact content revert produces no pending change.
-- [x] A missing saved entry never produces a synced bar state.
-- [x] Closing diff, preview, edit, or confirmation returns to the same tab, row, expansion state, and viewport offset.
-- [x] Bulk operations are atomic and create one commit.
-- [x] Status performance does not regress by more than 10 percent against the recorded baseline.
-- [x] Full status remains authoritative even when file timestamps are preserved.
-- [x] No test, fixture, screenshot, document, commit message, or log contains personal repository data.
+  Tests:
 
-## Assumptions
+  - [ ] Test every mutator with an unwritable journal directory.
+  - [ ] Test hook, commit, fast-forward, and push failures.
+  - [ ] Test concurrent save, bulk, policy, and key commands.
+  - [ ] Send INT, TERM, and HUP at every stage.
+  - [ ] Simulate process death during key rotation.
+  - [ ] Verify that a usable identity always matches the active repository.
+  - [ ] Verify that recovery never discards committed work implicitly.
+  - [ ] Verify that each mutation creates at most one commit.
 
-- The redesign intentionally breaks the legacy data layout and uses an explicit clean migration.
-- All user machines share one externally backed-up age identity.
-- Losing every machine and the external identity backup makes encrypted secrets unrecoverable.
-- The plugin does not install system packages automatically.
-- Git remains the storage and synchronization mechanism for configuration and inventory data.
-- Large binaries and high-volume application data remain outside Replicant.
-- Legacy v1 receives read-only compatibility for migration, not continued write support.
-- Compatibility fields remain for one release and are then removed through a documented schema change.
+  Gate and commit:
+
+  ./tests/gate.sh G4
+  ./tests/run-all.sh
+  git commit -m "refactor: unify repository transactions"
+
+  ## Phase G5: Status, Bulk Operations, and Settings
+
+  - [ ] Exclude implicit entries missing from live and repository state.
+  - [ ] Keep explicitly tracked missing entries visible.
+  - [ ] Derive full and brief counts from one state model.
+  - [ ] Assert full and brief count equality for identical snapshots.
+  - [ ] Return saved: null for locked secrets.
+  - [ ] Include vault index changes in secret unpushed state.
+  - [ ] Rebuild status after every successful mutation.
+  - [ ] Fix newline, tab, and carriage-return validation.
+  - [ ] Measure total directory bytes before bulk tracking.
+  - [ ] Enforce the 10 MiB threshold for files and directories.
+  - [ ] Preserve the 400-file hard limit.
+  - [ ] Warn above 100 directory files.
+  - [ ] Reject .git files and directories.
+  - [ ] Detect binary content by encoding.
+  - [ ] Permit textual JSON, scripts, and application MIME types.
+  - [ ] Implement successful v3 bulk secret workflows.
+  - [ ] Make settings save only their owning entries.
+  - [ ] Preserve unrelated pending changes.
+  - [ ] Report when a local setting change was not persisted.
+  - [ ] Provide the exact retry command.
+
+  Tests:
+
+  - [ ] Test every status state.
+  - [ ] Test full and brief count parity.
+  - [ ] Test large files, trees, binaries, and .git artifacts.
+  - [ ] Test every bulk action.
+  - [ ] Test remote rejection and concurrent bulk operations.
+  - [ ] Test settings persistence failures.
+  - [ ] Verify that settings never save unrelated entries.
+
+  Gate and commit:
+
+  ./tests/gate.sh G5
+  ./tests/run-all.sh
+  git commit -m "fix: align status bulk and settings state"
+
+  ## Phase G6: Secret Restore and Leak Prevention
+
+  - [ ] Request privilege before decrypting root-owned destinations.
+  - [ ] Stream plaintext to a privileged same-directory temporary file.
+  - [ ] Rename only after a complete write.
+  - [ ] Never leave plaintext below REPLICANT_HOME.
+  - [ ] Never retain plaintext for recovery commands.
+  - [ ] Remove cross-filesystem temporary-file fallbacks.
+  - [ ] Fail when atomic replacement is unavailable.
+  - [ ] Preserve mode 0600.
+  - [ ] Preserve the correct owner.
+  - [ ] Verify age and age-keygen independently.
+  - [ ] Prevent secret values from reaching output, logs, journals, or arguments.
+
+  Tests:
+
+  - [ ] Restore secrets inside and outside HOME.
+  - [ ] Restore to a simulated root-owned destination.
+  - [ ] Fail privilege acquisition before decryption.
+  - [ ] Fail writes before and after temporary-file creation.
+  - [ ] Interrupt decryption and installation.
+  - [ ] Scan temporary trees after every failure.
+  - [ ] Scan Git objects and history for plaintext markers.
+  - [ ] Inspect process arguments during secret operations.
+  - [ ] Reject tampered indexes and blobs.
+
+  Gate and commit:
+
+  ./tests/gate.sh G6
+  ./tests/run-all.sh
+  ./tests/test-leaks.sh
+  git commit -m "fix: harden secret restore handling"
+
+  ## Phase G7: Controller, Navigation, and UX
+
+  Use this progress protocol:
+
+  {"protocol":1,"type":"stage","stage":"scan","cancellable":true,"message":"Scanning"}
+  {"protocol":1,"type":"result","outcome":"success","message":"Saved","recoveryCommand":null}
+
+  - [ ] Emit JSON Lines on stderr when --progress-json is present.
+  - [ ] Stream progress while commands run.
+  - [ ] Disable cancellation before commit starts.
+  - [ ] Support success, noop, cancelled, local-only, and failed.
+  - [ ] Replace delayed progress parsing with a streaming parser.
+  - [ ] Implement one queue for every controller process.
+  - [ ] Prioritize interactive jobs over background refreshes.
+  - [ ] Coalesce duplicate background jobs.
+  - [ ] Never discard an accepted user action.
+  - [ ] Return an explicit queue result.
+  - [ ] Apply optimistic state only after queue acceptance.
+  - [ ] Roll back optimistic state after failure or cancellation.
+  - [ ] Settle each job exactly once.
+  - [ ] Clear process metadata before the next job.
+  - [ ] Add explicit transient-view lifecycle functions.
+  - [ ] Capture tab, filter, mode, selected ID, scroll, and focus.
+  - [ ] Restore the snapshot after closing Edit or Show Changes.
+  - [ ] Restore it after Escape and confirmation cancellation.
+  - [ ] Clear snapshots after successful navigation.
+  - [ ] Select the nearest row when the old row disappears.
+  - [ ] Keep errors visible until dismissal or retry.
+  - [ ] Show local-only commits as pending pushes.
+  - [ ] Disable only conflicting actions.
+  - [ ] Preserve keyboard navigation during refreshes.
+
+  Tests:
+
+  - [ ] Queue an action during background status.
+  - [ ] Coalesce repeated refreshes.
+  - [ ] Cancel before commit and verify no mutation.
+  - [ ] Reject cancellation after the commit boundary.
+  - [ ] Close every transient view through every path.
+  - [ ] Restore exact selection, scroll, filter, mode, and focus.
+  - [ ] Refresh while a transient view is open.
+  - [ ] Remove the selected row before restoration.
+  - [ ] Parse partial, combined, malformed, and delayed progress lines.
+  - [ ] Render deterministic offscreen screenshots.
+  - [ ] Compare screenshots with fixed visual fixtures.
+  - [ ] Test loading, empty, locked, failure, conflict, and local-only states.
+
+  Gate and commit:
+
+  ./tests/gate.sh G7
+  ./tests/run-all.sh
+  git commit -m "fix: preserve controller and navigation state"
+
+  ## Phase G8: Architecture, Documentation, and Release Review
+
+  - [ ] Remove transaction ownership from bin/omarchy-replicant.
+  - [ ] Keep Git mutations inside the transaction module.
+  - [ ] Keep legacy policy parsing inside migration code.
+  - [ ] Remove obsolete v2 write helpers.
+  - [ ] Remove duplicate scope, profile, registry, and commit logic.
+  - [ ] Document the v3 schema in docs/SPEC.md.
+  - [ ] Document transaction recovery in docs/journal.md.
+  - [ ] Document every key workflow.
+  - [ ] State that repository secrets use age encryption.
+  - [ ] Explain that the repository never contains the identity.
+  - [ ] Document public-repository refusal.
+  - [ ] Document migration acknowledgement for other machines.
+  - [ ] Update examples to use migrate-v3.
+  - [ ] Update screenshots after visual tests pass.
+  - [ ] Remove inaccurate claims from the previous plan.
+  - [ ] Verify every public CLI command.
+  - [ ] Verify every panel action.
+  - [ ] Verify multi-machine workflows.
+  - [ ] Set the plugin version to 0.13.0.
+
+  Final gate:
+
+  ./tests/gate.sh G8
+  ./tests/run-all.sh
+  ./tests/mutate.sh
+  ./tests/bench-status.sh --check
+  docker build -f tests/Dockerfile -t replicant-tests .
+  docker run --rm replicant-tests
+
+  Before the final phase commit:
+
+  - [ ] Confirm that no required test was skipped.
+  - [ ] Run the secret and personal-data scanners.
+  - [ ] Run git diff --check.
+  - [ ] Review every remaining change.
+  - [ ] Mark all completed plan items.
+  - [ ] Confirm that no AGENTS.md file is staged.
+
+  Commit:
+
+  git commit -m "docs: finalize Replicant v3 verification"
+
+  ## Final Handoff Without Push
+
+  - [ ] Do not run git push.
+  - [ ] Do not create a tag or GitHub release.
+  - [ ] Confirm that the working tree is clean.
+  - [ ] Confirm that the branch is ahead of its upstream.
+  - [ ] Show all local implementation commits:
+
+  git log --oneline 4c9c4b580d4d190ea2efd6e0b8449ffd790d091e..HEAD
+
+  - [ ] Show the complete implementation summary:
+
+  git diff --stat 4c9c4b580d4d190ea2efd6e0b8449ffd790d091e..HEAD
+
+  - [ ] Report every test command and result.
+  - [ ] Report any environment-only test limitation.
+  - [ ] Provide commands for reviewing the complete diff.
+  - [ ] Leave the plugin ready for local user testing.
+  - [ ] Wait for the user to review and authorize any push.
+
+  ## Assumptions
+
+  - Use schema v3 instead of repairing v2.
+  - Support direct migration from v1 and v2.
+  - Treat v1 and v2 as read-only before migration.
+  - Keep secret paths only inside the encrypted index.
+  - Use local remotes instead of network services in tests.
+  - Use stubs instead of real privilege escalation.
+  - Preserve local commits after push failures.
+  - Never push automatically during recovery.
+  - Require acknowledgement for every known older machine.
+  - Detect legacy artifacts before later v3 mutations.

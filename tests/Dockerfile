@@ -11,10 +11,14 @@
 # and $USER stays unset, as in a systemd unit.
 FROM archlinux:latest
 
-# qt6-declarative brings qmltestrunner, for the panel's logic in replicant.js.
-# age brings the post-quantum keys the vault tests generate at runtime.
+# qt6-declarative brings qmltestrunner, for the panel logic and the
+# controller harness in tests/qml. age brings the post-quantum keys the vault
+# tests generate at runtime. openssh and curl are present so the gate can prove
+# that network access is stubbed, not absent. procps and time provide the
+# benchmark clock. github-cli stands in for gh, which every suite stubs.
 RUN pacman -Syu --noconfirm --needed git jq shellcheck diffutils which qt6-declarative age \
- && pacman -Scc --noconfirm
+    openssh curl time procps github-cli \
+  && pacman -Scc --noconfirm
 
 RUN useradd -m tester
 COPY --chown=tester:tester . /home/tester/replicant

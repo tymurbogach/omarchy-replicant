@@ -21,6 +21,7 @@ This document describes the data model of the plugin and the rules that the code
 | Module | What it holds |
 | --- | --- |
 | `manifest.sh` | The shipped lists, the user's list, Omarchy's defaults, the repo version guard |
+| `schema.sh` | The v3 repository schema: the version marker, the write gate, entries validation, machine records |
 | `registry.sh` | One normalized row per entry from every source that names one |
 | `categories.sh` | The areas that the panel files every entry under |
 | `scopes.sh` | Profiles, and whether each file is shared, kept per profile, or off |
@@ -41,7 +42,7 @@ This document describes the data model of the plugin and the rules that the code
 | `save.sh` | Saves as transactions: snapshot, one commit, fast-forward, push |
 | `transaction.sh` | The one journal and lifecycle every mutation shares: worktree transactions, shape commits, resume, atomic installs |
 | `bulk.sh` | Validates and applies multi-entry changes in one transaction |
-| `migrate.sh` | Migrates a clean v1 repository into a new encrypted v2 repository |
+| `migrate.sh` | Migrates clean v1 and v2 repositories into a new encrypted v3 repository; owns every legacy policy read |
 | `restore.sh` | The restore plan for each area, and how each area is put back |
 | `plugins.sh` | Plugins and themes: origins, inventories, and installs on request |
 | `history.sh` | Copies that left the repo, and bringing them back from git history |
@@ -94,13 +95,15 @@ The plugin is built for a desktop and a laptop that share one private repo.
 - `state/<machine>/` holds the inventory of each machine. A shared `state/` made each machine
   overwrite the other's package list on every save.
 - A profile is claimed, never assumed. `guess_profile` asks the chassis, so every laptop guesses
-  `laptop`. On the first save, `ensure_profile_recorded` writes the resolved name into
-  `.replicant-profiles`.
+  `laptop`. On the first save, `ensure_profile_recorded` writes the resolved name into this
+  machine's record under `.replicant/machines/`. The machine JSON record is the only store of the
+  active profile on version 3.
 - A role is taken when another machine is recorded under it, or when its tree exists and another
   machine has saved into this repo. Then the new machine uses its hostname, which is unique. The
   function only assigns: a machine that has a profile keeps it.
-- Every tracked file has a scope in `.replicant-sync`: `shared`, `profile` or `off`. The file is in
-  the repo, because "monitors are machine-specific" is a fact about the setup, not about one machine.
+- Every tracked file has a scope in `.replicant/entries.json`: `shared`, `profile` or `off`.
+  The file is in the repo, because "monitors are machine-specific" is a fact about the setup,
+  not about one machine.
 - `profile` stores the copy under `profiles/<profile>/config/<rel>`, so each profile keeps its own
   copy. `hypr/monitors.lua` starts as `profile`. Switching a file off means that nobody gets a backup.
 - `repo_path_for` is the only function that knows where a copy lives. The copy pass, the prune pass,
@@ -113,8 +116,10 @@ The plugin is built for a desktop and a laptop that share one private repo.
 - `MANIFEST` and `SECRETS_MANIFEST` are public plugin source. They name only the paths that any
   Omarchy machine plausibly has. Nothing machine-specific goes into them, and `run-all.sh` fails on
   a personal path or name in `bin/`.
-- `.replicant-track` in the user's repo holds the user's own entries. It lives in the repo, because
-  "back up my script" is a decision about the setup.
+- The user's own entries live in the user's repo: config entries as `user` records in
+  `.replicant/entries.json`, secret entries in the encrypted vault index. They live in the repo,
+  because "back up my script" is a decision about the setup. (Version 1 and 2 kept them in
+  `.replicant-track`; the migration carries them over.)
 - `rebuild_tracked` joins the shipped list, the user's list and the found entries into `TRACKED`
   and `TRACKED_SECRETS`. Every loop that means "everything tracked" reads those two arrays.
 - `load_user_manifest` has a read-only fallback, and `ensure_track_file` does the migration. Without
@@ -275,6 +280,11 @@ commits arrive knows which one is right, so that moment writes it down.
   snapshot in a detached worktree and require a clean tree; shape writes commit only their own
   paths beside unrelated pending edits. A journal that cannot be written fails the mutation.
   A failed push keeps the local commit with its journal and names the retry.
+- Recovery inspects actual Git state, never only the journal. `tx list` shows abandoned
+  transactions, `tx resume <uuid>` fast-forwards a committed one into the active repo and pushes,
+  and `tx discard <uuid>` drops a pre-commit one (a committed one needs `--force`). Recovery never
+  discards committed work implicitly, and `doctor` reports abandoned transactions with the exact
+  resume or discard command.
 - A shape commit stages only the paths that exist on disk or in the index, and commits only
   the staged subset with rename detection off: a path that stages nothing once made the commit
   fail while reporting success, so an untrack was never committed.
@@ -313,20 +323,29 @@ commits arrive knows which one is right, so that moment writes it down.
 - The hook is rewritten whenever it differs from the plugin's version. It fails closed: a missing
   scanner blocks the commit. The hook lets vault ciphertext (`*.age`) through.
 - A secret is never rendered. `core_diff` says only whether a secret differs, and the JSON carries a
-  kind and a mode, never values. In version 1 it also carried variable names. In version 2 it
-  carries only a count, and a locked row carries no count. See hard rule 11 in `CONTRIBUTING.md`.
-- In version 2 every secret lives encrypted in `vault/blobs/` under a random opaque ID, with its
-  path, scope and blob ID inside the encrypted `vault/index.age`. The repo holds only the public
+  kind and a mode, never values. It carries only a count, and a locked row carries no count.
+  See hard rule 11 in `CONTRIBUTING.md`.
+- In version 3 every secret lives encrypted with age in `vault/blobs/` under a random opaque ID,
+  with its path, scope, source and blob ID inside the encrypted `vault/index.age` (index version 2).
+  The schema marker at `.replicant/schema.json` carries the record
+  `{"dataVersion": 3, "secretFormat": "age-pq-v2"}`. Non-secret policy lives in
+  `.replicant/entries.json`, keyed by entry id with an absolute live path, a kind (`config` or
+  `dir`), a scope (`shared`, `profile` or `off`) and a source (`user` or `override`); secret
+  metadata lives only inside the encrypted index, never beside it. The repo holds only the public
   recipient in `.replicant/recipient.txt`. The shared private identity lives at
-  `$REPLICANT_HOME/keys/identity.txt` at mode 600 and never enters Git, logs, status JSON, backups
-  or temporary worktrees.
+  `$REPLICANT_HOME/keys/identity.txt` at mode 600 and never enters Git, logs, status JSON, backups,
+  journals or temporary worktrees.
 - One machine runs `key init`, backs the identity up with `key export` to a path outside the repo
-  and the state dir, and each other machine adopts it once with `key import`. `key status` reports
-  whether this machine can read the vault, and `doctor` repeats its remediation.
+  and the state dir, and each other machine adopts it once with `key import`. `key export` refuses
+  an existing destination without `--force` and installs the backup atomically at mode 600.
+  `key status` reports whether this machine can read the vault, and `doctor` repeats its remediation.
+  Init, import and rotate take the repo lock, so an export never reads a half-rotated identity.
 - A secret whose vault cannot be read shows as `locked`. The bar counts locked secrets apart from
   unsaved ones and asks for the key, never for a save. `count_changes` prints
   `<unsaved> <incoming> <locked>`, and both brief and full status publish `locked`.
-- `key rotate` re-encrypts every blob and the index to a new recipient. Rotation cannot revoke
+- `key rotate` re-encrypts every blob and the index to a new recipient. The rotation journal
+  opens before the vault is touched and closes after the rotated commit lands; a rotation that
+  dies midway keeps its journal and its previous identity for recovery. Rotation cannot revoke
   ciphertext already pushed: it stays readable with the old key. After a private key compromise,
   start a new clean repository instead of rotating.
 - A tracked secret that only root can read does not end the backup. The backup names it with the
@@ -336,27 +355,37 @@ commits arrive knows which one is right, so that moment writes it down.
 
 ## Status contract
 
-- Full `status --json` carries `schema_version: 2` and one `entries` array. Each entry carries
-  `id`, `label`, `kind`, `source`, `category`, `scope`, `exists`, `saved`, `is_default`, `dirty`,
-  `unpushed`, `incoming`, `sync_state`, `is_dir`, `nfiles` and `locked`. A locked secret omits `src`.
+- Full `status --json` carries `schema_version: 3` and one `entries` array. Each entry carries
+  `id`, `label`, `kind`, `source`, `category`, `scope`, `exists`, `saved`, `savedKnown`, `is_default`,
+  `dirty`, `unpushed`, `incoming`, `sync_state`, `is_dir`, `nfiles` and `locked`.
+  A locked secret omits `src`.
 - A locked secret carries `saved: null` and `savedKnown: false`, because the client cannot inspect the
   encrypted index. Other entries carry a boolean `saved` and `savedKnown: true`.
 - Full and brief status derive their unsaved, incoming, locked and missing counts from the same entry
   state. Full status excludes implicit entries that are absent on the machine and in the repo.
 - The full payload also carries `counts`, `encryption` and `migration`. The old `configs` and
   `secrets` arrays remain for one compatibility release. The brief payload keeps its small shape.
-- `source` is `user` for a personal entry and `override` for shipped, discovered or v2 override
-  entries. `kind` is `config`, `dir` or `secret`.
+- `source` is `user` for a personal entry and `override` for shipped, discovered or migrated
+  override entries. `kind` is `config`, `dir` or `secret`.
 
 ## Migration
 
-- `migrate-v2` runs from a terminal with `--yes`. It requires a clean and synchronized v1 repo,
-  an empty private remote, a safe external identity backup path and post-quantum age support.
+- `migrate-v3` moves a clean v1 or v2 repository into a new encrypted v3 repository. It requires a
+  clean and synchronized source repo, an empty private remote, a safe external identity backup path
+  and post-quantum age support. Without `--yes` it prints the migration summary and stops; `--yes`
+  acknowledges that every recorded machine is upgraded or offline. `migrate-v2` is a deprecated
+  forwarding alias for one release: it migrates to version 3, never to version 2.
+- A v1 or v2 clone stays readable for inspection but every writer refuses it until `migrate-v3`
+  runs. The command lists every recorded machine in its summary before accepting `--yes`.
 - The command stages under `$REPLICANT_HOME/migration/<id>/repo`, creates one root commit, pushes it,
-  clones it independently and checks the result before activation.
+  clones it independently and checks the result before activation. A recovery journal records the
+  migration until activation completes. A failed preflight, encryption step, validation step, push
+  or clone leaves the active source repo and the local identity exactly as they were.
 - The old repository is renamed to `legacy-repo-<epoch>`. The command never deletes it or its remote.
   `migration-warning` remains until the user confirms credential rotation and legacy cleanup in the panel.
-- A failed preflight, encryption step, validation step, push or clone leaves the active v1 repo in place.
+- The data repository is always private. `create` requests private visibility, verifies it after
+  creation, and refuses an existing public remote before any local mutation. It never flips a public
+  repository to private automatically.
 
 ## The safety net
 
@@ -404,8 +433,10 @@ profiles by their marker files. Nothing is tracked until a person presses Track.
 ## A writer migrates first
 
 A fallback that makes a read correct does not make a write correct. A read-modify-write against a
-list that the fallback invented is a delete. So every writer of `.replicant-sync` calls
-`ensure_scope_file` first, and every writer of `.replicant-track` calls `ensure_track_file` first.
+list that the fallback invented is a delete. So every writer of the legacy `.replicant-sync` calls
+`ensure_scope_file` first, and every writer of the legacy `.replicant-track` calls
+`ensure_track_file` first. On version 3 both are no-ops: policy writes validate
+`.replicant/entries.json` and the vault index before mutation instead.
 
 ## Root-owned files
 

@@ -34,7 +34,8 @@ Press **Create private repo**. The panel checks both GitHub connection methods a
 Open the panel again. It shows the repo name and every tracked file.
 
 > If a repo with that name already exists, the plugin links to it instead. If that repo is public,
-> the plugin warns you. Make it private before you push secrets:
+> the plugin refuses it before changing anything local: secrets never go to a public repo. Make it
+> private by hand first, then retry:
 > `gh repo edit <you>/<name> --visibility private`
 
 ## 3. Day to day
@@ -80,8 +81,8 @@ Every row in **Configs** has a scope button. It cycles through three answers:
 | **Off** | Not saved from here, and not restored onto here. The copy in the repo is left alone. |
 
 `hypr/monitors.lua` starts profile-scoped. Each machine gets a backup of its own screen layout, and
-neither gets the other's. The list lives in `.replicant-sync` **inside the repo**, so you decide once
-and both machines follow it.
+neither gets the other's. The decision lives in `.replicant/entries.json` **inside the repo**, so you
+decide once and both machines follow it.
 
 Your machine picks its profile from its chassis: a lid means `laptop`. To set it yourself:
 
@@ -115,12 +116,16 @@ failed. Press **Pull**, then save again.
 > Upgrading from 0.5? The old `.replicant-exclude` becomes `.replicant-sync` on the next save, and
 > every file that you switched off stays off. If you switched off `monitors.lua`, consider the
 > profile scope instead: you get a backup of it again.
+>
+> On a version 1 or 2 repository, every writer refuses until you migrate. Run `migrate-v3` from a
+> terminal: without `--yes` it prints the summary and stops, with `--yes` you acknowledge that every
+> recorded machine is upgraded or offline. The old repository stays under `legacy-repo-<epoch>`.
 
 ## 5. Files the plugin does not ship with
 
 The tracked list has two halves. The plugin ships the paths that any Omarchy machine plausibly has.
-Your own additions live in `.replicant-track` **inside your repo**, so they travel to your second
-machine like every other decision.
+Your own additions live **inside your repo** as `user` records in `.replicant/entries.json` (secrets
+in the encrypted vault index), so they travel to your second machine like every other decision.
 
 At the bottom of **Configs**, **Add more files** lists what is on this machine and not tracked yet.
 Each row gives a reason and a **Track** button. From a terminal:
@@ -176,7 +181,13 @@ land on a desktop that has no lid.
 omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --enable --yes
 P=~/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant
 $P/bin/omarchy-replicant clone https://github.com/<you>/<hostname>-replicant
+$P/bin/omarchy-replicant key import /path/to/identity.txt
 ```
+
+Import the shared identity before you save secrets: without it, secrets show as locked and saves
+refuse them with the import remediation. The identity backup lives outside the repo by design, so
+copy it over with your own channel first. `key status` tells you when this machine can read the
+vault, and `key rotate` replaces the identity later, re-encrypting every secret.
 
 Then open the panel, **Restore**, **Preview**. It prints what would change in each area, and it
 touches nothing. When it looks right, press **Restore everything**, or restore one area at a time.

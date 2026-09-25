@@ -74,17 +74,36 @@ omarchy-replicant policy set --scope off -- hypr/input.lua hypr/hyprlock.conf
 
 ### Status and migration
 
-Full JSON status uses one `entries` array. The old `configs` and `secrets` arrays remain for one
-compatibility release. A v1 repository reports that migration is required.
+Full JSON status uses one `entries` array and publishes `schema_version: 3`. The old `configs`
+and `secrets` arrays remain for one compatibility release. A v1 or v2 repository is read-only
+here and reports that migration is required.
 
 ```bash
 omarchy-replicant status --json
-omarchy-replicant migrate-v2 --remote /path/to/empty-private-remote \
+omarchy-replicant migrate-v3 --remote /path/to/empty-private-remote \
   --identity-backup /path/outside/replicant/identity.txt --yes
 ```
 
-Migration creates a new encrypted repository, verifies an independent clone, and keeps the old
-repository under `legacy-repo-<epoch>`. It never deletes old local or remote data.
+Without `--yes` the command prints the migration summary and stops. With `--yes` you acknowledge
+that every recorded machine is upgraded or offline. Migration creates a new encrypted repository,
+verifies an independent clone, and keeps the old repository under `legacy-repo-<epoch>`. It never
+deletes old local or remote data. (`migrate-v2` is a deprecated alias for one release.)
+
+### A key for secrets
+
+Secrets are encrypted with age. One machine creates the shared identity, backs it up outside the
+repo, and each other machine adopts it once:
+
+```bash
+omarchy-replicant key init
+omarchy-replicant key export /path/outside/replicant/identity.txt
+omarchy-replicant key import /path/outside/replicant/identity.txt
+omarchy-replicant key status
+omarchy-replicant key rotate   # re-encrypts every secret to a new identity
+```
+
+The repository holds only the public recipient. The private identity never enters Git, logs,
+status output, backups or journals.
 
 ### Your list, not somebody else's
 
@@ -184,6 +203,7 @@ A plugin with a settings file of its own, `~/.config/omarchy/<name>.json`, also 
 omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --enable --yes
 P=~/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant
 $P/bin/omarchy-replicant clone https://github.com/<you>/<hostname>-replicant
+$P/bin/omarchy-replicant key import /path/to/identity.txt   # before saving secrets
 ```
 
 Panel, **Restore**, *Preview* shows what would change, and touches nothing.

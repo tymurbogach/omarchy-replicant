@@ -468,6 +468,16 @@ tx_shape_finish() {
   return 0
 }
 
+# tx_shape_policy_paths: the policy stores every shape commit stages beside
+# its entry paths: the legacy track, sync and profile files (absent from v3
+# repositories by design, so tx_shape_commit skips them there) plus the v3
+# entries record and the vault index. One list so the shape transactions in
+# scopes, track and history cannot drift apart.
+tx_shape_policy_paths() {
+  printf '%s\n' .replicant-track .replicant-sync .replicant-profiles \
+    .replicant/entries.json vault/index.age
+}
+
 # core_shape_transact <msg> <scope> <relay> [relay-args...] -- <paths...>:
 # run one shape mutation as a transaction: the journal first, then the relay
 # (a core mutator that writes the active worktree), then one commit of exactly

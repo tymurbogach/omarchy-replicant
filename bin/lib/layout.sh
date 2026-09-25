@@ -146,16 +146,3 @@ ensure_v3_layout() {
   [[ -f "$rdir/entries.json" ]] || printf '{}\n' > "$rdir/entries.json"
   machine_metadata_write
 }
-
-# ensure_v2_layout: the version 2 skeleton. Only the migration path and the
-# legacy parity suites use it: every fresh repo is born v3. It stays until
-# migrate-v3 replaces the version 2 staging in phase G3.
-ensure_v2_layout() {
-  local rdir="$REPO_DIR/.replicant"
-  mkdir -p "$rdir/machines" "$REPO_DIR/vault/blobs"
-  if [[ ! -f "$rdir/schema.json" ]]; then
-    jq -nc '{dataVersion: 2, secretFormat: "age-pq-v1"}' > "$rdir/schema.json"
-  fi
-  [[ -f "$rdir/entries.json" ]] || printf '{}\n' > "$rdir/entries.json"
-  machine_metadata_write
-}

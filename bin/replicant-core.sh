@@ -72,6 +72,7 @@ case "${1:-}" in
   tx-list)            core_tx_list ;;
   tx-discard)         shift; core_tx_discard "$@" ;;
   tx-resume)          shift; core_tx_resume "$@" ;;
+  cache-invalidate)   briefcache_invalidate ;;
   status)             shift; core_status "$@" ;;
   diff)               core_diff "${2:-}" "${3:-auto}" ;;
   log)                core_log "${2:-8}" ;;

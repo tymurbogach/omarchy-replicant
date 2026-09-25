@@ -155,13 +155,15 @@ core_recover_transact() {
   [[ -n "$sha" ]] || { echo "usage: recover <sha> [--apply]" >&2; return 2; }
   local msg="recover: $sha"
   tx_shape_begin "recover" "$msg" || return 1
-  local txdir="$TX_DIR" candidate first more subject
+  local txdir="$TX_DIR" candidate first more subject p
+  local -a store_paths=()
+  while IFS= read -r p; do [[ -n "$p" ]] && store_paths+=("$p"); done < <(tx_shape_policy_paths)
   core_recover "$sha" 0 || { tx_abort "$txdir"; return 1; }
   first="${RECOVERED[0]}" more=$(( ${#RECOVERED[@]} - 1 ))
   subject="recover: $(rel_for_repo_path "$first")"
   (( more > 0 )) && subject+=", +$more more"
   subject+=" (from ${sha:0:7})"
-  candidate=$(tx_shape_commit "$subject" "$txdir" -- .replicant-track .replicant/entries.json vault/index.age ${RECOVERED[@]+"${RECOVERED[@]}"}) || return 1
+  candidate=$(tx_shape_commit "$subject" "$txdir" -- "${store_paths[@]}" ${RECOVERED[@]+"${RECOVERED[@]}"}) || return 1
   [[ -n "$candidate" ]] || return 0
   tx_shape_finish "$txdir" || return 1
   return 0

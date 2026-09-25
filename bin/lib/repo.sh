@@ -17,6 +17,14 @@ bootstrap_fail_at() {
 # exactly the staged paths, push after activation. Nothing here commits
 # directly, so no git failure can pass silently.
 
+# repo_remote_url: the origin URL, or nothing. Read-only helper so the CLI
+# never shells out to git itself.
+repo_remote_url() { git -C "$REPO_DIR" remote get-url origin 2>/dev/null || true; }
+
+# repo_hooks_path: the repo's core.hooksPath, or nothing. Read-only helper
+# so the CLI never shells out to git itself.
+repo_hooks_path() { git -C "$REPO_DIR" config core.hooksPath 2>/dev/null || true; }
+
 # repo_create <name> [do_push] [transport]: point a fresh v3 repo at a new
 # private GitHub repo. Every remote preflight runs before any local mutation:
 # a rejected or failed remote leaves the local repo exactly as it was. A

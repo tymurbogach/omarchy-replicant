@@ -413,25 +413,25 @@
 
   ## Phase G8: Architecture, Documentation, and Release Review
 
-  - [ ] Remove transaction ownership from bin/omarchy-replicant.
-  - [ ] Keep Git mutations inside the transaction module.
-  - [ ] Keep legacy policy parsing inside migration code.
-  - [ ] Remove obsolete v2 write helpers.
-  - [ ] Remove duplicate scope, profile, registry, and commit logic.
-  - [ ] Document the v3 schema in docs/SPEC.md.
-  - [ ] Document transaction recovery in docs/journal.md.
-  - [ ] Document every key workflow.
-  - [ ] State that repository secrets use age encryption.
-  - [ ] Explain that the repository never contains the identity.
-  - [ ] Document public-repository refusal.
-  - [ ] Document migration acknowledgement for other machines.
-  - [ ] Update examples to use migrate-v3.
-  - [ ] Update screenshots after visual tests pass.
-  - [ ] Remove inaccurate claims from the previous plan.
-  - [ ] Verify every public CLI command.
-  - [ ] Verify every panel action.
-  - [ ] Verify multi-machine workflows.
-  - [ ] Set the plugin version to 0.13.0.
+  - [x] Remove transaction ownership from bin/omarchy-replicant.
+  - [x] Keep Git mutations inside the transaction module.
+  - [x] Keep legacy policy parsing inside migration code.
+  - [x] Remove obsolete v2 write helpers.
+  - [x] Remove duplicate scope, profile, registry, and commit logic.
+  - [x] Document the v3 schema in docs/SPEC.md.
+  - [x] Document transaction recovery in docs/journal.md.
+  - [x] Document every key workflow.
+  - [x] State that repository secrets use age encryption.
+  - [x] Explain that the repository never contains the identity.
+  - [x] Document public-repository refusal.
+  - [x] Document migration acknowledgement for other machines.
+  - [x] Update examples to use migrate-v3.
+  - [x] Update screenshots after visual tests pass.
+  - [x] Remove inaccurate claims from the previous plan.
+  - [x] Verify every public CLI command.
+  - [x] Verify every panel action.
+  - [x] Verify multi-machine workflows.
+  - [x] Set the plugin version to 0.13.0.
 
   Final gate:
 
@@ -444,12 +444,12 @@
 
   Before the final phase commit:
 
-  - [ ] Confirm that no required test was skipped.
-  - [ ] Run the secret and personal-data scanners.
-  - [ ] Run git diff --check.
-  - [ ] Review every remaining change.
-  - [ ] Mark all completed plan items.
-  - [ ] Confirm that no AGENTS.md file is staged.
+  - [x] Confirm that no required test was skipped.
+  - [x] Run the secret and personal-data scanners.
+  - [x] Run git diff --check.
+  - [x] Review every remaining change.
+  - [x] Mark all completed plan items.
+  - [x] Confirm that no AGENTS.md file is staged.
 
   Commit:
 

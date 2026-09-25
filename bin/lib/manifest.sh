@@ -261,7 +261,7 @@ load_user_manifest() {
     while IFS=$'\t' read -r kind src rel; do
       [[ -n "${rel:-}" ]] || continue
       if [[ "$kind" == secret ]]; then USER_SECRETS+=("$src:$rel"); else USER_MANIFEST+=("$src:$rel"); fi
-    done < <(legacy_user_entries)
+    done < <(migrate_legacy_user_entries)
   fi
   rebuild_tracked
 }
@@ -291,7 +291,8 @@ load_v3_user_manifest() {
   return 0
 }
 
-# legacy_personal_present lives in legacy.sh, the migration-only module.
+# migrate_legacy_personal_present wraps the check in legacy.sh, the
+# migration-only module. Reads reach it only through migrate.sh.
 
 is_user_entry() {
   local rel="$1" entry

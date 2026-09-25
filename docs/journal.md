@@ -421,3 +421,65 @@ What changed:
   file that records the required legacy cleanup.
 - The migration suite covers dirty-source rejection, encrypted output,
   remote history, identity matching, and locked status output.
+
+## Section G8 (release review)
+
+New suite `tests/test-g8.sh`: 46 checks, all pass. It pins the release
+architecture and the v3 documentation: the CLI owns no git plumbing, the
+transaction module owns mutations, legacy parsing lives in migration code,
+no v2 writer remains, scope resolution has one path, and the docs name the
+v3 schema record, the policy stores, `migrate-v3`, recovery and every key
+workflow. `./tests/gate.sh G8` passes with 9 checks.
+
+What changed:
+
+- `bin/omarchy-replicant` lost its `git_repo` helper and its own cache
+  invalidation. `diff`, `log` and `doctor` read through new core helpers
+  (`core_diff_summary`, `core_log_text`, `repo_remote_url`,
+  `repo_hooks_path`), and every mutation invalidates through
+  `bash "$CORE" cache-invalidate`. The CLI parses, confirms, dispatches
+  and renders only.
+- `bin/lib/transaction.sh` gained `tx_shape_policy_paths`: the one list of
+  policy stores every shape commit stages. Scope, policy, track, forget
+  and recover build their commits from it. `core_profile_transact` runs
+  through `core_shape_transact` like every other policy write.
+- `bin/lib/migrate.sh` owns every legacy policy read through
+  `migrate_legacy_*` wrappers. `scopes.sh`, `manifest.sh` and `track.sh`
+  call the wrappers, never `legacy_*` directly.
+- `ensure_v2_layout` is gone: nothing writes version 2 records anymore.
+  The `validate_v2_entries`, `load_v2_entries` and `_v2_*` aliases stay as
+  read-only aliases for the legacy parity suite.
+- `scope_for` answers from the shared scope cache on version 3, the same
+  cache `scope_into` reads, so resolution has one path.
+- `docs/SPEC.md` documents the v3 schema record (`dataVersion` 3,
+  `age-pq-v2`), the entries registry, the encrypted vault index, schema
+  version 3, `migrate-v3` with its deprecated alias, public-repository
+  refusal, transaction recovery (`tx list`, `tx resume`, `tx discard`,
+  `doctor`) and every key workflow. `README.md` and
+  `docs/getting-started.md` migrate with `migrate-v3`, name the v3 policy
+  stores and carry the key workflows to the second machine.
+- The plugin manifest is 0.13.0.
+
+Transaction recovery, as documented: every mutation journals before it
+commits. `tx list` shows abandoned transactions, `tx resume` fast-forwards
+a committed one and pushes, `tx discard` drops a pre-commit one (a
+committed one needs `--force`). The key rotation journal and the migration
+journal cover the two operations that outlive one commit. Recovery never
+discards committed work implicitly.
+
+Verification: `./tests/run-all.sh` passed in 251 s with QML 57 passed and
+0 failed. `./tests/mutate.sh` caught all 87 mutations, including the new
+guards for the transaction engine, migration recovery and bulk validation.
+`./tests/bench-status.sh --check` passes (full 0.09 s against a
+0.25 s budget, brief 0.09 s against 0.10 s).
+`./tests/test-g7-screenshots.sh` passes with 8 visual fixtures matched, so
+the panel screenshots stand as reviewed.
+
+Environment note: the full parallel `run-all.sh` inside the Docker test
+image fails 3 checks in `test-interruptions.sh` (the push-interruption
+section). The git wrapper that stops the save never engages there: under
+parallel load the save does not reach the push stage inside the 4 s
+interruption window. The same image passes the suite 12/12 run alone, the
+local machine passes it 12/12, and a baseline image without these changes
+fails the same 3 checks in the full parallel run. The failure is a
+pre-existing load flake of that timing-sensitive suite, not a regression.

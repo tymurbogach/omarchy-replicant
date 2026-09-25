@@ -101,12 +101,12 @@ ensure_profile_recorded() {
 
 read_profile_map() {
   if repo_is_v3; then return 0; fi
-  legacy_read_profile_map
+  migrate_legacy_read_profile_map
 }
 
 profile_for_machine() {
   if repo_is_v3; then machine_profile "$1"; return; fi
-  legacy_profile_for_machine "$@"
+  migrate_legacy_profile_for_machine "$@"
 }
 
 # Resolved once per process: every scope lookup needs it. On version 3 the
@@ -245,7 +245,7 @@ load_scope_map() {
     while IFS= read -r line; do
       line="${line//[[:space:]]/}"
       [[ -n "$line" && -z "${SCOPE_OF[$line]:-}" ]] && SCOPE_OF[$line]=off
-    done < <(legacy_exclude_map)
+    done < <(migrate_legacy_exclude_map)
   fi
   return 0
 }
@@ -282,29 +282,16 @@ read_scopes() {
   return 0
 }
 
-# shipped_default_scope <rel>: the scope the plugin ships for an id, or
-# nothing. On version 3 there is no scope file to seed, so these defaults
-# apply without explicit override records: only a decision that differs from
-# them is written down.
-shipped_default_scope() {
-  local rel="$1" entry
-  for entry in "${DEFAULT_SCOPES[@]}"; do
-    [[ "${entry%%=*}" == "$rel" ]] && { printf '%s\n' "${entry##*=}"; return 0; }
-  done
-  return 1
-}
-
 # scope_for <rel> → shared | profile | off   (unlisted files are shared)
-# On version 3 the entries record is the only store, with the shipped
-# defaults behind it. On older layouts the scope file wins, then the legacy
-# off-list, then the shared default.
+# On version 3 the answer comes from the shared scope cache that scope_into
+# reads too: the entries record first, the shipped defaults behind it, shared
+# when neither names the id. One resolution path, never two. On older layouts
+# the scope file wins, then the legacy off-list, then the shared default.
 scope_for() {
-  local rel="$1" line k v scoped
+  local rel="$1" line k v
   if repo_is_v3; then
-    scoped=$(entries_scope_for "$rel")
-    case "$scoped" in shared|profile|off) printf '%s\n' "$scoped"; return 0 ;; esac
-    shipped_default_scope "$rel" && return 0
-    printf 'shared\n'
+    load_scope_map
+    printf '%s\n' "${SCOPE_OF[$rel]:-shared}"
     return 0
   fi
   while IFS= read -r line; do
@@ -320,7 +307,7 @@ scope_for() {
   if [[ ! -f "$SCOPE_FILE" && -f "$LEGACY_EXCLUDE_FILE" ]]; then
     while IFS= read -r line; do
       [[ "${line//[[:space:]]/}" == "$rel" ]] && { printf 'off\n'; return 0; }
-    done < <(legacy_exclude_map)
+    done < <(migrate_legacy_exclude_map)
   fi
   printf 'shared\n'
 }
@@ -381,7 +368,7 @@ ensure_scope_file() {
   local -a seed=()
   local migrated
   if [[ -f "$LEGACY_EXCLUDE_FILE" ]]; then
-    migrated=$(legacy_migrate_exclude || true)
+    migrated=$(migrate_legacy_migrate_exclude || true)
     while IFS= read -r line; do [[ -n "$line" ]] && seed+=("$line"); done <<<"$migrated"
     write_scope_file "${seed[@]}"
     echo "  · migrated .replicant-exclude to .replicant-sync (${#seed[@]} entries kept off)" >&2
@@ -557,12 +544,12 @@ core_sync() {
 }
 
 # scope_shape_paths <rel>: the repository paths one scope decision can touch.
-# A file lives at exactly one of the two copy paths; the scope stores and the
-# vault index cover the metadata. Prints one path per line.
+# A file lives at exactly one of the two copy paths; the shared policy stores
+# and the vault index cover the metadata. Prints one path per line.
 scope_shape_paths() {
   local rel="$1"
-  printf '%s\n' .replicant-sync .replicant/entries.json vault/index.age \
-    "config/$rel" "profiles/$(current_profile)/config/$rel"
+  tx_shape_policy_paths
+  printf '%s\n' "config/$rel" "profiles/$(current_profile)/config/$rel"
 }
 
 # core_sync_transact <rel> <on|off>: the sync switch as one transaction.
@@ -590,8 +577,9 @@ core_policy_transact() {
   local scope="${1:-}"
   shift || true
   [[ -n "$scope" && $# -gt 0 ]] || { echo "usage: policy set --scope <scope> -- <id...>" >&2; return 2; }
-  local -a ids=("$@") paths=(.replicant-sync .replicant/entries.json vault/index.age)
-  local id
+  local -a ids=("$@") paths=()
+  local id p
+  while IFS= read -r p; do [[ -n "$p" ]] && paths+=("$p"); done < <(tx_shape_policy_paths)
   for id in "${ids[@]}"; do
     paths+=("config/$id" "profiles/$(current_profile)/config/$id")
   done
@@ -600,16 +588,13 @@ core_policy_transact() {
 }
 
 # core_profile_transact <name>: move this machine to a profile, one commit.
+# It runs through the shared shape transaction like every other policy write,
+# so the journal, the commit and the push behave the same everywhere.
 core_profile_transact() {
   local want="${1:-}"
   [[ -n "$want" ]] || { echo "usage: profile <name>" >&2; return 2; }
   local msg="profile: $MACHINE is now '$want'"
-  tx_shape_begin "profile" "$msg" || return 1
-  local txdir="$TX_DIR" candidate
-  profile_report "$want" || { tx_abort "$txdir"; return 1; }
-  candidate=$(tx_shape_commit "$msg" "$txdir" -- .replicant-profiles .replicant/machines) || return 1
-  [[ -n "$candidate" ]] || return 0
-  tx_shape_finish "$txdir" || return 1
+  core_shape_transact "$msg" "profile" profile_report "$want" -- .replicant-profiles .replicant/machines || return 1
   echo "Files scoped to a profile will now be saved and restored from profiles/$want/." >&2
   return 0
 }

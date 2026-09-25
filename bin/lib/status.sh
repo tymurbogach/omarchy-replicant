@@ -254,6 +254,22 @@ core_changes() {
   fi
 }
 
+# core_diff_summary: pending worktree paths plus staged stats for `diff`
+# with no id. Read-only helper so the CLI never shells out to git itself.
+# The caller checks for a repo first.
+core_diff_summary() {
+  local pending staged
+  pending=$(git -C "$REPO_DIR" status --short 2>/dev/null | head -n 100)
+  if [[ -z "$pending" ]]; then
+    echo "nothing pending — everything copied in is committed" >&2
+  else
+    printf '%s\n' "$pending"
+  fi
+  staged=$(git -C "$REPO_DIR" diff --cached --stat 2>/dev/null | head -n 100)
+  [[ -n "$staged" ]] && { echo "--- staged ---" >&2; printf '%s\n' "$staged"; }
+  return 0
+}
+
 # core_shortcuts — the keyboard, in two halves. Omarchy's model is "defaults,
 # plus your overrides in hypr/bindings.lua", so the backup tracks the overrides
 # (a snapshot of every active binding would go stale with the next update) while
@@ -606,6 +622,14 @@ core_diff() {
       diff -u --label "omarchy default" --label "this machine" "$def" "$src" || true
       ;;
   esac
+}
+
+# core_log_text [n] — recent saves as text for `log`. Read-only helper so
+# the CLI never shells out to git itself. The caller checks for a repo first.
+core_log_text() {
+  local n="${1:-8}"
+  git -C "$REPO_DIR" log -n "$n" --date=format:'%d %b %H:%M' --pretty=format:'%C(dim)%ad%C(reset)  %s'
+  echo
 }
 
 # core_log [n] — recent saves as JSON, for the panel's activity list.

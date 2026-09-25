@@ -39,7 +39,7 @@ ensure_track_file() {
   mkdir -p "$(dirname "$USER_TRACK_FILE")" 2>/dev/null || true
   local -a seed=() entry
   for entry in "${LEGACY_PERSONAL[@]}"; do
-    legacy_personal_present "$entry" && seed+=("$(track_line_for "${entry%%:*}" "${entry##*:}" config)")
+    migrate_legacy_personal_present "$entry" && seed+=("$(track_line_for "${entry%%:*}" "${entry##*:}" config)")
   done
   for entry in "${LEGACY_PERSONAL_SECRETS[@]}"; do
     [[ -f "${entry%%:*}" || -f "$SECRETS_DIR/${entry##*:}" ]] &&
@@ -276,7 +276,9 @@ core_track_transact() {
     tx_abort "$txdir"
     return 0
   fi
-  candidate=$(tx_shape_commit "$msg" "$txdir" -- .replicant-track .replicant/entries.json vault/index.age) || return 1
+  local -a store_paths=() p
+  while IFS= read -r p; do [[ -n "$p" ]] && store_paths+=("$p"); done < <(tx_shape_policy_paths)
+  candidate=$(tx_shape_commit "$msg" "$txdir" -- "${store_paths[@]}") || return 1
   [[ -n "$candidate" ]] || return 0
   tx_shape_finish "$txdir" || return 1
   echo "saved with the next 'omarchy-replicant save --auto'" >&2
@@ -289,11 +291,12 @@ core_untrack_transact() {
   [[ -n "$id" ]] || { echo "usage: untrack <id>" >&2; return 2; }
   local msg="untrack: $id"
   tx_shape_begin "untrack" "$msg" "$id" || return 1
-  local txdir="$TX_DIR" candidate
+  local txdir="$TX_DIR" candidate p
+  local -a entry_paths=()
+  while IFS= read -r p; do [[ -n "$p" ]] && entry_paths+=("$p"); done < <(tx_shape_policy_paths)
+  entry_paths+=("config/$id" "profiles/$(current_profile)/config/$id" "secrets/$id" vault/blobs)
   core_untrack "$id" || { tx_abort "$txdir"; return 1; }
-  candidate=$(tx_shape_commit "$msg" "$txdir" -- .replicant-track .replicant/entries.json \
-    "config/$id" "profiles/$(current_profile)/config/$id" "secrets/$id" \
-    vault/index.age vault/blobs) || return 1
+  candidate=$(tx_shape_commit "$msg" "$txdir" -- "${entry_paths[@]}") || return 1
   [[ -n "$candidate" ]] || return 0
   tx_shape_finish "$txdir" || return 1
   return 0
@@ -305,11 +308,12 @@ core_forget_transact() {
   [[ -n "$id" ]] || { echo "usage: forget <id>" >&2; return 2; }
   local msg="forget: $id (gone from $MACHINE)"
   tx_shape_begin "forget" "$msg" "$id" || return 1
-  local txdir="$TX_DIR" candidate
+  local txdir="$TX_DIR" candidate p
+  local -a entry_paths=()
+  while IFS= read -r p; do [[ -n "$p" ]] && entry_paths+=("$p"); done < <(tx_shape_policy_paths)
+  entry_paths+=("config/$id" "profiles/$(current_profile)/config/$id" "secrets/$id" vault/blobs)
   core_forget "$id" || { tx_abort "$txdir"; return 1; }
-  candidate=$(tx_shape_commit "$msg" "$txdir" -- .replicant-track .replicant/entries.json \
-    "config/$id" "profiles/$(current_profile)/config/$id" "secrets/$id" \
-    vault/index.age vault/blobs) || return 1
+  candidate=$(tx_shape_commit "$msg" "$txdir" -- "${entry_paths[@]}") || return 1
   [[ -n "$candidate" ]] || return 0
   tx_shape_finish "$txdir" || return 1
   return 0

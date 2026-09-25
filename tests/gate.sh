@@ -349,7 +349,19 @@ gate_g7() {
   if "$HERE/qml-controller.sh" >/dev/null 2>&1; then ok "real controller QML suite passes"; else bad "real controller QML suite fails"; fi
   if "$HERE/test-g7-screenshots.sh"; then ok "fixed offscreen screenshots match"; else bad "offscreen screenshot suite fails"; fi
 }
-gate_g8() { section "G8 release gate"; bad "G8 is not implemented yet"; }
+gate_g8() {
+  section "G8 release gate"
+  "$HERE/coverage-check.sh" >/dev/null 2>&1 && ok "coverage manifest is complete" || bad "coverage manifest is incomplete"
+  [[ "$(jq -r .version "$ROOT/manifest.json" 2>/dev/null)" == "0.13.0" ]] && ok "plugin manifest is 0.13.0" || bad "plugin manifest is not 0.13.0"
+  if [[ -z "$(git -C "$ROOT" status --porcelain | grep -E '\.log$|\.tmp$|baseline\.txt$' || true)" ]]; then
+    ok "no stray test artifacts in the working tree"
+  else
+    bad "stray test artifacts remain"
+  fi
+  if "$HERE/test-g8.sh" >/dev/null 2>&1; then ok "architecture and documentation suite passes"; else bad "architecture and documentation suite fails"; fi
+  if "$HERE/test-migrate-v3.sh" >/dev/null 2>&1; then ok "migration suite still passes"; else bad "migration suite fails"; fi
+  if "$HERE/test-transaction.sh" >/dev/null 2>&1; then ok "transaction suite still passes"; else bad "transaction suite fails"; fi
+}
 
 "gate_$(echo "$PHASE" | tr '[:upper:]' '[:lower:]')"
 

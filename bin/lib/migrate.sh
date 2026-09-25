@@ -1,12 +1,27 @@
 # shellcheck shell=bash disable=SC2034
-# migrate.sh: one-way migration from the legacy v1 data repository to v2.
+# migrate.sh: one-way migration from legacy v1 and v2 data repositories to v3.
 # It stages every result outside the active worktree and activates it only
 # after validation, commit, remote push and an independent clone succeed.
+# This module owns every read of legacy policy: normal modules call the
+# migrate_legacy_* wrappers below, never the readers in legacy.sh directly.
 
 migration_error() {
   printf 'migrate-v3: %s\n' "$1" >&2
   return 1
 }
+
+# migrate_legacy_read_profile_map, migrate_legacy_profile_for_machine,
+# migrate_legacy_user_entries, migrate_legacy_personal_present,
+# migrate_legacy_exclude_map, migrate_legacy_migrate_exclude: the only
+# sanctioned path to the migration-only readers in legacy.sh. Versions 1 and
+# 2 stay readable for inspection and migration, and only version 3 accepts
+# writes, so everyday code reaches the old files only through these wrappers.
+migrate_legacy_read_profile_map() { legacy_read_profile_map "$@"; }
+migrate_legacy_profile_for_machine() { legacy_profile_for_machine "$@"; }
+migrate_legacy_user_entries() { legacy_user_entries "$@"; }
+migrate_legacy_personal_present() { legacy_personal_present "$@"; }
+migrate_legacy_exclude_map() { legacy_exclude_map "$@"; }
+migrate_legacy_migrate_exclude() { legacy_migrate_exclude "$@"; }
 
 # core_migration_confirm records the user's acknowledgement outside the data
 # repository. The panel calls this internal operation after its confirmation.
@@ -71,7 +86,7 @@ migration_machine_lines() {
       [[ -d "$f" ]] || continue
       m=$(basename -- "$f")
       validate_machine_id "$m" 2>/dev/null || continue
-      p=$(legacy_profile_for_machine "$m" 2>/dev/null || true)
+      p=$(migrate_legacy_profile_for_machine "$m" 2>/dev/null || true)
       printf '%s\t%s\n' "$m" "${p:-unrecorded}"
     done
   fi

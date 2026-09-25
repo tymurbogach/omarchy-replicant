@@ -71,12 +71,12 @@ else
   DEFAULT_REPO_NAME="$_replicant_host-replicant"
 fi
 
-git_repo() { git -C "$REPO_DIR" "$@"; }
-
-# The brief-status cache lives at $REPLICANT_HOME/cache/state-v2.json. The core
-# invalidates it on every mutation it performs; this CLI commits and pulls
-# directly, so it removes the file itself after each write. Best effort only.
-invalidate_brief_cache() { rm -f -- "$REPLICANT_HOME/cache/state-v2.json" 2>/dev/null || true; }
+# Cache invalidation and every git invocation live in the core modules:
+# briefcache_invalidate in bin/lib/briefcache.sh drops the brief-status
+# cache, and the transaction engine in bin/lib/transaction.sh owns the
+# repository mutations. This CLI parses, confirms, dispatches and renders,
+# and it reaches the core through `load_core` or `bash "$CORE"`. A bare
+# `git -C` here would be transaction ownership outside the engine.
 
 # Serialize everything that writes to the repo. Without this, two commands
 # racing (the panel firing `set` twice while a savegame is still committing)
@@ -125,8 +125,8 @@ cmd_tx() {
   [[ "$sub" != "list" ]] && shift || true
   case "$sub" in
     list) bash "$CORE" tx-list ;;
-    resume) [[ -n "${1:-}" ]] || fail "usage: omarchy-replicant tx resume <uuid>"; bash "$CORE" tx-resume "$1" || exit 1; invalidate_brief_cache ;;
-    discard) [[ -n "${1:-}" ]] || fail "usage: omarchy-replicant tx discard <uuid> [--force]"; bash "$CORE" tx-discard "$@" || exit 1; invalidate_brief_cache ;;
+    resume) [[ -n "${1:-}" ]] || fail "usage: omarchy-replicant tx resume <uuid>"; bash "$CORE" tx-resume "$1" || exit 1; bash "$CORE" cache-invalidate ;;
+    discard) [[ -n "${1:-}" ]] || fail "usage: omarchy-replicant tx discard <uuid> [--force]"; bash "$CORE" tx-discard "$@" || exit 1; bash "$CORE" cache-invalidate ;;
     *) fail "usage: omarchy-replicant tx list|resume <uuid>|discard <uuid> [--force]" ;;
   esac
 }
@@ -239,7 +239,7 @@ cmd_save() {
   ensure_core
   local rc=0
   bash "$CORE" save "$@" || rc=$?
-  invalidate_brief_cache
+  bash "$CORE" cache-invalidate
   return "$rc"
 }
 
@@ -272,21 +272,16 @@ cmd_savegame() {
 }
 
 # `diff` with no id: what is pending in the repo as a whole. With an id it is
-# cmd_open_diff instead, which compares one file.
+# cmd_open_diff instead, which compares one file. The read lives in the core
+# (core_diff_summary); this keeps only the user-facing command syntax.
 cmd_diff() {
   ensure_core
-  # Without this the last git call exits 128 into main() and the user gets an
-  # empty header and a failure code, where every other command says "no repo".
+  # Without this the last core call exits non-zero into main() and the user
+  # gets an empty header and a failure code, where every other command says
+  # "no repo".
   [[ -d "$REPO_DIR/.git" ]] || fail "no repo yet — run 'create' or 'clone' first"
-  local pending; pending=$(git_repo status --short 2>/dev/null | head -n 100)
-  if [[ -z "$pending" ]]; then
-    ok "nothing pending — everything copied in is committed"
-  else
-    printf '%s\n' "$pending"
-  fi
-  local staged; staged=$(git_repo diff --cached --stat 2>/dev/null | head -n 100)
-  [[ -n "$staged" ]] && { echo "--- staged ---" >&2; printf '%s\n' "$staged"; }
-  return 0
+  load_core
+  core_diff_summary
 }
 
 # edit/diff/reset by config id — used by the panel.
@@ -433,7 +428,7 @@ cmd_migrate_v3() {
   ensure_core
   load_core
   core_migrate_v3 "$@" || exit 1
-  invalidate_brief_cache
+  bash "$CORE" cache-invalidate
 }
 
 cmd_migrate_v2() {
@@ -445,7 +440,7 @@ cmd_migration_confirm() {
   ensure_core
   load_core
   core_migration_confirm || exit 1
-  invalidate_brief_cache
+  bash "$CORE" cache-invalidate
 }
 
 # The restore and reset implementations live in bin/lib/restore.sh. Keep this
@@ -521,8 +516,8 @@ cmd_log() {
   ensure_core
   if (( json )); then bash "$CORE" log "$n"; else
     [[ -d "$REPO_DIR/.git" ]] || fail "no repo yet"
-    git_repo log -n "$n" --date=format:'%d %b %H:%M' --pretty=format:'%C(dim)%ad%C(reset)  %s'
-    echo
+    load_core
+    core_log_text "$n"
   fi
 }
 
@@ -550,7 +545,7 @@ cmd_sync() {
   [[ -n "$id" && -n "$want" ]] || fail "usage: omarchy-replicant sync <id> on|off"
   load_core
   core_sync_transact "$id" "$want" || exit 1
-  invalidate_brief_cache
+  bash "$CORE" cache-invalidate
 }
 
 # cmd_scope <id> <shared|profile|off> — the three-state version of `sync`, and
@@ -564,7 +559,7 @@ cmd_scope() {
   [[ -n "$id" && -n "$want" ]] || fail "usage: omarchy-replicant scope <id> shared|profile|off"
   load_core
   core_scope_transact "$id" "$want" || exit 1
-  invalidate_brief_cache
+  bash "$CORE" cache-invalidate
 }
 
 # cmd_policy — bulk policy changes use one validated core operation and one
@@ -583,7 +578,7 @@ cmd_policy() {
   [[ -n "$scope" && $# -gt 0 ]] || fail "usage: policy set --scope <scope> -- <id...>"
   load_core
   core_policy_transact "$scope" "$@" || exit 1
-  invalidate_brief_cache
+  bash "$CORE" cache-invalidate
 }
 
 # cmd_bulk validates and applies one multi-entry action as one transaction.
@@ -619,7 +614,7 @@ cmd_bulk() {
   ensure_core
   local rc=0
   bash "$CORE" bulk-transact "$action" "$scope" "$kind" "$allow_large" -- "${args[@]}" || rc=$?
-  invalidate_brief_cache
+  bash "$CORE" cache-invalidate
   return "$rc"
 }
 
@@ -633,7 +628,7 @@ cmd_track() {
   [[ $# -gt 0 ]] || fail "usage: omarchy-replicant track <path> [name-in-repo] [--secret]"
   load_core
   core_track_transact "$@" || exit 1
-  invalidate_brief_cache
+  bash "$CORE" cache-invalidate
 }
 
 cmd_untrack() {
@@ -641,7 +636,7 @@ cmd_untrack() {
   [[ -n "$id" ]] || fail "usage: omarchy-replicant untrack <id>"
   load_core
   core_untrack_transact "$id" || exit 1
-  invalidate_brief_cache
+  bash "$CORE" cache-invalidate
 }
 
 # cmd_key <subcommand> — the one shared age identity behind the vault: make
@@ -662,7 +657,7 @@ cmd_key() {
     status) bash "$CORE" key status "$@" || exit 1 ;;
     *) fail "usage: omarchy-replicant key init|export [--force] <dest>|import <src>|status|rotate" ;;
   esac
-  invalidate_brief_cache
+  bash "$CORE" cache-invalidate
 }
 
 # cmd_forget <id>: a file you deleted, and its copy leaves the repo too. One of
@@ -672,7 +667,7 @@ cmd_forget() {
   [[ -n "$id" ]] || fail "usage: omarchy-replicant forget <id>"
   load_core
   core_forget_transact "$id" || exit 1
-  invalidate_brief_cache
+  bash "$CORE" cache-invalidate
 }
 
 cmd_deleted() { ensure_core; bash "$CORE" deleted "$@"; }
@@ -697,7 +692,7 @@ cmd_recover() {
     return 0
   fi
   core_recover_transact "$sha" || exit 1
-  invalidate_brief_cache
+  bash "$CORE" cache-invalidate
 }
 
 # ── the plugin itself ────────────────────────────────────────────────────────
@@ -774,7 +769,7 @@ cmd_profile() {
     return $?
   fi
   core_profile_transact "$want" || exit 1
-  invalidate_brief_cache
+  bash "$CORE" cache-invalidate
 }
 
 # cmd_revert <setting-id> [--to default|repo] — put ONE setting back without
@@ -1066,7 +1061,7 @@ cmd_doctor() {
   echo "Repo"
   if [[ -d "$REPO_DIR/.git" ]]; then
     chk_ok "local repo at $REPO_DIR"
-    local url; url=$(git_repo remote get-url origin 2>/dev/null || echo "")
+    local url; url=$(repo_remote_url || echo "")
     if [[ -z "$url" ]]; then
       chk_warn "no remote — nothing is backed up off this machine"
     else
@@ -1080,7 +1075,7 @@ cmd_doctor() {
         *)       chk_warn "could not read the remote's visibility (offline, or no access)" ;;
       esac
     fi
-    [[ "$(git_repo config core.hooksPath 2>/dev/null)" == ".githooks" ]] \
+    [[ "$(repo_hooks_path)" == ".githooks" ]] \
       && chk_ok "pre-commit secret scan enabled" \
       || chk_warn "secret-scan hook not enabled — run: omarchy-replicant save --auto"
     local perm; perm=$(stat -c '%a' "$SECRETS_DIR" 2>/dev/null || echo "")

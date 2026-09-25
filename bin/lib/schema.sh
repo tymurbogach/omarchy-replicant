@@ -188,8 +188,8 @@ require_writable_schema() {
   esac
 }
 
-# _v3_top_keys: kept as the alias the migration path uses while it still
-# stages version 2 repositories. New code calls _schema_top_keys.
+# _v3_top_keys, _v2_top_keys: read-only aliases for older callers. New code
+# calls _schema_top_keys.
 _v3_top_keys() { _schema_top_keys "$@"; }
 _v2_top_keys() { _schema_top_keys "$@"; }
 
@@ -284,9 +284,9 @@ load_v3_entries() {
   jq -r 'to_entries | sort_by(.key)[] | [.key, .value.path, .value.kind, .value.scope, .value.source] | @tsv' "$file"
 }
 
-# validate_v2_entries, load_v2_entries: the migration path still stages
-# version 2 repositories until migrate-v3 replaces it. The record shape is
-# the same, so these are aliases, not forks.
+# validate_v2_entries, load_v2_entries: read-only aliases kept for the
+# legacy parity suite. The record shape is the same, so these are aliases,
+# not forks. Nothing writes version 2 records anymore.
 validate_v2_entries() { validate_v3_entries "$@"; }
 load_v2_entries() { load_v3_entries "$@"; }
 

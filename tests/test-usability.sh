@@ -75,8 +75,22 @@ off_chip=$(grep -oE '"⊘ " \+ root\.nOff \+ " [^"]+"' "$PANEL" | sed -E 's/.*" 
 check_contains "the row calls it off"                  "off" "$off_row"
 check_contains "…and so does its chip on the Overview" "off" "$off_chip"
 
+section "installation exposes and preserves the bar position"
+check "new widgets default to the center section" "center" \
+  "$(jq -r '.barWidget.defaultSection' "$ROOT/manifest.json")"
+interactive_install='omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --enable'
+check_true "the README shows the interactive install" grep -qF "$interactive_install" "$ROOT/README.md"
+check_false "the interactive install does not bypass the position question" \
+  grep -qF "$interactive_install --yes" "$ROOT/README.md"
+check_true "the README gives an automatic add command" \
+  grep -qF 'omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --yes' "$ROOT/README.md"
+check_true "the automatic path chooses a section explicitly" \
+  grep -qF 'omarchy plugin enable io.github.tymurbogach.omarchy-replicant --section center' "$ROOT/README.md"
+check_true "later moves use the live Omarchy bar command" \
+  grep -qF 'omarchy bar move io.github.tymurbogach.omarchy-replicant --section <left|center|right>' "$ROOT/README.md"
+
 section "the bar names the missing state"
-# Regression test for the missing-file defect (PLAN section 1). A saved file
+# Regression test for the missing-file defect. A saved file
 # deleted from this machine must move the bar off "in sync", so the bar has to
 # read the missing state the way it reads unsaved and incoming. Comments do
 # not count: only code outside comments moves the icon.

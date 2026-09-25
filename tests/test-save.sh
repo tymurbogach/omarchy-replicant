@@ -117,6 +117,10 @@ check "…exactly one file" "1" \
 check "…with the default subject" "config: update hypr/input.lua" \
   "$(git -C "$REPO" log -1 --format=%s)"
 check_false "save-file on an unknown id fails" "$CLI" save-file nope/nope
+run scope hypr/input.lua off >/dev/null 2>&1
+printf 'must stay local\n' >> "$HOME/.config/hypr/input.lua"
+check_false "save-file refuses an entry whose scope is off" "$CLI" save-file hypr/input.lua
+run scope hypr/input.lua shared >/dev/null 2>&1
 
 section "a save on a dirty repo fails and touches nothing"
 printf 'dirty me\n' >> "$HOME/.config/hypr/input.lua"

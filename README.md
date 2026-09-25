@@ -14,7 +14,15 @@
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --enable --yes
+omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --enable
+```
+
+Omarchy asks whether to trust the plugin and where to place its widget: left, center or right.
+For an automated installation, choose the section explicitly:
+
+```bash
+omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --yes
+omarchy plugin enable io.github.tymurbogach.omarchy-replicant --section center
 ```
 
 Click the icon in your bar, then **Create private repo**. The panel checks GitHub HTTPS and SSH,
@@ -59,7 +67,7 @@ decision lives in the repo, so both machines follow it.
 | --- | --- |
 | **Shared** | One copy. Every machine saves it and restores it. |
 | **`<profile>`** | One copy for each profile. The desktop and the laptop each keep their own, and neither overwrites the other. |
-| **Off** | Never saved from here, and never restored onto here. |
+| **Off** | Publishes the policy change once. Later saves and restores skip the file, while Git keeps the last saved copy. |
 
 `hypr/monitors.lua` starts profile-scoped: each machine keeps a backup of its own screen layout.
 The package and plugin inventory is recorded for each hostname, so two machines add to the repo
@@ -200,7 +208,7 @@ A plugin with a settings file of its own, `~/.config/omarchy/<name>.json`, also 
 ### Second machine
 
 ```bash
-omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --enable --yes
+omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --enable
 P=~/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant
 $P/bin/omarchy-replicant clone https://github.com/<you>/<hostname>-replicant
 $P/bin/omarchy-replicant key import /path/to/identity.txt   # before saving secrets
@@ -213,7 +221,11 @@ Panel, **Restore**, *Preview* shows what would change, and touches nothing.
 - **Settings**: panel, **Settings**. A change is written to the real config file, applied, and
   committed. The CLI does the same with `omarchy-replicant set <id> <value>`, in the stored unit.
 - **Scopes and profiles**: open a row in **Configs** and pick **Shared**, your profile, or **Off**.
-  The row shows the change at once. In a terminal: `scope` and `profile`.
+  The row shows the change at once. Off publishes that policy once, then future saves skip the file.
+  Git keeps the last saved copy. In a terminal: `scope` and `profile`.
+- **Bar position**: run
+  `omarchy bar move io.github.tymurbogach.omarchy-replicant --section <left|center|right>`.
+  The bar reloads the saved `shell.json` layout immediately. Updates and shell restarts keep it.
 - **Your own files**: **Add files** in the panel, or `track`, `untrack` and `forget`.
 - **A key for the panel**: bind `omarchy shell replicant toggle` in `~/.config/hypr/bindings.lua`.
   `omarchy shell replicant tab settings` opens the panel on one tab.

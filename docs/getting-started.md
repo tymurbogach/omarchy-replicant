@@ -17,9 +17,10 @@ real credentials.
 ## 1. Install
 
 ```bash
-omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --enable --yes
+omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --enable
 ```
 
+Omarchy asks where to place the widget. Choose left, center or right.
 A **+** appears in the bar. Click it: the panel says that there is no repo yet.
 
 ## 2. Create your repo
@@ -72,13 +73,13 @@ out. To open the panel from a key, bind `omarchy shell replicant toggle`.
 Profiles exist for this case. Some files describe the *machine*, not you. `hypr/monitors.lua` lists
 the screens plugged into this box, and the laptop's version is wrong on the desktop.
 
-Every row in **Configs** has a scope button. It cycles through three answers:
+Every row in **Configs** has explicit scope choices:
 
 | Scope | What it means |
 | --- | --- |
 | **Shared** | One copy in `config/`. Every machine saves it and restores it. |
 | **`<profile>`** | A copy under `profiles/<profile>/config/`. The desktop and the laptop each keep their own, and neither overwrites the other. |
-| **Off** | Not saved from here, and not restored onto here. The copy in the repo is left alone. |
+| **Off** | Publishes the policy once. Later saves and restores skip the file. The last repo copy stays in Git. |
 
 `hypr/monitors.lua` starts profile-scoped. Each machine gets a backup of its own screen layout, and
 neither gets the other's. The decision lives in `.replicant/entries.json` **inside the repo**, so you
@@ -178,7 +179,7 @@ land on a desktop that has no lid.
 ## 8. Your second machine
 
 ```bash
-omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --enable --yes
+omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --enable
 P=~/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant
 $P/bin/omarchy-replicant clone https://github.com/<you>/<hostname>-replicant
 $P/bin/omarchy-replicant key import /path/to/identity.txt

@@ -849,7 +849,7 @@ git -C "$REPO_DIR" add -A >/dev/null 2>&1
 git -C "$REPO_DIR" commit -qm "input back" >/dev/null 2>&1
 
 section "a saved file deleted from this machine is missing, not synced"
-# Regression test for the missing-file defect (PLAN section 1). The full
+# Regression test for the missing-file defect. The full
 # payload names the row missing, and the brief payload the bar polls counts
 # it: deleting a saved file used to leave every bar counter at zero, so the
 # bar kept the calm hexagon and its tooltip said "in sync".

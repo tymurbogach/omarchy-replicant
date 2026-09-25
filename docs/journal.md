@@ -1,6 +1,6 @@
 # Development journal
 
-PLAN section 1 baseline. This file records totals and architecture only.
+This file records the original baseline totals and architecture only.
 It holds no repository paths, secret names, or credentials.
 
 ## Baseline run (before section 1 changes)

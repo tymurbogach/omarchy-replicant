@@ -233,6 +233,19 @@ function displayState(row, overrides) {
   return row.sync_state === "off" ? "pending" : row.sync_state
 }
 
+// Project every row through the optimistic scope state once. All panel views
+// consume this list, so a pending change cannot leave stale derived data.
+function effectiveRows(repoState, overrides) {
+  return allRows(repoState).map(function(row) {
+    var projected = {}
+    for (var key in row) projected[key] = row[key]
+    projected.scope = effectiveScope(row, overrides)
+    projected.sync_state = displayState(row, overrides)
+    projected.synced = projected.scope !== "off"
+    return projected
+  })
+}
+
 // The visible order is global. Cards do not create separate selection ranges.
 function visibleRows(repoState, categoryCards, suggestions, search, filter) {
   var out = []
@@ -355,13 +368,34 @@ function validBulkActions(rows) {
     return []
   }
   var canSave = list.every(function(r) {
-    return r.suggestion !== true && r.sync_state !== "incoming" && r.sync_state !== "missing"
+    return r.suggestion !== true && r.scope !== "off"
+        && r.sync_state !== "off" && r.sync_state !== "pending"
+        && r.sync_state !== "incoming" && r.sync_state !== "missing"
   })
   var out = canSave ? ["save"] : []
   if (list.every(function(r) { return r.source === "user" && r.secret !== true })) out.push("convert-secret", "untrack")
   if (list.every(function(r) { return r.secret !== true })) out.push("scope-shared", "scope-profile", "scope-off")
   else if (list.every(function(r) { return r.secret === true })) out.push("scope-shared", "scope-off")
   return out
+}
+
+function selectionWithoutIds(selectedIds, selectionAnchor, removedIds) {
+  var removed = removedIds || []
+  var kept = (selectedIds || []).filter(function(id) { return removed.indexOf(id) < 0 })
+  return {
+    selectedIds: kept,
+    selectionAnchor: removed.indexOf(selectionAnchor) < 0 ? String(selectionAnchor || "")
+                                                           : (kept.length > 0 ? String(kept[kept.length - 1]) : "")
+  }
+}
+
+function selectionFromJob(meta, excludedIds) {
+  var source = meta || {}
+  var selection = {
+    selectedIds: (source.previousSelectedIds || []).slice(),
+    selectionAnchor: String(source.previousSelectionAnchor || "")
+  }
+  return selectionWithoutIds(selection.selectedIds, selection.selectionAnchor, excludedIds || [])
 }
 
 function selectionSummary(rows) {
@@ -434,9 +468,9 @@ function allRows(repoState) {
 
 // The rows of one area in one uniform shape, secrets included, filtered by
 // the search text and the state filter (rowMatchesFilter), and sorted by label.
-function rowsFor(repoState, categoryId, search, filter) {
+function rowsForList(sourceRows, categoryId, search, filter) {
   var out = []
-  var list = allRows(repoState)
+  var list = sourceRows || []
   var needle = String(search || "").toLowerCase()
   for (var i = 0; i < list.length; i++) {
     var c = list[i]
@@ -463,6 +497,10 @@ function rowsFor(repoState, categoryId, search, filter) {
   })
   out = out.map(function(v) { return v.row })
   return out
+}
+
+function rowsFor(repoState, categoryId, search, filter, overrides) {
+  return rowsForList(effectiveRows(repoState, overrides), categoryId, search, filter)
 }
 
 // ── plugins ─────────────────────────────────────────────────────────────────

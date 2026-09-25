@@ -458,7 +458,7 @@ Panel {
   // ── derived summaries ─────────────────────────────────────────────────────
   readonly property string profileName: root.repoState.profile || "this machine"
   // Every row, secrets included, in the one shape the Configs tab draws.
-  readonly property var everyRow: R.allRows(root.repoState)
+  readonly property var everyRow: R.effectiveRows(root.repoState, root.scopeOverrides)
   readonly property var configRows: root.everyRow.filter(function(r) { return r.secret !== true })
   function idsWhere(pred) { return root.everyRow.filter(pred).map(function(r) { return r.id }) }
   readonly property int nTracked: root.everyRow.length
@@ -556,7 +556,7 @@ Panel {
   // ── the Configs tab ───────────────────────────────────────────────────────
   // The rows of one area, secrets included, filtered by the search and the
   // state filter and sorted (replicant.js, rowsFor).
-  function rowsFor(categoryId) { return R.rowsFor(root.repoState, categoryId, root.fileSearch, root.stateFilter) }
+  function rowsFor(categoryId) { return R.rowsForList(root.everyRow, categoryId, root.fileSearch, root.stateFilter) }
   readonly property bool filtering: root.fileSearch !== "" || root.stateFilter !== "all"
   readonly property var filterOptions: [
     { value: "all", label: "All", tooltip: "Every tracked file" },
@@ -576,7 +576,7 @@ Panel {
     var out = []
     for (var i = 0; i < cats.length; i++) {
       var rows = root.rowsFor(cats[i].id)
-      var total = R.rowsFor(root.repoState, cats[i].id, "", "all").length
+      var total = R.rowsForList(root.everyRow, cats[i].id, "", "all").length
       if (rows.length === 0) continue
       // Counted from the same states the badges render, not a separate word.
       var changed = 0, off = 0, incoming = 0
@@ -601,7 +601,7 @@ Panel {
     var cats = root.repoState.categories || []
     var out = []
     for (var i = 0; i < cats.length; i++) {
-      var rows = R.rowsFor(root.repoState, cats[i].id, "", "all")
+      var rows = R.rowsForList(root.everyRow, cats[i].id, "", "all")
       if (rows.length === 0) continue
       out.push({ id: cats[i].id, icon: cats[i].icon, label: cats[i].label, method: cats[i].method,
                  count: rows.length, differ: rows.filter(R.wouldRestore).length })
@@ -789,8 +789,11 @@ Panel {
     cmd.push("--"); for (var i = 0; i < targets.length; i++) cmd.push(targets[i])
     root.busyLabel = "Applying bulk change…"
     var scopeIds = action.indexOf("scope-") === 0 ? root.selectedIds.slice() : []
+    var previousSelectedIds = root.selectedIds.slice()
+    var previousSelectionAnchor = root.selectionAnchor
     var accepted = controller.run("bulk", cmd, {
-      label: "Bulk change", bulkAction: action, scopeIds: scopeIds
+      label: "Bulk change", bulkAction: action, scopeIds: scopeIds,
+      previousSelectedIds: previousSelectedIds, previousSelectionAnchor: previousSelectionAnchor
     })
     if (!accepted) { root.busyLabel = ""; return false }
     if (scopeIds.length > 0) root.scopePending += 1
@@ -799,6 +802,11 @@ Panel {
       var optimistic = action.slice(6)
       for (var j = 0; j < scopeIds.length; j++) next[scopeIds[j]] = optimistic
       root.scopeOverrides = next
+      if (optimistic === "off") {
+        var selection = R.selectionWithoutIds(root.selectedIds, root.selectionAnchor, scopeIds)
+        root.selectedIds = selection.selectedIds
+        root.selectionAnchor = selection.selectionAnchor
+      }
     }
     return true
   }
@@ -850,13 +858,20 @@ Panel {
   property int scopePending: 0
   function setScope(id, scope) {
     var accepted = controller.run("scope", [root.cli, "scope", id, scope],
-                                  { jobId: id, label: "Sync" })
+                                  { jobId: id, label: "Sync", requestedScope: scope,
+                                    previousSelectedIds: root.selectedIds.slice(),
+                                    previousSelectionAnchor: root.selectionAnchor })
     if (!accepted) return false
     root.scopePending += 1
     var next = {}
     for (var k in root.scopeOverrides) next[k] = root.scopeOverrides[k]
     next[id] = scope
     root.scopeOverrides = next
+    if (scope === "off") {
+      var selection = R.selectionWithoutIds(root.selectedIds, root.selectionAnchor, [id])
+      root.selectedIds = selection.selectedIds
+      root.selectionAnchor = selection.selectionAnchor
+    }
     root.busyLabel = "Syncing " + id + "…"
     return true
   }
@@ -876,6 +891,15 @@ Panel {
   }
   function rollbackScopeOverride(id) {
     if (!root.scopeChangeQueued(id)) root.dropScopeOverride(id)
+  }
+  function restoreScopeSelection(meta) {
+    if (String(meta.requestedScope || "") !== "off"
+        && String(meta.bulkAction || "") !== "scope-off") return
+    var scopeIds = meta.scopeIds || [meta.jobId || ""]
+    var supersededIds = scopeIds.filter(root.scopeChangeQueued)
+    var selection = R.selectionFromJob(meta, supersededIds)
+    root.selectedIds = selection.selectedIds
+    root.selectionAnchor = selection.selectionAnchor
   }
   // A full status built after the last change finished is the truth. A brief
   // one carries no rows, so it cannot confirm anything.
@@ -1163,11 +1187,13 @@ Panel {
           root.lastOk = true; root.lastCancelled = true; root.lastTitle = "Cancelled"
           root.lastOutput = String(meta.progressResult ? meta.progressResult.message : "Cancelled")
           root.rollbackScopeOverride(meta.jobId || "")
+          root.restoreScopeSelection(meta)
         } else if (code !== 0 && meta.outcome !== "local-only" && meta.outcome !== "noop") {
           root.lastOk = false; root.lastTitle = "Sync"
           root.lastCancelled = false
           root.lastOutput = root.clean("Sync of " + (meta.jobId || "entry") + " failed (exit " + code + ")\n" + stdoutText + "\n" + stderrText)
           root.rollbackScopeOverride(meta.jobId || "")
+          root.restoreScopeSelection(meta)
         } else {
           root.scopeAwaitingStatus = true
           if (meta.outcome === "local-only") root.finish("Sync", code, stdoutText, stderrText, meta.progressResult)
@@ -1182,6 +1208,7 @@ Panel {
           if (bulkScope) root.scopeAwaitingStatus = true
         } else if (bulkScope) {
           (meta.scopeIds || []).forEach(root.rollbackScopeOverride)
+          root.restoreScopeSelection(meta)
         }
         root.finish(meta.label || "Bulk change", code, stdoutText, stderrText, meta.progressResult)
       } else if (job === "doctor") {

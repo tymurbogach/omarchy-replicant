@@ -279,6 +279,23 @@ TestCase {
     verify(R.stateGlyph("pending") !== R.stateGlyph("saved"))
   }
 
+  function test_effective_rows_project_pending_scope_for_every_consumer() {
+    var state = { entries: [
+      { id: "a", label: "A", category: "c", kind: "file", scope: "shared",
+        exists: true, saved: true, sync_state: "unsaved" },
+      { id: "b", label: "B", category: "c", kind: "file", scope: "shared",
+        exists: true, saved: true, sync_state: "saved" }
+    ] }
+    var rows = R.effectiveRows(state, { a: "off" })
+    compare(rows[0].scope, "off")
+    compare(rows[0].sync_state, "off")
+    compare(rows[0].synced, false)
+    compare(R.rowsForList(rows, "c", "", "off").map(function(r) { return r.id }).join(","), "a")
+    compare(R.rowsForList(rows, "c", "", "changed").length, 0)
+    verify(R.validBulkActions([rows[0]]).indexOf("save") < 0)
+    verify(R.validBulkActions(rows).indexOf("save") < 0)
+  }
+
   function test_originLabel() {
     compare(R.originLabel("https://github.com/me/plug.git"), "github.com/me/plug")
     compare(R.originLabel("git@github.com:me/plug.git"), "github.com/me/plug")
@@ -336,6 +353,33 @@ TestCase {
     compare(R.validBulkActions([{ id: "a", secret: false }, { id: "s", secret: true }]).join(","),
             "save")
     compare(R.validBulkActions([{ id: "s", secret: true, locked: true }]).length, 0)
+    verify(R.validBulkActions([{ id: "a", scope: "off", sync_state: "off", secret: false }]).indexOf("save") < 0)
+    verify(R.validBulkActions([
+      { id: "a", scope: "shared", sync_state: "saved", secret: false },
+      { id: "b", scope: "off", sync_state: "off", secret: false }
+    ]).indexOf("save") < 0)
+    verify(R.validBulkActions([{ id: "a", scope: "shared", sync_state: "pending", secret: false }]).indexOf("save") < 0)
+  }
+
+  function test_off_scope_removes_the_accepted_rows_from_selection() {
+    var previous = { selectedIds: ["a", "b"], selectionAnchor: "a" }
+    var current = R.selectionWithoutIds(previous.selectedIds, previous.selectionAnchor, ["a"])
+    compare(current.selectedIds.join(","), "b")
+    compare(current.selectionAnchor, "b")
+    compare(previous.selectedIds.join(","), "a,b")
+    compare(previous.selectionAnchor, "a")
+    var restored = R.selectionFromJob({
+      previousSelectedIds: previous.selectedIds,
+      previousSelectionAnchor: previous.selectionAnchor
+    })
+    compare(restored.selectedIds.join(","), "a,b")
+    compare(restored.selectionAnchor, "a")
+    var superseded = R.selectionFromJob({
+      previousSelectedIds: previous.selectedIds,
+      previousSelectionAnchor: previous.selectionAnchor
+    }, ["a"])
+    compare(superseded.selectedIds.join(","), "b")
+    compare(superseded.selectionAnchor, "b")
   }
 
   function test_manage_selection_summary_hides_secret_size() {

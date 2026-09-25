@@ -23,9 +23,9 @@ Item {
   readonly property bool keyboardActionFocused: panel.keyboardFocus
       && panel.keyboardFocus.kind === "action"
       && panel.keyboardFocus.id === frow.config.id
-  // A scope change shows at once, before the status that confirms it arrives.
-  readonly property string scope: R.effectiveScope(frow.config, panel.scopeOverrides)
-  readonly property string syncState: R.displayState(frow.config, panel.scopeOverrides) || "saved"
+  // Panel.everyRow already projects pending scope changes for every consumer.
+  readonly property string scope: frow.config.scope || "shared"
+  readonly property string syncState: frow.config.sync_state || "saved"
   // "Needs the Save button": unsaved, or committed here and never pushed. Not
   // incoming: that difference belongs to another machine, and it asks for
   // Restore instead.
@@ -41,23 +41,24 @@ Item {
   readonly property bool selected: panel.selectedIds.indexOf(frow.config.id) !== -1
 
   // The head has a fixed height, and the details sit under it at a fixed y.
-  implicitHeight: head.height + (frow.expanded ? details.implicitHeight + Style.space(10) : 0)
+  implicitHeight: head.height + (frow.expanded ? details.implicitHeight + Style.space(14) : 0)
 
-  Rectangle {
-    anchors.fill: parent
-    anchors.leftMargin: Style.space(4)
-    anchors.rightMargin: Style.space(4)
-    radius: Style.cornerRadius
-    color: frow.expanded ? Style.hoverFillFor(panel.fg, Color.accent)
-         : hit.containsMouse ? Qt.rgba(panel.fg.r, panel.fg.g, panel.fg.b, 0.04) : "transparent"
-    border.width: frow.keyboardFocused || frow.keyboardActionFocused ? 1 : 0
-    border.color: frow.keyboardActionFocused ? panel.warnColor : Color.accent
-  }
-
-  Item {
+  BorderSurface {
     id: head
     width: parent.width
     height: Style.space(48)
+    radius: Style.cornerRadius
+    color: frow.keyboardFocused || frow.keyboardActionFocused
+        ? Style.focusFillFor(panel.fg, Color.accent)
+      : frow.expanded ? Style.selectedFillFor(panel.fg, Color.accent)
+      : hit.containsMouse ? Style.hoverFillFor(panel.fg, Color.accent)
+      : Style.normalFillFor(panel.fg, Color.accent)
+    borderSpec: frow.keyboardFocused || frow.keyboardActionFocused
+        ? Border.controlSpec("focus", panel.fg,
+                             frow.keyboardActionFocused ? panel.warnColor : Color.accent)
+      : frow.expanded ? Border.controlSpec("selected", panel.fg, Color.accent)
+      : hit.containsMouse ? Border.controlSpec("hover-cursor", panel.fg, Color.accent)
+      : Border.controlSpec("normal", panel.fg, Color.accent)
 
     MouseArea {
       id: hit
@@ -96,14 +97,14 @@ Item {
 
       Column {
         anchors.verticalCenter: parent.verticalCenter
-        width: parent.width - Style.space(20) - chevron.width - parent.spacing * 2
+        width: parent.width - Style.space(20) - chevronSlot.width - parent.spacing * 2
                - (primary.visible ? primary.width + parent.spacing : 0)
         spacing: Style.spacing.xs
         Text {
           width: parent.width
           text: frow.config.label
           color: frow.missing || frow.syncState === "off" ? panel.dim : panel.fg
-          font.family: panel.ff; font.pixelSize: Style.font.subtitle; font.bold: frow.needsAction
+          font.family: panel.ff; font.pixelSize: Style.font.subtitle; font.bold: true
           elide: Text.ElideMiddle
         }
         // The words come first and are never elided. The path takes what is
@@ -164,14 +165,26 @@ Item {
         onClicked: frow.isIncoming ? panel.askRestoreFile(frow.config) : panel.doSaveFile(frow.config.id)
       }
 
-      Text {
-        id: chevron
+      Item {
+        id: chevronSlot
         anchors.verticalCenter: parent.verticalCenter
-        width: Style.space(14)
-        text: frow.expanded ? panel.icDown : panel.icRight
-        color: hit.containsMouse || frow.expanded ? panel.fg : panel.dim
-        font.family: panel.ff; font.pixelSize: Style.font.caption
-        horizontalAlignment: Text.AlignHCenter
+        width: Style.space(28)
+        height: Style.space(32)
+        Rectangle {
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          width: Style.spacing.hairline
+          height: Style.space(22)
+          color: Style.normalBorderFor(panel.fg, Color.accent)
+        }
+        Text {
+          id: chevron
+          anchors.centerIn: parent
+          text: frow.expanded ? panel.icDown : panel.icRight
+          color: hit.containsMouse || frow.expanded ? panel.fg : panel.dim
+          font.family: panel.ff; font.pixelSize: Style.font.caption
+          horizontalAlignment: Text.AlignHCenter
+        }
       }
     }
   }
@@ -179,8 +192,9 @@ Item {
   FileDetails {
     id: details
     panel: frow.panel
-    y: head.height
-    width: parent.width
+    y: head.height + Style.space(7)
+    width: parent.width - Style.space(8)
+    x: Style.space(4)
     visible: frow.expanded
     row: frow.config
     scope: frow.scope

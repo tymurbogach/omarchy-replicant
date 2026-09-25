@@ -105,7 +105,9 @@ The plugin is built for a desktop and a laptop that share one private repo.
   The file is in the repo, because "monitors are machine-specific" is a fact about the setup,
   not about one machine.
 - `profile` stores the copy under `profiles/<profile>/config/<rel>`, so each profile keeps its own
-  copy. `hypr/monitors.lua` starts as `profile`. Switching a file off means that nobody gets a backup.
+  copy. `hypr/monitors.lua` starts as `profile`.
+- Switching a file to `off` publishes the policy change in one commit. Later saves do not copy or
+  prune that file, and restores skip it. The last repository copy stays available in Git.
 - `repo_path_for` is the only function that knows where a copy lives. The copy pass, the prune pass,
   the restore plan and "revert to repo" all call it. `repo_copy_for_rel` adds the secrets directory.
 - The prune pass sweeps `config/` and this profile's tree only. From here, another machine's profile

@@ -20,7 +20,7 @@
     "description": "Backup, restore and live settings, done the Omarchy way",
     "category": "System",
     "allowMultiple": false,
-    "defaultSection": "right",
+    "defaultSection": "center",
     "aliases": [
       "replicant",
       "backup",

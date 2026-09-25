@@ -13,13 +13,13 @@
   - [x] Review git diff, git diff --check, and git status --short.
   - [x] Stage only files that belong to the current phase.
   - [x] Never add AGENTS.md.
-  - [ ] Create one local commit after each completed phase.
+  - [x] Create one local commit after each completed phase.
   - [x] Never amend a completed phase commit.
   - [x] Never add AI attribution to commits.
   - [x] Never push, create a pull request, create a release, or create a tag.
   - [x] If a gate fails, do not commit the phase.
-  - [ ] After all phases, leave the complete plugin and local commits for user review.
-  - [ ] Only the user can authorize the final push.
+  - [x] After all phases, leave the complete plugin and local commits for user review.
+  - [x] Only the user can authorize the final push.
 
   Use these exact phase commit messages:
 
@@ -60,7 +60,7 @@
   - [x] Represent unknown secret persistence as "saved": null.
   - [x] Add "savedKnown": false when the vault is locked.
   - [x] Keep normal human-readable CLI output compatible.
-  - [ ] Bump the plugin version to 0.13.0 after all gates pass.
+  - [x] Bump the plugin version to 0.13.0 after all gates pass.
 
   ## Phase G0: Automated Test Infrastructure
 
@@ -457,23 +457,23 @@
 
   ## Final Handoff Without Push
 
-  - [ ] Do not run git push.
-  - [ ] Do not create a tag or GitHub release.
-  - [ ] Confirm that the working tree is clean.
-  - [ ] Confirm that the branch is ahead of its upstream.
-  - [ ] Show all local implementation commits:
+  - [x] Do not run git push.
+  - [x] Do not create a tag or GitHub release.
+  - [x] Confirm that the working tree is clean.
+  - [x] Confirm that the branch is ahead of its upstream.
+  - [x] Show all local implementation commits:
 
   git log --oneline 4c9c4b580d4d190ea2efd6e0b8449ffd790d091e..HEAD
 
-  - [ ] Show the complete implementation summary:
+  - [x] Show the complete implementation summary:
 
   git diff --stat 4c9c4b580d4d190ea2efd6e0b8449ffd790d091e..HEAD
 
-  - [ ] Report every test command and result.
-  - [ ] Report any environment-only test limitation.
-  - [ ] Provide commands for reviewing the complete diff.
-  - [ ] Leave the plugin ready for local user testing.
-  - [ ] Wait for the user to review and authorize any push.
+  - [x] Report every test command and result.
+  - [x] Report any environment-only test limitation.
+  - [x] Provide commands for reviewing the complete diff.
+  - [x] Leave the plugin ready for local user testing.
+  - [x] Wait for the user to review and authorize any push.
 
   ## Assumptions
 

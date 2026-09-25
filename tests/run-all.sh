@@ -11,7 +11,7 @@ banner() { printf '\n\033[1m══ %s\033[0m\n' "$1"; }
 # The suites run together. Each one has its own temporary $HOME, so they share
 # nothing, and the run takes as long as the slowest suite, not the sum of all
 # of them. Their output is printed in the usual order after they finish.
-suites=(test-core.sh test-settings.sh test-settings-save.sh test-cli.sh test-bulk.sh test-bulk-v3.sh test-journey.sh test-usability.sh test-schema.sh test-v3schema.sh test-bootstrap.sh test-crypto.sh test-state.sh test-save.sh test-transaction.sh test-leaks.sh test-interruptions.sh test-migration.sh test-migrate-v3.sh test-modules.sh)
+suites=(test-core.sh test-settings.sh test-settings-save.sh test-cli.sh test-bulk.sh test-bulk-v3.sh test-journey.sh test-usability.sh test-schema.sh test-v3schema.sh test-bootstrap.sh test-crypto.sh test-restore-secrets.sh test-state.sh test-save.sh test-transaction.sh test-leaks.sh test-interruptions.sh test-migration.sh test-migrate-v3.sh test-modules.sh)
 logs=$(mktemp -d)
 declare -A pid=()
 for suite in "${suites[@]}"; do

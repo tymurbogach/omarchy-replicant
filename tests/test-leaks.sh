@@ -65,4 +65,26 @@ check "failure stdout is clean" "0" "$(grep -F -c "$sentinel" "$TMP/fail.out" 2>
 check "failure stderr is clean" "0" "$(grep -F -c "$sentinel" "$TMP/fail.err" 2>/dev/null || true)"
 check_no_secret "failed transaction storage is clean" "$REPLICANT_HOME"
 
+section "restore operations do not disclose plaintext"
+printf 'TOKEN=%s\n' "$sentinel" > "$HOME/.config/environment.d/60-secrets.conf"
+core_backup >"$TMP/resave.out" 2>"$TMP/resave.err"
+printf 'TOKEN=%s_local\n' "$sentinel" > "$HOME/.config/environment.d/60-secrets.conf"
+core_restore_file env/60-secrets.conf >"$TMP/restore.out" 2>"$TMP/restore.err"
+check "restore stdout is clean" "0" "$(grep -F -c "$sentinel" "$TMP/restore.out" 2>/dev/null || true)"
+check "restore stderr is clean" "0" "$(grep -F -c "$sentinel" "$TMP/restore.err" 2>/dev/null || true)"
+check_no_secret "restore keeps state clean" "$REPLICANT_HOME"
+check_no_secret "restore keeps the repo clean" "$REPO_DIR"
+check "restore history is clean" "0" "$(git -C "$REPO_DIR" log -p -- vault 2>/dev/null | grep -c -F "$sentinel" || true)"
+check "no journal carries the value" "0" "$(grep -R -l -F "$sentinel" "$REPLICANT_HOME/transactions" "$REPLICANT_HOME/staged" 2>/dev/null | wc -l)"
+
+section "failed restore operations stay clean"
+blob=$(age -d -i "$REPLICANT_HOME/keys/identity.txt" "$REPO_DIR/vault/index.age" 2>/dev/null | jq -r '.secrets[] | select(.id=="env/60-secrets.conf") | .blob')
+cp "$REPO_DIR/vault/blobs/$blob.age" "$TMP/blob.keep"
+printf 'TAMPERED' | dd of="$REPO_DIR/vault/blobs/$blob.age" bs=1 seek=100 conv=notrunc status=none 2>/dev/null
+core_restore_file env/60-secrets.conf >"$TMP/tamper.out" 2>"$TMP/tamper.err" || true
+check "tamper stdout is clean" "0" "$(grep -F -c "$sentinel" "$TMP/tamper.out" 2>/dev/null || true)"
+check "tamper stderr is clean" "0" "$(grep -F -c "$sentinel" "$TMP/tamper.err" 2>/dev/null || true)"
+check_no_secret "tamper failure keeps state clean" "$REPLICANT_HOME"
+cp "$TMP/blob.keep" "$REPO_DIR/vault/blobs/$blob.age"
+
 summary

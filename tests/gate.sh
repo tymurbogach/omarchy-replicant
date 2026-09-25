@@ -246,7 +246,48 @@ gate_g5() {
   if "$HERE/test-settings.sh" >/dev/null 2>&1; then ok "settings unit suite passes"; else bad "settings unit suite fails"; fi
   if "$HERE/test-settings-save.sh" >/dev/null 2>&1; then ok "settings persistence suite passes"; else bad "settings persistence suite fails"; fi
 }
-gate_g6() { section "G6 secret restore gate"; bad "G6 is not implemented yet"; }
+gate_g6() {
+  section "G6 secret restore gate"
+  "$HERE/coverage-check.sh" >/dev/null 2>&1 && ok "coverage manifest is complete" || bad "coverage manifest is incomplete"
+  grep -q 'vault_priv_mktemp' "$ROOT/bin/lib/crypto.sh" 2>/dev/null \
+    && ok "privilege is acquired before decrypting outside destinations" \
+    || bad "privilege preflight is missing from crypto.sh"
+  grep -q 'vault_restore_entry_privileged' "$ROOT/bin/lib/crypto.sh" 2>/dev/null \
+    && ok "outside restores stream through a privileged temp" \
+    || bad "vault_restore_entry_privileged is missing"
+  if grep -n 'vault_restore_entry' "$ROOT/bin/lib/crypto.sh" 2>/dev/null | grep -q 'staged'; then
+    bad "restore still stages plaintext below REPLICANT_HOME"
+  else
+    ok "no plaintext is staged below REPLICANT_HOME"
+  fi
+  if grep -q '_vault_keep_temp "$plain"' "$ROOT/bin/lib/crypto.sh" 2>/dev/null; then
+    bad "restore still retains plaintext for recovery"
+  else
+    ok "no plaintext is retained for recovery commands"
+  fi
+  if grep -q '|| mktemp -d' "$ROOT/bin/lib/crypto.sh" 2>/dev/null; then
+    bad "a cross-filesystem temp fallback remains"
+  else
+    ok "no cross-filesystem temp fallback remains"
+  fi
+  grep -q 'chmod 600' "$ROOT/bin/lib/crypto.sh" 2>/dev/null \
+    && ok "mode 0600 is enforced" \
+    || bad "mode 0600 is not enforced"
+  grep -q 'vault_owner_of\|chown "$owner"' "$ROOT/bin/lib/crypto.sh" 2>/dev/null \
+    && ok "the destination owner is preserved" \
+    || bad "owner preservation is missing"
+  grep -q 'crypto_require_keygen()' "$ROOT/bin/lib/crypto.sh" 2>/dev/null \
+    && grep -q 'crypto_require_age || return 1' "$ROOT/bin/lib/crypto.sh" 2>/dev/null \
+    && ok "age and age-keygen are verified independently" \
+    || bad "age and age-keygen checks are not independent"
+  grep -q 'vault:' "$ROOT/bin/lib/restore.sh" 2>/dev/null \
+    && grep -q 'never shown' "$ROOT/bin/lib/restore.sh" 2>/dev/null \
+    && ok "full restore routes vault secrets without showing contents" \
+    || bad "full restore does not handle vault secrets"
+  if "$HERE/test-restore-secrets.sh" >/dev/null 2>&1; then ok "restore secrets suite passes"; else bad "restore secrets suite fails"; fi
+  if "$HERE/test-crypto.sh" >/dev/null 2>&1; then ok "crypto suite still passes"; else bad "crypto suite fails"; fi
+  if "$HERE/test-leaks.sh" >/dev/null 2>&1; then ok "leak scan still passes"; else bad "leak scan fails"; fi
+}
 gate_g7() { section "G7 controller gate"; bad "G7 is not implemented yet"; }
 gate_g8() { section "G8 release gate"; bad "G8 is not implemented yet"; }
 

@@ -178,6 +178,22 @@ plan_for_category() {
     done
   fi
   [[ "$want" == "secrets" ]] || return 0
+  if repo_has_vault; then
+    # Vault secrets restore through vault_restore_entry, never through a repo
+    # path: the plan carries vault:<id> so pending, preview and apply never
+    # touch ciphertext as if it were plaintext.
+    local srow sid skind sscope slive
+    local -a srf=()
+    for srow in ${REGISTRY[@]+"${REGISTRY[@]}"}; do
+      mapfile -t srf < <(row_split "$srow" 9)
+      sid="${srf[0]}"; skind="${srf[1]}"; sscope="${srf[4]}"; slive="${srf[5]}"
+      [[ "$skind" == "secret" ]] || continue
+      [[ "$sscope" == "off" ]] && continue
+      is_excluded "$sid" && continue
+      printf 'vault:%s|%s|%s\n' "$sid" "$slive" "600"
+    done
+    return 0
+  fi
   for entry in "${TRACKED_SECRETS[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"
     is_excluded "$rel" && continue
@@ -258,10 +274,22 @@ restore_active_theme() {
 # restore_pending <area>: "repo-path|destination|mode" for each entry that a
 # restore would write. What already matches, or needs root, is said on stderr.
 # Outside $HOME needs root, and a backup tool that asks for a password without
-# a word is worse than one that prints the command.
+# a word is worse than one that prints the command. Vault secrets (vault:<id>)
+# always flow through vault_restore_entry, which acquires privilege before
+# decrypting: they stay pending here without decrypting, and locked ones are
+# named, never compared.
 restore_pending() {
-  local area="$1" src dst mode
+  local area="$1" src dst mode id
   while IFS='|' read -r src dst mode; do
+    if [[ "$src" == vault:* ]]; then
+      id="${src#vault:}"
+      if ! vault_unlocked; then
+        warn "$id is locked — run: omarchy-replicant key import <source>"
+        continue
+      fi
+      printf '%s|%s|%s\n' "$src" "$dst" "$mode"
+      continue
+    fi
     if [[ "$src" == */ ]]; then
       [[ -d "${src%/}" ]] || continue
       if tree_same "$src" "$dst"; then ok "${dst/#$HOME/\~} (already matches, $(tree_count "$src") files)"
@@ -280,14 +308,18 @@ restore_pending() {
 }
 
 # restore_preview <entry>...: what each pending entry would change, on stderr.
+# A vault secret is never diffed: its contents stay encrypted, and the preview
+# says only that it would be restored.
 restore_preview() {
   local e src dst mode
   for e in "$@"; do
     IFS='|' read -r src dst mode <<<"$e"
     echo "  ── ${dst/#$HOME/\~}" >&2
-    if [[ "$src" == */ ]]; then
+    if [[ "$src" == vault:* ]]; then
+      echo "      (secret: would be restored at mode 600, contents never shown)" >&2
+    elif [[ "$src" == */ ]]; then
       tree_diff_summary "$src" "$dst" | sed 's/^/      /' >&2
-    elif [[ -f $dst ]]; then
+    elif [[ -f $dst && -f "$src" ]]; then
       diff -u --label system --label repo "$dst" "$src" 2>/dev/null | sed -n '3,40p' | sed 's/^/      /' >&2 || true
     else
       echo "      (doesn't exist: would be created)" >&2
@@ -298,18 +330,31 @@ restore_preview() {
 # restore_apply <area> <entry>...: write each entry, keeping a .bak.<epoch> of
 # what it replaces, then run what makes the area take effect. Hyprland does not
 # re-read its Lua on its own, and a restored terminal config is invisible until
-# the terminal is told. Prints the number of entries written, on stdout.
+# the terminal is told. Vault entries restore through vault_restore_entry, one
+# failure fails the area with no silent skip. Prints the number of entries
+# written, on stdout.
 restore_apply() {
   require_writable_schema || return 1
   briefcache_invalidate
-  local area="$1" e src dst mode changed=0 apply errs DRY=0
+  local area="$1" e src dst mode changed=0 apply errs DRY=0 id failures=0
   shift
   for e in "$@"; do
     IFS='|' read -r src dst mode <<<"$e"
+    if [[ "$src" == vault:* ]]; then
+      id="${src#vault:}"
+      if vault_restore_entry "$id" >&2; then changed=$((changed + 1))
+      else failures=$((failures + 1)); fi
+      continue
+    fi
     if [[ "$src" == */ ]]; then install_tree "$src" "$dst" "$mode" >&2
     else install_file "$src" "$dst" "$mode" >&2; fi
     changed=$((changed + 1))
   done
+  if (( failures > 0 )); then
+    printf 'restore: %s secret(s) failed in %s\n' "$failures" "$area" >&2
+    printf '%s\n' "$changed"
+    return 1
+  fi
   apply=$(apply_for_category "$area")
   if (( changed > 0 )) && [[ -n "$apply" ]]; then
     echo "  → $apply" >&2

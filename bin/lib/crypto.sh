@@ -46,16 +46,38 @@ _vault_keep_temp() {
   done
   _VAULT_TEMPS=(${rest[@]+"${rest[@]}"})
 }
+declare -g -a _VAULT_PRIV_TEMPS=()
 _vault_clean_temps() {
   if (( ${#_VAULT_TEMPS[@]} )); then
     rm -f -- "${_VAULT_TEMPS[@]}" 2>/dev/null || true
+    # Best effort for privileged restore temps a signal interrupted: the
+    # unprivileged remove above cannot take a root-owned file. Non-interactive
+    # only, so this never prompts.
+    sudo -n rm -f -- "${_VAULT_TEMPS[@]}" 2>/dev/null || true
   fi
   _VAULT_TEMPS=()
+  if (( ${#_VAULT_PRIV_TEMPS[@]} )); then
+    local _pt
+    for _pt in ${_VAULT_PRIV_TEMPS[@]+"${_VAULT_PRIV_TEMPS[@]}"}; do
+      rm -f -- "$_pt" 2>/dev/null || true
+      sudo -n rm -f -- "$_pt" 2>/dev/null || true
+    done
+    _VAULT_PRIV_TEMPS=()
+  fi
 }
-# _vault_drop_restore_plain: the restore temp in whichever shape this call
-# made it (a staged file outside $HOME, or a file inside a temp dir beside
-# the destination). Reads the caller's locals through dynamic scope, the way
-# every module here shares names with its callers.
+_vault_note_priv_temp() { _VAULT_PRIV_TEMPS+=("$1"); }
+_vault_drop_priv_temp() {
+  local f="$1" rest=() t
+  for t in ${_VAULT_PRIV_TEMPS[@]+"${_VAULT_PRIV_TEMPS[@]}"}; do
+    [[ "$t" == "$f" ]] || rest+=("$t")
+  done
+  _VAULT_PRIV_TEMPS=(${rest[@]+"${rest[@]}"})
+  rm -f -- "$f" 2>/dev/null || true
+  sudo -n rm -f -- "$f" 2>/dev/null || true
+}
+# _vault_drop_restore_plain: the HOME restore temp inside its same-directory
+# work dir. Reads the caller's locals through dynamic scope, the way every
+# module here shares names with its callers.
 _vault_drop_restore_plain() {
   _vault_drop_temp "$plain"
   [[ -n "${restdir:-}" ]] && _vault_drop_tree "$restdir"
@@ -128,9 +150,21 @@ vault_index_file() { printf '%s\n' "$REPO_DIR/vault/index.age"; }
 vault_blobs_dir() { printf '%s\n' "$REPO_DIR/vault/blobs"; }
 
 # crypto_require_age: the encrypt/decrypt binary, or the exact next step.
+# Checked on its own by every decrypt and encrypt path, never folded into the
+# keygen probe below: a missing age and a missing age-keygen ask for different
+# remedies.
 crypto_require_age() {
   command -v age >/dev/null 2>&1 || {
     printf 'replicant: age is not installed — omarchy pkg add age\n' >&2
+    return 1
+  }
+}
+# crypto_require_keygen: the plain age-keygen binary for deriving a recipient
+# with -y. Independent of the post-quantum generation probe: reading needs the
+# tool, writing a new identity needs the post-quantum flag too.
+crypto_require_keygen() {
+  command -v age-keygen >/dev/null 2>&1 || {
+    printf 'replicant: age-keygen is not installed — omarchy pkg add age\n' >&2
     return 1
   }
 }
@@ -169,8 +203,11 @@ vault_recipient() {
 # vault_identity_ok: the triple check before any secret mutation or read.
 # The key must exist, be parseable, and match the repo's recipient. Anything
 # else fails with the exact remediation: this is the locked state of phase B.
+# age and age-keygen are verified independently: decrypting needs age, reading
+# the recipient needs age-keygen, and each missing tool names itself.
 vault_identity_ok() {
   crypto_require_age || return 1
+  crypto_require_keygen || return 1
   local idf rec mine
   idf=$(vault_identity_file)
   [[ -f "$idf" ]] || { printf 'replicant: no secret key on this machine — run key import <source>, then retry\n' >&2; return 1; }
@@ -463,13 +500,57 @@ vault_blob_same() {
   return 1
 }
 
-# vault_restore_entry <rel>: decrypt one secret back onto the machine. The
-# plaintext lands in a mode 600 temp beside the destination (or in the staged
-# dir for paths outside $HOME, where the privileged step may outlive this
-# call), the current file is backed up, and an atomic rename finishes it.
+# vault_priv_run <cmd...>: run one command with privilege for a secret
+# restore outside $HOME. Tries pkexec when a session could prompt, then
+# passwordless sudo. Never logs its stdin: callers stream plaintext through
+# the pipe, never as an argument. Paths only on the command line.
+vault_priv_run() {
+  if command -v pkexec >/dev/null 2>&1 && [[ -n "${XDG_SESSION_ID:-}${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    if pkexec "$@" 2>/dev/null; then return 0; fi
+  fi
+  if sudo -n true 2>/dev/null; then
+    if sudo -n "$@" 2>/dev/null; then return 0; fi
+  fi
+  return 1
+}
+# vault_priv_mktemp <dir>: a mode 600 temp file in the destination directory,
+# created with privilege. This IS the privilege preflight: it runs before any
+# decrypt, so a destination that cannot be written fails with no plaintext on
+# disk and nothing retained for recovery. Prints the temp path.
+vault_priv_mktemp() {
+  local dir="$1" tmp
+  tmp=$(vault_priv_run mktemp -p "$dir" .replicant-secret-XXXXXX 2>/dev/null) || return 1
+  [[ -n "$tmp" ]] || return 1
+  vault_priv_run chmod 600 "$tmp" 2>/dev/null || {
+    vault_priv_run rm -f -- "$tmp" 2>/dev/null || true
+    return 1
+  }
+  printf '%s\n' "$tmp"
+}
+# vault_priv_cleanup <path>: remove a privileged temp, best effort both ways.
+vault_priv_cleanup() {
+  local f="$1"
+  rm -f -- "$f" 2>/dev/null || true
+  vault_priv_run rm -f -- "$f" 2>/dev/null || true
+}
+# vault_owner_of <path>: the existing uid:gid, or nothing for a new file.
+vault_owner_of() {
+  stat -c '%u:%g' -- "$1" 2>/dev/null || true
+}
+# vault_restore_entry <rel>: decrypt one secret back onto the machine.
+# Inside $HOME the plaintext lands in a mode 600 temp in the same directory
+# and an atomic rename finishes it. Outside $HOME privilege is acquired
+# BEFORE decrypting by creating that same-directory temp with privilege, the
+# plaintext is streamed through a pipe (never below REPLICANT_HOME, never
+# retained for a recovery command), and a privileged backup plus rename
+# finishes it. No cross-filesystem fallback: when the same-directory temp is
+# unavailable the restore fails. Mode 0600 is enforced and verified, the
+# existing owner is preserved, and nothing secret reaches output, logs,
+# journals or arguments.
 vault_restore_entry() {
-  local rel="$1" src idx blob blobs plain staged backup apply restdir
+  local rel="$1" src idx blob blobs plain backup apply restdir
   restdir=""
+  crypto_require_age || return 1
   vault_identity_ok || return 1
   idx=$(vault_index_decrypt) || return 1
   blob=$(vault_index_blob "$idx" "$rel")
@@ -480,48 +561,126 @@ vault_restore_entry() {
     return 1
   fi
   if [[ "$src" != "$HOME"/* ]]; then
-    mkdir -p "$REPLICANT_HOME/staged" || return 1
-    staged="$REPLICANT_HOME/staged/$(printf '%s' "$rel" | tr -c 'A-Za-z0-9._-' '_')"
-    plain="$staged"
-  else
-    # Same filesystem as the destination, so the final rename is atomic.
-    # age -o refuses an existing file, hence a fresh dir, not a mktemp file.
-    restdir=$(mktemp -d -p "$(dirname "$src")" 2>/dev/null || mktemp -d) || return 1
-    plain="$restdir/plain"
-    _vault_note_temp "$restdir"
+    vault_restore_entry_privileged "$rel" "$src" "$blobs/$blob.age"
+    return $?
   fi
+  # Same filesystem as the destination, so the final rename is atomic.
+  # age -o refuses an existing file, hence a fresh dir, not a mktemp file.
+  # No fallback: a temp elsewhere would rename across filesystems, which is a
+  # copy plus unlink, not atomic.
+  mkdir -p -- "$(dirname -- "$src")" 2>/dev/null || {
+    printf 'replicant: cannot write to %s\n' "$(dirname -- "$src")" >&2
+    return 1
+  }
+  restdir=$(mktemp -d -p "$(dirname -- "$src")") || {
+    printf 'replicant: cannot create a temporary file beside %s — the restore is refused rather than done non-atomically\n' "$src" >&2
+    return 1
+  }
+  plain="$restdir/plain"
+  _vault_note_temp "$restdir"
   _vault_note_temp "$plain"
   vault_arm_traps
-  local idf
+  local idf owner mode
   idf=$(vault_identity_file)
   if ! age -d -i "$idf" -o "$plain" "$blobs/$blob.age" 2>/dev/null; then
     _vault_drop_restore_plain
     printf 'replicant: vault blob for %s does not decrypt — the live file is untouched\n' "$rel" >&2
     return 1
   fi
-  chmod 600 "$plain" 2>/dev/null || true
+  chmod 600 -- "$plain" 2>/dev/null || {
+    _vault_drop_restore_plain
+    printf 'replicant: cannot secure the temporary file for %s\n' "$rel" >&2
+    return 1
+  }
   if [[ -f "$src" ]] && cmp -s "$plain" "$src" 2>/dev/null; then
     _vault_drop_restore_plain
     printf '%s already matches the copy in your repo\n' "$rel" >&2
     return 0
   fi
-  if [[ "$src" != "$HOME"/* ]]; then
-    # Through root_apply, which prints a sudo command naming the staged file
-    # when nothing can ask for root. The staged copy then has to outlive this
-    # call (like ini_set's), so a failure keeps it instead of dropping it.
-    apply=$(apply_for_category "$(category_for_rel "$rel")")
-    root_apply "$src" "$plain" "$apply"
-    local rc=$?
-    if (( rc == 0 )); then _vault_drop_temp "$plain"; else _vault_keep_temp "$plain"; fi
-    return $rc
-  fi
+  owner=$(vault_owner_of "$src")
   if [[ -e "$src" ]]; then
     backup="$src.bak.$(date +%s)"
     cp -a -- "$src" "$backup" || { _vault_drop_restore_plain; return 1; }
   fi
-  mv -T -- "$plain" "$src" || { _vault_drop_restore_plain; return 1; }
-  chmod 600 "$src" 2>/dev/null || true
+  if ! mv -T -- "$plain" "$src" 2>/dev/null; then
+    _vault_drop_restore_plain
+    printf 'replicant: atomic replacement of %s is unavailable — the live file is untouched\n' "$src" >&2
+    return 1
+  fi
+  chmod 600 -- "$src" 2>/dev/null || {
+    printf 'replicant: restored %s but cannot set mode 0600 — fix it before use\n' "$rel" >&2
+    _vault_drop_restore_plain
+    return 1
+  }
+  if [[ -n "$owner" ]]; then
+    chown "$owner" -- "$src" 2>/dev/null || {
+      printf 'replicant: restored %s but cannot preserve its owner %s\n' "$rel" "$owner" >&2
+      _vault_drop_restore_plain
+      return 1
+    }
+  fi
+  mode=$(stat -c '%a' -- "$src" 2>/dev/null || true)
+  if [[ "$mode" != "600" ]]; then
+    printf 'replicant: restored %s but its mode is %s, not 0600\n' "$rel" "${mode:-unknown}" >&2
+    _vault_drop_restore_plain
+    return 1
+  fi
   _vault_drop_restore_plain
+  apply=$(apply_for_category "$(category_for_rel "$rel")")
+  [[ -n "$apply" ]] && bash -c "$apply" >/dev/null 2>&1 || true
+  return 0
+}
+# vault_restore_entry_privileged <rel> <dst> <blobfile>: the outside-$HOME
+# half. Privilege is acquired first by creating the same-directory temp; only
+# then is anything decrypted, streamed through a pipe into that temp. No
+# plaintext ever lands below REPLICANT_HOME and none is retained: a failure
+# removes the temp and prints only a retry command.
+vault_restore_entry_privileged() {
+  local rel="$1" src="$2" blobfile="$3" tmp idf apply script
+  vault_arm_traps
+  tmp=$(vault_priv_mktemp "$(dirname -- "$src")") || {
+    printf 'replicant: cannot acquire privilege for %s — run with a polkit agent or passwordless sudo, then retry: omarchy-replicant restore-file %s\n' "$src" "$rel" >&2
+    return 1
+  }
+  _vault_note_priv_temp "$tmp"
+  idf=$(vault_identity_file)
+  local -a pipestat
+  age -d -i "$idf" -o - "$blobfile" 2>/dev/null | vault_priv_run dd of="$tmp" bs=64k status=none 2>/dev/null
+  pipestat=("${PIPESTATUS[@]}")
+  if (( pipestat[0] != 0 || pipestat[1] != 0 )); then
+    _vault_drop_priv_temp "$tmp"
+    printf 'replicant: vault blob for %s does not decrypt — the live file is untouched\n' "$rel" >&2
+    return 1
+  fi
+  if vault_priv_run test -f "$src" 2>/dev/null && vault_priv_run cmp -s "$tmp" "$src" 2>/dev/null; then
+    _vault_drop_priv_temp "$tmp"
+    printf '%s already matches the copy in your repo\n' "$rel" >&2
+    return 0
+  fi
+  script='tmp="$1"; dst="$2";
+    if [ -e "$dst" ]; then
+      owner=$(stat -c "%u:%g" "$dst" 2>/dev/null || true);
+      cp -a "$dst" "$dst.bak.$(date +%s)" || exit 1;
+    else
+      owner="";
+    fi;
+    chmod 600 "$tmp" || exit 1;
+    if [ -n "$owner" ]; then chown "$owner" "$tmp" || exit 1;
+    else chown root:root "$tmp" 2>/dev/null || true; fi;
+    mv -T -- "$tmp" "$dst" || exit 1;
+    chmod 600 "$dst" || exit 1;
+    if [ -n "$owner" ]; then chown "$owner" "$dst" || exit 1; fi;
+    mode=$(stat -c "%a" "$dst" 2>/dev/null || true);
+    [ "$mode" = "600" ] || exit 1;
+    exit 0'
+  if vault_priv_run /bin/sh -c "$script" _ "$tmp" "$src" 2>/dev/null; then
+    _vault_drop_priv_temp "$tmp"
+  else
+    vault_priv_cleanup "$tmp"
+    _vault_drop_priv_temp "$tmp"
+    printf 'replicant: privileged install of %s failed — the live file is untouched; retry: omarchy-replicant restore-file %s\n' "$src" "$rel" >&2
+    return 1
+  fi
   apply=$(apply_for_category "$(category_for_rel "$rel")")
   [[ -n "$apply" ]] && bash -c "$apply" >/dev/null 2>&1 || true
   return 0

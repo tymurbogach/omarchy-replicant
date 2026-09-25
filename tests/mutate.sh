@@ -515,6 +515,30 @@ from:   [[ ! -L "${candidate%/}" ]]
 to:   [[ ! -L "${real%/}" ]]
 why: bulk rejects a symlink before resolving its target
 ---
+file: bin/lib/crypto.sh
+suite: test-restore-secrets.sh
+from:     vault_restore_entry_privileged "$rel" "$src" "$blobs/$blob.age"
+to:     :
+why: a restore outside HOME acquires privilege before decrypting
+---
+file: bin/lib/crypto.sh
+suite: test-restore-secrets.sh
+from:   restdir=$(mktemp -d -p "$(dirname -- "$src")")
+to:   restdir=$(mktemp -d -p "$(dirname -- "$src")" 2>/dev/null || mktemp -d)
+why: a restore never falls back across filesystems
+---
+file: bin/lib/restore.sh
+suite: test-restore-secrets.sh
+from:       printf 'vault:%s|%s|%s\n' "$sid" "$slive" "600"
+to:       :
+why: a full restore routes vault secrets through the vault
+---
+file: bin/lib/restore.sh
+suite: test-restore-secrets.sh
+from:       echo "      (secret: would be restored at mode 600, contents never shown)" >&2
+to:       :
+why: a restore preview never shows secret contents
+---
 DATA
 )
 

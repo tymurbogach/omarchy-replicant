@@ -327,29 +327,29 @@
 
   ## Phase G6: Secret Restore and Leak Prevention
 
-  - [ ] Request privilege before decrypting root-owned destinations.
-  - [ ] Stream plaintext to a privileged same-directory temporary file.
-  - [ ] Rename only after a complete write.
-  - [ ] Never leave plaintext below REPLICANT_HOME.
-  - [ ] Never retain plaintext for recovery commands.
-  - [ ] Remove cross-filesystem temporary-file fallbacks.
-  - [ ] Fail when atomic replacement is unavailable.
-  - [ ] Preserve mode 0600.
-  - [ ] Preserve the correct owner.
-  - [ ] Verify age and age-keygen independently.
-  - [ ] Prevent secret values from reaching output, logs, journals, or arguments.
+  - [x] Request privilege before decrypting root-owned destinations.
+  - [x] Stream plaintext to a privileged same-directory temporary file.
+  - [x] Rename only after a complete write.
+  - [x] Never leave plaintext below REPLICANT_HOME.
+  - [x] Never retain plaintext for recovery commands.
+  - [x] Remove cross-filesystem temporary-file fallbacks.
+  - [x] Fail when atomic replacement is unavailable.
+  - [x] Preserve mode 0600.
+  - [x] Preserve the correct owner.
+  - [x] Verify age and age-keygen independently.
+  - [x] Prevent secret values from reaching output, logs, journals, or arguments.
 
   Tests:
 
-  - [ ] Restore secrets inside and outside HOME.
-  - [ ] Restore to a simulated root-owned destination.
-  - [ ] Fail privilege acquisition before decryption.
-  - [ ] Fail writes before and after temporary-file creation.
-  - [ ] Interrupt decryption and installation.
-  - [ ] Scan temporary trees after every failure.
-  - [ ] Scan Git objects and history for plaintext markers.
-  - [ ] Inspect process arguments during secret operations.
-  - [ ] Reject tampered indexes and blobs.
+  - [x] Restore secrets inside and outside HOME.
+  - [x] Restore to a simulated root-owned destination.
+  - [x] Fail privilege acquisition before decryption.
+  - [x] Fail writes before and after temporary-file creation.
+  - [x] Interrupt decryption and installation.
+  - [x] Scan temporary trees after every failure.
+  - [x] Scan Git objects and history for plaintext markers.
+  - [x] Inspect process arguments during secret operations.
+  - [x] Reject tampered indexes and blobs.
 
   Gate and commit:
 

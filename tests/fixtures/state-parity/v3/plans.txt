@@ -4,3 +4,9 @@
 @TMP@/replicant/repo/config/hypr/input.lua|@TMP@/home/.config/hypr/input.lua|644
 @TMP@/replicant/repo/config/nvim/|@TMP@/home/.config/nvim/|644
 @TMP@/replicant/repo/profiles/desktop/config/hypr/monitors.lua|@TMP@/home/.config/hypr/monitors.lua|644
+vault:env/60-secrets.conf|@TMP@/home/.config/environment.d/60-secrets.conf|600
+vault:env/60-secrets.conf|@TMP@/home/.config/environment.d/60-secrets.conf|600
+vault:ssh/id_ed25519.pub|@TMP@/home/.ssh/id_ed25519.pub|600
+vault:ssh/id_ed25519.pub|@TMP@/home/.ssh/id_ed25519.pub|600
+vault:ssh/id_ed25519|@TMP@/home/.ssh/id_ed25519|600
+vault:ssh/id_ed25519|@TMP@/home/.ssh/id_ed25519|600

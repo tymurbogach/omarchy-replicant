@@ -127,14 +127,9 @@ registry_build() {
     [[ -n "$id" ]] || continue
     live="${r_live[$id]}"
     category=$(category_for_rel "$id")
-    # On version 3 scope_for already reads the entries record, so the override
-    # map above it would answer twice. Older layouts keep the override: their
-    # records only exist there.
-    if [[ -n "${r_vscope[$id]:-}" ]] && ! repo_is_v3; then
-      scope="${r_vscope[$id]}"
-    else
-      scope_into scope "$id"
-    fi
+    # The shared scope map applies each schema's precedence. In version 2 the
+    # mutable .replicant-sync policy must override the initial entries record.
+    scope_into scope "$id"
     blob=""; locked="false"; repo=""
     if [[ "${r_kind[$id]}" == "secret" ]]; then
       if repo_has_vault; then

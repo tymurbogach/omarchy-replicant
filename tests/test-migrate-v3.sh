@@ -193,6 +193,11 @@ check "legacy cleanup warning remains" "true" "$(status_migration_json | jq -r .
 
 section "the current v2 layout migrates with re-encrypted secrets"
 build_v2
+printf 'hypr/input.lua = off\n' > "$REPO_DIR/.replicant-sync"
+git -C "$REPO_DIR" add .replicant-sync >/dev/null 2>&1
+git -C "$REPO_DIR" commit -qm "legacy scope override" >/dev/null 2>&1
+check "a v2 policy overrides its initial entries record" "off" \
+  "$(registry_build >/dev/null 2>&1; registry_row_for hypr/input.lua | cut -f5)"
 old_key="$(cat "$REPLICANT_HOME/keys/identity.txt")"
 upstream="$TMP/up-v2.git"; empty_remote "$upstream"
 track_upstream "$upstream"
@@ -201,6 +206,8 @@ backup="$TMP/v2.backup"
 core_migrate_v3 --remote "$remote" --identity-backup "$backup" --yes >/dev/null 2>&1
 check "migration succeeds" "0" "$?"
 check "the active repository is v3" "3" "$(jq -r .dataVersion "$REPO_DIR/.replicant/schema.json" 2>/dev/null)"
+check "the v2 policy survives migration" "off" \
+  "$(jq -r '."hypr/input.lua".scope' "$REPO_DIR/.replicant/entries.json" 2>/dev/null)"
 idx="$(vault_index_decrypt 2>/dev/null)"
 check "the vault index is version 2" "2" "$(jq -r .version <<<"$idx" 2>/dev/null)"
 check "…recording the secret path" "$HOME/.config/environment.d/60-secrets.conf" \

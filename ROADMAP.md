@@ -3,6 +3,7 @@
 ## Completed
 
 - Version 0.13.0 delivered the version 3 repository, transactional saves, bulk operations, and the current panel.
+- Version 0.13.1 makes version 2 policy overrides effective and preserves them during migration.
 
 ## Current
 

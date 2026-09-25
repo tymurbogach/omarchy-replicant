@@ -352,7 +352,7 @@ gate_g7() {
 gate_g8() {
   section "G8 release gate"
   "$HERE/coverage-check.sh" >/dev/null 2>&1 && ok "coverage manifest is complete" || bad "coverage manifest is incomplete"
-  [[ "$(jq -r .version "$ROOT/manifest.json" 2>/dev/null)" == "0.13.0" ]] && ok "plugin manifest is 0.13.0" || bad "plugin manifest is not 0.13.0"
+  [[ "$(jq -r .version "$ROOT/manifest.json" 2>/dev/null)" == "0.13.1" ]] && ok "plugin manifest is 0.13.1" || bad "plugin manifest is not 0.13.1"
   if [[ -z "$(git -C "$ROOT" status --porcelain | grep -E '\.log$|\.tmp$|baseline\.txt$' || true)" ]]; then
     ok "no stray test artifacts in the working tree"
   else

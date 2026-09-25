@@ -235,16 +235,38 @@ load_scope_map() {
     done
     return 0
   fi
+
+  # Version 2 records the initial scope in entries.json, but its scope command
+  # writes later policy decisions to .replicant-sync. Load the immutable
+  # record first, then let the policy file override it. Reversing this order
+  # makes a successful Off command appear to do nothing and also loses that
+  # decision during migration to version 3.
+  if [[ "$(repo_data_version)" == 2 && -f "$REPO_DIR/.replicant/entries.json" ]]; then
+    while IFS=$'\t' read -r vid vsc; do
+      [[ -n "${vid:-}" ]] || continue
+      case "$vsc" in shared|profile|off) SCOPE_OF[$vid]="$vsc" ;; esac
+    done < <(jq -r 'to_entries | sort_by(.key)[] | [.key, (.value.scope // "")] | @tsv' \
+      "$REPO_DIR/.replicant/entries.json" 2>/dev/null || true)
+  fi
+  for line in "${DEFAULT_SCOPES[@]}"; do
+    k="${line%%=*}"; v="${line##*=}"
+    [[ -n "${SCOPE_OF[$k]:-}" ]] || SCOPE_OF[$k]="$v"
+  done
   read_scopes >/dev/null
+  local -A policy_seen=()
   while IFS= read -r line; do
     k="${line%%=*}"; v="${line#*=}"
     k="${k//[[:space:]]/}"; v="${v//[[:space:]]/}"
-    case "$v" in shared|profile|off) [[ -n "${SCOPE_OF[$k]:-}" ]] || SCOPE_OF[$k]="$v" ;; esac
+    case "$v" in
+      shared|profile|off)
+        [[ -n "${policy_seen[$k]:-}" ]] || { SCOPE_OF[$k]="$v"; policy_seen[$k]=1; }
+        ;;
+    esac
   done < <(read_scopes)
   if [[ ! -f "$SCOPE_FILE" && -f "$LEGACY_EXCLUDE_FILE" ]]; then
     while IFS= read -r line; do
       line="${line//[[:space:]]/}"
-      [[ -n "$line" && -z "${SCOPE_OF[$line]:-}" ]] && SCOPE_OF[$line]=off
+      [[ -n "$line" ]] && SCOPE_OF[$line]=off
     done < <(migrate_legacy_exclude_map)
   fi
   return 0
@@ -288,28 +310,9 @@ read_scopes() {
 # when neither names the id. One resolution path, never two. On older layouts
 # the scope file wins, then the legacy off-list, then the shared default.
 scope_for() {
-  local rel="$1" line k v
-  if repo_is_v3; then
-    load_scope_map
-    printf '%s\n' "${SCOPE_OF[$rel]:-shared}"
-    return 0
-  fi
-  while IFS= read -r line; do
-    k="${line%%=*}"; v="${line#*=}"
-    k="${k//[[:space:]]/}"; v="${v//[[:space:]]/}"
-    if [[ "$k" == "$rel" ]]; then
-      case "$v" in shared|profile|off) printf '%s\n' "$v"; return 0 ;; esac
-    fi
-  done < <(read_scopes)
-  # A v0.5 repo that has not been through ensure_repo_layout yet still keeps its
-  # off-list in the old flat file. Honour it until the migration runs, so a file
-  # the user switched off never reads as shared for even one command.
-  if [[ ! -f "$SCOPE_FILE" && -f "$LEGACY_EXCLUDE_FILE" ]]; then
-    while IFS= read -r line; do
-      [[ "${line//[[:space:]]/}" == "$rel" ]] && { printf 'off\n'; return 0; }
-    done < <(migrate_legacy_exclude_map)
-  fi
-  printf 'shared\n'
+  local rel="$1"
+  load_scope_map
+  printf '%s\n' "${SCOPE_OF[$rel]:-shared}"
 }
 
 # Kept so the eight call sites that only care about "is this switched off"

@@ -47,7 +47,7 @@ Complete one small, verifiable task at a time. When a task is complete, update i
 
 Automated evidence for the open validation task:
 
-- `./tests/run-all.sh`: passed in 253 seconds.
+- `./tests/run-all.sh`: passed in 251 seconds.
 - QML logic: 59 passed and 0 failed.
 - Deterministic screenshots: 8 passed and 0 failed.
 - `qmllint`: passed for `Panel.qml` and `components/FileRow.qml`.

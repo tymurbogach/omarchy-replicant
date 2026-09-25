@@ -98,7 +98,7 @@ check_true "the journal records transaction recovery" \
   bash -c 'grep -qi "transaction recovery\|tx resume\|recovery.*transaction" "$1"' _ "$ROOT/docs/journal.md"
 
 section "the release version is set"
-check "plugin manifest is 0.13.0" "0.13.0" \
+check "plugin manifest is 0.13.1" "0.13.1" \
   "$(jq -r .version "$ROOT/manifest.json" 2>/dev/null)"
 
 summary

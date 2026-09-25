@@ -190,6 +190,7 @@ core_bulk_transact() {
   [[ "${1:-}" == "--" ]] && shift
   local -a args=("$@")
   [[ -n "$action" && ${#args[@]} -gt 0 ]] || { echo "bulk: no entries selected" >&2; return 1; }
+  progress_stage scan false "Scanning"
   tx_begin "bulk-$action" "bulk: $action ${#args[@]} entries" "${args[@]}" || return 1
   local txdir="$TX_DIR" txrepo="$TX_REPO" base="$TX_BASE" branch candidate rc=0
   branch=$(git -C "$REPO_DIR" symbolic-ref --short HEAD 2>/dev/null || echo main)
@@ -200,6 +201,9 @@ core_bulk_transact() {
     *) core_args+=("${args[@]}") ;;
   esac
   if [[ "$allow_large" == 1 ]]; then export BULK_ALLOW_LARGE=1; fi
+  if [[ "$action" == convert-secret || ( "$action" == track && "$kind" == secret ) ]]; then
+    progress_stage encrypt false "Encrypting"
+  fi
   if REPLICANT_TX_REPO="$txrepo" bash "$REAL_CORE" bulk-apply "${core_args[@]}"; then
     :
   else
@@ -214,6 +218,7 @@ core_bulk_transact() {
     elif (( rc == 0 )); then
       REPLICANT_TX_REPO="$txrepo" bash "$REAL_CORE" bulk-scan "$txrepo" >/dev/null || rc=$?
       if (( rc == 0 )); then
+        progress_stage commit false "Committing"
         git -C "$txrepo" commit -q -m "bulk: $action ${#args[@]} entries" || rc=$?
       fi
       if (( rc == 0 )); then
@@ -226,6 +231,7 @@ core_bulk_transact() {
       candidate=$(git -C "$txrepo" rev-parse HEAD 2>/dev/null || true)
       (( rc == 0 )) && [[ -n "$candidate" ]] && tx_mark_committed "$txdir" "$candidate" "$base" "bulk-$action" "bulk: $action ${#args[@]} entries" "${args[@]}"
       if (( rc == 0 )) && git -C "$REPO_DIR" remote get-url origin >/dev/null 2>&1; then
+        progress_stage publish false "Publishing"
         git -C "$txrepo" push -q origin "HEAD:refs/heads/$branch" || rc=$?
       fi
       if (( rc == 0 )) && [[ -n "$candidate" && "$candidate" != "$base" ]]; then

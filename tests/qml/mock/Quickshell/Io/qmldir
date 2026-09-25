@@ -1,0 +1,4 @@
+module Quickshell.Io
+Process 1.0 MockProcess.qml
+StdioCollector 1.0 MockStdioCollector.qml
+SplitParser 1.0 MockSplitParser.qml

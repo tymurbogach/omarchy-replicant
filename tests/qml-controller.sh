@@ -18,6 +18,10 @@ grep -q 'function cancel(' "$CONTROLLER" && ok "controller exposes cancel()" || 
 grep -q 'property var queue' "$CONTROLLER" && ok "controller owns one queue" || bad "controller misses queue"
 grep -q 'signal completed' "$CONTROLLER" && ok "controller emits completed" || bad "controller misses completed signal"
 grep -q 'Quickshell.Io' "$CONTROLLER" && ok "controller runs CLI processes" || bad "controller misses process backend"
+grep -q 'Plugin.ReplicantController' "$HERE/qml/tst_controller.qml" && ok "QML tests instantiate the real controller" || bad "QML tests do not instantiate the real controller"
+grep -q 'module Quickshell.Io' "$HERE/qml/mock/Quickshell/Io/qmldir" && ok "controller I/O has a process mock" || bad "controller I/O process mock is missing"
+grep -q 'SplitParser' "$CONTROLLER" && grep -q 'progressParserFeed' "$CONTROLLER" && ok "stderr progress uses a streaming parser" || bad "controller progress is not streamed"
+grep -q 'function dispatchNext(' "$CONTROLLER" && grep -q 'function handleStderrChunk(' "$CONTROLLER" && ok "controller owns queue dispatch and stream parsing" || bad "controller queue or stream API is missing"
 if grep -q 'console\.log' "$CONTROLLER"; then bad "console.log left in controller"; else ok "no debug logging in controller"; fi
 [[ -d "$HERE/qml/mock" ]] && ok "mock Omarchy modules exist" || bad "mock modules are missing"
 

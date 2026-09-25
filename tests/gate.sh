@@ -288,7 +288,67 @@ gate_g6() {
   if "$HERE/test-crypto.sh" >/dev/null 2>&1; then ok "crypto suite still passes"; else bad "crypto suite fails"; fi
   if "$HERE/test-leaks.sh" >/dev/null 2>&1; then ok "leak scan still passes"; else bad "leak scan fails"; fi
 }
-gate_g7() { section "G7 controller gate"; bad "G7 is not implemented yet"; }
+gate_g7() {
+  section "G7 progress protocol"
+  grep -q -- '--progress-json' "$ROOT/bin/omarchy-replicant" \
+    && ok "CLI accepts the global progress option" \
+    || bad "CLI has no global progress option"
+  grep -q 'progress_stage()' "$ROOT/bin/lib/progress.sh" \
+    && grep -q 'progress_result()' "$ROOT/bin/lib/progress.sh" \
+    && ok "CLI has stage and result events" \
+    || bad "CLI progress helpers are missing"
+  grep -q 'progress_stage run false' "$ROOT/bin/omarchy-replicant" \
+    && ok "every command announces its start" \
+    || bad "CLI does not announce command start"
+  grep -q 'progress_stage commit false' "$ROOT/bin/lib/save.sh" \
+    && ok "save disables cancellation before commit" \
+    || bad "save does not mark the commit boundary"
+  grep -q 'progress_stage commit false' "$ROOT/bin/lib/transaction.sh" \
+    && grep -q 'progress_stage publish false' "$ROOT/bin/lib/transaction.sh" \
+    && ok "shape transactions stream commit and publish stages" \
+    || bad "shape transaction stages are missing"
+  grep -q 'progress_stage commit false' "$ROOT/bin/lib/bulk.sh" \
+    && ok "bulk streams its commit boundary" \
+    || bad "bulk commit stage is missing"
+  grep -q 'progress_result local-only' "$ROOT/bin/lib/save.sh" \
+    && ok "save reports local-only commits" \
+    || bad "save does not distinguish local-only commits"
+  [[ -x "$ROOT/bin/replicant-process.sh" ]] \
+    && ok "process wrapper forwards cancellation to child processes" \
+    || bad "the process-group cancellation wrapper is missing"
+
+  section "G7 controller and parser"
+  grep -q 'function dispatchNext(' "$ROOT/ReplicantController.qml" \
+    && grep -q 'R.queueEnqueue' "$ROOT/ReplicantController.qml" \
+    && ok "the controller owns one priority queue" \
+    || bad "controller queue dispatch is missing"
+  grep -q 'splitMarker: ""' "$ROOT/ReplicantController.qml" \
+    && grep -q 'R.progressParserFeed' "$ROOT/ReplicantController.qml" \
+    && ok "the controller parses stderr as a live stream" \
+    || bad "controller progress is parsed only after process exit"
+  grep -q 'currentMeta.exclusive === true' "$ROOT/Panel.qml" \
+    && ! grep -q 'scopeQueue' "$ROOT/Panel.qml" \
+    && ok "panel actions use the controller queue" \
+    || bad "panel still has a separate action queue or global lock"
+
+  section "G7 navigation lifecycle"
+  grep -q 'function openTransient(kind)' "$ROOT/Panel.qml" \
+    && grep -q 'function closeTransient()' "$ROOT/Panel.qml" \
+    && grep -q 'R.restoreSelection' "$ROOT/Panel.qml" \
+    && grep -q 'R.focusIndexFor' "$ROOT/Panel.qml" \
+    && ok "panel snapshots restore selection and focus" \
+    || bad "panel transient navigation lifecycle is incomplete"
+  grep -q 'root.cancelConfirmation()' "$ROOT/Panel.qml" \
+    && grep -q 'root.closeTransient()' "$ROOT/Panel.qml" \
+    && ok "Escape and cancellation restore the list" \
+    || bad "a transient close path skips restoration"
+
+  section "G7 regression suites"
+  if "$HERE/test-progress.sh" >/dev/null 2>&1; then ok "progress protocol suite passes"; else bad "progress protocol suite fails"; fi
+  if "$HERE/test-g7-navigation.sh" >/dev/null 2>&1; then ok "navigation lifecycle suite passes"; else bad "navigation lifecycle suite fails"; fi
+  if "$HERE/qml-controller.sh" >/dev/null 2>&1; then ok "real controller QML suite passes"; else bad "real controller QML suite fails"; fi
+  if "$HERE/test-g7-screenshots.sh"; then ok "fixed offscreen screenshots match"; else bad "offscreen screenshot suite fails"; fi
+}
 gate_g8() { section "G8 release gate"; bad "G8 is not implemented yet"; }
 
 "gate_$(echo "$PHASE" | tr '[:upper:]' '[:lower:]')"

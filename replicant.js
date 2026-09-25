@@ -281,6 +281,10 @@ function navigationSnapshot(v) {
     manageMode: v.manageMode === true,
     selectedIds: (v.selectedIds || []).slice(),
     selectionAnchor: String(v.selectionAnchor || ""),
+    focusIndex: Number(v.focusIndex !== undefined ? v.focusIndex : v.keyboardFocusIndex) || 0,
+    manageCursor: Number(v.manageCursor) || 0,
+    focus: v.focus && v.focus.id ? { kind: String(v.focus.kind || ""), id: String(v.focus.id) } : null,
+    focusedField: String(v.focusedField || ""),
     anchor: v.anchor && v.anchor.id ? {
       kind: String(v.anchor.kind || "card"),
       id: String(v.anchor.id),
@@ -588,4 +592,155 @@ function repoTransportUrl(login, name, transport) {
   var repo = String(name || "")
   return transport === "ssh" ? "git@github.com:" + owner + "/" + repo + ".git"
                              : "https://github.com/" + owner + "/" + repo + ".git"
+}
+
+// ── G7 controller queue and progress ───────────────────────────────────────
+// One queue for every controller process. Interactive jobs run before queued
+// background refreshes; duplicate background jobs coalesce into one. An
+// accepted user action is never discarded. The return is explicit.
+function queueIsBackground(job) {
+  return !!(job && job.meta && job.meta.background === true)
+}
+
+function queueSameCommand(a, b) {
+  return String(JSON.stringify(a.command || [])) === String(JSON.stringify(b.command || []))
+}
+
+function queueEnqueue(queue, job) {
+  var list = (queue || []).slice()
+  var next = { job: job.job, command: (job.command || []).slice(), meta: job.meta || ({}) }
+  if (queueIsBackground(next)) {
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].job === next.job && queueSameCommand(list[i], next)) return { queue: list, result: "coalesced" }
+    }
+    list.push(next)
+    return { queue: list, result: "queued" }
+  }
+  var at = list.length
+  for (var k = 0; k < list.length; k++) {
+    if (queueIsBackground(list[k])) { at = k; break }
+  }
+  list.splice(at, 0, next)
+  return { queue: list, result: "queued" }
+}
+
+// Parse one stderr line of the --progress-json stream. Returns the event
+// object for protocol 1 stage/result lines, or null for human text,
+// malformed JSON, combined fragments and foreign lines. progressParserFeed
+// assembles arbitrary chunks into lines before this runs.
+function parseProgressLine(line) {
+  var s = String(line || "").trim()
+  if (s === "" || s.charAt(0) !== "{") return null
+  var o
+  try { o = JSON.parse(s) } catch (e) { return null }
+  if (!o || o.protocol !== 1) return null
+  if (o.type === "stage") {
+    if (["run", "scan", "encrypt", "commit", "publish"].indexOf(o.stage) < 0) return null
+    return { type: "stage", stage: o.stage, cancellable: o.cancellable === true,
+             message: String(o.message || "") }
+  }
+  if (o.type === "result") {
+    if (["success", "noop", "cancelled", "local-only", "failed"].indexOf(o.outcome) < 0) return null
+    return { type: "result", outcome: o.outcome, message: String(o.message || ""),
+             recoveryCommand: o.recoveryCommand === null ? null : String(o.recoveryCommand || "") }
+  }
+  return null
+}
+
+// Feed arbitrary stderr chunks into a newline-delimited progress parser.
+// Keep incomplete data in state.buffer. Recognized protocol lines become
+// events and disappear from the human output; malformed or foreign lines stay
+// byte-for-byte in text. final flushes the last line when it has no newline.
+function progressParserFeed(state, chunk, final) {
+  var parser = state || ({ buffer: "" })
+  parser.buffer = String(parser.buffer || "") + String(chunk || "")
+  var events = [], text = "", at
+  while ((at = parser.buffer.indexOf("\n")) >= 0) {
+    var line = parser.buffer.slice(0, at)
+    parser.buffer = parser.buffer.slice(at + 1)
+    var event = parseProgressLine(line)
+    if (event) events.push(event)
+    else text += line + "\n"
+  }
+  if (final && parser.buffer !== "") {
+    var last = parser.buffer
+    parser.buffer = ""
+    var finalEvent = parseProgressLine(last)
+    if (finalEvent) events.push(finalEvent)
+    else text += last
+  }
+  return { events: events, text: text }
+}
+
+// Map a protocol stage to the controller stage word the panel renders.
+function progressStageWord(stage) {
+  if (stage === "run") return "running"
+  if (stage === "scan") return "scanning"
+  if (stage === "encrypt") return "encrypting"
+  if (stage === "commit") return "committing"
+  if (stage === "publish") return "publishing"
+  return "running"
+}
+
+// The nearest surviving row when the selected one disappears: the same id
+// when it is still there, otherwise the row at the old index clamped into
+// the new list, or "" when nothing remains.
+function nearestRowId(rows, oldId, oldIndex) {
+  var list = rows || []
+  if (list.length === 0) return ""
+  for (var i = 0; i < list.length; i++) {
+    if (String(list[i].id) === String(oldId)) return String(list[i].id)
+  }
+  var at = Math.max(0, Math.min(list.length - 1, Number(oldIndex) || 0))
+  return String(list[at].id || "")
+}
+
+// Restore a multi-selection after a status refresh. Keep every surviving id.
+// If the anchor survives, keep it; otherwise prefer a surviving selection
+// near the old cursor, and select the nearest row only when none survives.
+function restoreSelection(rows, selectedIds, selectionAnchor, oldIndex) {
+  var list = rows || []
+  var ids = selectedIds || []
+  var kept = ids.filter(function(id) {
+    return list.some(function(row) { return String(row.id) === String(id) })
+  })
+  var anchor = String(selectionAnchor || "")
+  if (kept.indexOf(anchor) >= 0) return { selectedIds: kept, selectionAnchor: anchor }
+  if (kept.length > 0) {
+    var target = Number(oldIndex) || 0
+    var bestId = kept[0], bestDistance = Infinity
+    for (var i = 0; i < list.length; i++) {
+      if (kept.indexOf(String(list[i].id)) < 0) continue
+      var distance = Math.abs(i - target)
+      if (distance < bestDistance) { bestDistance = distance; bestId = String(list[i].id) }
+    }
+    return { selectedIds: kept, selectionAnchor: bestId }
+  }
+  if (ids.length > 0 || anchor !== "") {
+    var nearest = nearestRowId(list, anchor, oldIndex)
+    return { selectedIds: nearest === "" ? [] : [nearest], selectionAnchor: nearest }
+  }
+  return { selectedIds: [], selectionAnchor: "" }
+}
+
+// Restore the logical keyboard focus by stable kind/id. If its row vanished,
+// choose the row at the old keyboard position, clamped to the current rows.
+function focusIndexFor(items, focus, fallback) {
+  var list = items || []
+  if (focus && focus.id) {
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].kind === focus.kind && String(list[i].id) === String(focus.id)) return i
+    }
+    if (focus.kind === "row") {
+      var rows = [], before = 0
+      var target = Math.max(0, Number(fallback) || 0)
+      for (var j = 0; j < list.length; j++) {
+        if (list[j].kind !== "row") continue
+        if (j < target) before++
+        rows.push(j)
+      }
+      if (rows.length > 0) return rows[Math.min(rows.length - 1, before)]
+    }
+  }
+  return Math.max(0, Math.min(Math.max(0, list.length - 1), Number(fallback) || 0))
 }

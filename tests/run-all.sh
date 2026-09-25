@@ -11,7 +11,7 @@ banner() { printf '\n\033[1m══ %s\033[0m\n' "$1"; }
 # The suites run together. Each one has its own temporary $HOME, so they share
 # nothing, and the run takes as long as the slowest suite, not the sum of all
 # of them. Their output is printed in the usual order after they finish.
-suites=(test-core.sh test-settings.sh test-settings-save.sh test-cli.sh test-bulk.sh test-bulk-v3.sh test-journey.sh test-usability.sh test-schema.sh test-v3schema.sh test-bootstrap.sh test-crypto.sh test-restore-secrets.sh test-state.sh test-save.sh test-transaction.sh test-leaks.sh test-interruptions.sh test-migration.sh test-migrate-v3.sh test-modules.sh)
+suites=(test-core.sh test-settings.sh test-settings-save.sh test-cli.sh test-bulk.sh test-bulk-v3.sh test-journey.sh test-usability.sh test-schema.sh test-v3schema.sh test-bootstrap.sh test-crypto.sh test-restore-secrets.sh test-state.sh test-save.sh test-transaction.sh test-leaks.sh test-interruptions.sh test-migration.sh test-migrate-v3.sh test-modules.sh test-progress.sh test-g7-navigation.sh)
 logs=$(mktemp -d)
 declare -A pid=()
 for suite in "${suites[@]}"; do
@@ -92,7 +92,7 @@ if [[ -n "$QMLTEST" ]]; then
   # A desktop theme plugin breaks the offscreen runner, and a Wayland session
   # leaks its own platform into the test. Both describe the developer's
   # machine, not what the test needs, so neither reaches the runner.
-  if qml_out=$(env -u QT_QPA_PLATFORMTHEME QT_QPA_PLATFORM=offscreen "$QMLTEST" -input "$ROOT/tests/qml" 2>&1); then
+  if qml_out=$(env -u QT_QPA_PLATFORMTHEME QT_QPA_PLATFORM=offscreen "$QMLTEST" -import "$HERE/qml/mock" -input "$ROOT/tests/qml" 2>&1); then
     printf '  \033[32m✓\033[0m %s\n' "$(grep -oE 'Totals: [0-9]+ passed, [0-9]+ failed' <<<"$qml_out")"
   else
     printf '  \033[31m✗\033[0m the panel logic tests failed\n'

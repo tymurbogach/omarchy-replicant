@@ -102,11 +102,11 @@ Item {
     Button {
       anchors.verticalCenter: parent.verticalCenter
       iconText: panel.icRefresh
-      iconSpinning: panel.busy
+      iconSpinning: panel.operationRunning
       bordered: false
-      foreground: panel.busy ? Color.accent : panel.dim
+      foreground: panel.operationRunning ? Color.accent : panel.dim
       fontFamily: panel.ff
-      tooltipText: panel.busy ? panel.busyLabel : "Re-check this machine against the repo  (r)"
+      tooltipText: panel.operationRunning ? panel.busyLabel : "Re-check this machine against the repo  (r)"
       onClicked: panel.refresh()
     }
   }

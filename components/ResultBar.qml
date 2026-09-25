@@ -13,7 +13,7 @@ Item {
   id: rb
   // The panel this belongs to. Every value and every action comes from it.
   property var panel
-  readonly property bool running: panel.busy || panel.busyLabel !== ""
+  readonly property bool running: panel.operationRunning || panel.busyLabel !== ""
   visible: rb.running || panel.lastOutput !== ""
   implicitHeight: Style.space(38)
 
@@ -30,8 +30,8 @@ Item {
       anchors.left: parent.left
       anchors.verticalCenter: parent.verticalCenter
       width: Style.space(20)
-      text: rb.running ? panel.icRefresh : panel.lastOk ? panel.icCheck : panel.icAlert
-      color: rb.running ? Color.accent : panel.lastOk ? panel.okColor : Color.urgent
+      text: rb.running ? panel.icRefresh : panel.lastCancelled ? panel.icClose : panel.lastOk ? panel.icCheck : panel.icAlert
+      color: rb.running ? Color.accent : panel.lastCancelled ? panel.warnColor : panel.lastOk ? panel.okColor : Color.urgent
       font.family: panel.ff; font.pixelSize: Style.font.body
       horizontalAlignment: Text.AlignHCenter
       rotation: 0
@@ -48,7 +48,7 @@ Item {
       anchors.rightMargin: Style.space(6)
       anchors.verticalCenter: parent.verticalCenter
       text: rb.running ? panel.stageText : panel.resultLine
-      color: rb.running ? panel.fg : panel.lastOk ? panel.fg : Color.urgent
+      color: rb.running ? panel.fg : panel.lastCancelled ? panel.warnColor : panel.lastOk ? panel.fg : Color.urgent
       font.family: panel.ff; font.pixelSize: Style.font.caption
       elide: Text.ElideRight
     }

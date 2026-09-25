@@ -38,7 +38,8 @@ Panel {
   readonly property string stageText: controller.stage === "scanning" ? "Scanning…"
       : controller.stage === "encrypting" ? "Encrypting…"
       : controller.stage === "committing" ? "Committing…"
-      : controller.stage === "publishing" ? "Publishing…" : root.busyLabel
+      : controller.stage === "publishing" ? "Publishing…"
+      : root.busyLabel || String(controller.currentMeta.label || "Working…")
   // True once a real status response has come back at least once. Gates the
   // "no repo yet — create one" screen: showing it before we know the state let
   // a stray click re-point an already-configured remote (a real incident).
@@ -52,7 +53,9 @@ Panel {
 
   property string lastOutput: ""
   property bool lastOk: true
+  property bool lastCancelled: false
   property string lastTitle: "Output"
+  readonly property string resultLine: R.resultLine(root.lastOutput, root.lastOk)
   property string activeTab: "overview"
   property string fileSearch: ""
   property string stateFilter: "all"
@@ -63,6 +66,7 @@ Panel {
   property var navigationSnapshot: null
   property bool restoringNavigation: false
   property bool navigationRestorePending: false
+  property string transientView: ""
   property bool manageMode: false
   property bool keyboardHelpOpen: false
   property var selectedIds: []
@@ -88,7 +92,6 @@ Panel {
   readonly property string keyboardCursorId: root.keyboardFocus.kind === "row"
       ? root.keyboardFocus.id : ""
   function toggleManage() {
-    if (!root.manageMode) root.captureNavigation()
     root.manageMode = !root.manageMode
     if (!root.manageMode) root.selectedIds = []
     else if (root.suggestions.length > 0 && !root.isOpen("__suggest")) root.toggleCard("__suggest")
@@ -252,8 +255,24 @@ Panel {
       manageMode: root.manageMode,
       selectedIds: root.selectedIds,
       selectionAnchor: root.selectionAnchor,
+      focusIndex: root.keyboardFocusIndex,
+      manageCursor: root.manageCursor,
+      focus: root.keyboardFocus,
+      focusedField: root.focusedFieldId,
       anchor: root.navigationAnchor()
     })
+  }
+
+  // A transient view sits above the list. Keep one snapshot until that view
+  // closes or the user navigates elsewhere. Refreshes must not replace it.
+  function openTransient(kind) {
+    if (!root.navigationSnapshot) root.captureNavigation()
+    root.transientView = String(kind || "view")
+  }
+
+  function closeTransient() {
+    root.transientView = ""
+    if (root.navigationSnapshot) root.restoreNavigation()
   }
 
   function resetCurrentTabScroll() {
@@ -276,8 +295,14 @@ Panel {
     root.settingSearch = snapshot.settingSearch
     root.settingFilter = snapshot.settingFilter
     root.manageMode = snapshot.manageMode
-    root.selectedIds = snapshot.selectedIds
-    root.selectionAnchor = snapshot.selectionAnchor
+    var rows = root.visibleConfigRows
+    var selection = R.restoreSelection(rows, snapshot.selectedIds, snapshot.selectionAnchor, snapshot.manageCursor)
+    root.selectedIds = selection.selectedIds
+    root.selectionAnchor = selection.selectionAnchor
+    root.manageCursor = Math.max(0, Math.min(Math.max(0, rows.length - 1), Number(snapshot.manageCursor) || 0))
+    root.keyboardFocusIndex = R.focusIndexFor(root.keyboardFocusItems, snapshot.focus, snapshot.focusIndex)
+    root.focusedFieldId = String(snapshot.focusedField || "")
+    root.focusedField = null
     root.scrollPositions = snapshot.scrollY
     root.lastScrollTab = snapshot.activeTab
     root.restoringNavigation = false
@@ -301,6 +326,10 @@ Panel {
       for (var k in root.scrollPositions) next[k] = root.scrollPositions[k]
       next[root.activeTab] = target
       root.scrollPositions = next
+      if (snapshot.focusedField === "configs-search") configsTab.focusSearch()
+      else if (snapshot.focusedField === "settings-search") settingsTab.focusSearch()
+      else if (snapshot.focusedField === "suggest-path") configsTab.focusPath()
+      else root.releaseFocus()
       // A snapshot describes one content transition. Do not replay it on a
       // later tab change or after the user scrolls again.
       root.navigationSnapshot = null
@@ -312,16 +341,26 @@ Panel {
   // The key catcher takes every key before the item that has focus, so while
   // a text field has focus it must stand aside, or typing an "s" saves.
   property Item focusedField: null
+  property string focusedFieldId: ""
   function noteFocus(field, focused) {
-    if (focused) root.focusedField = field
-    else if (root.focusedField === field) root.focusedField = null
+    if (focused) {
+      root.focusedField = field
+      root.focusedFieldId = String(field.objectName || "")
+    } else if (root.focusedField === field) {
+      root.focusedField = null
+      root.focusedFieldId = ""
+    }
   }
-  function releaseFocus() { root.focusedField = null; keyCatcher.forceActiveFocus() }
+  function releaseFocus() { root.focusedField = null; root.focusedFieldId = ""; keyCatcher.forceActiveFocus() }
 
   // ── in-flight state ───────────────────────────────────────────────────────
   // A scope change is not here on purpose: it shows at once and runs in its
   // own queue (setScope), so it never greys out the rest of the panel.
-  readonly property bool busy: controller.busy
+  // The controller serializes every process. A running command does not by
+  // itself block a different accepted action, so only a future command marked
+  // exclusive may disable conflicting controls.
+  readonly property bool busy: controller.busy && controller.currentMeta.exclusive === true
+  readonly property bool operationRunning: controller.busy
   readonly property bool saving: controller.isRunning("save")
   readonly property bool pulling: controller.isRunning("pull")
   readonly property bool checking: controller.isRunning("doctor")
@@ -611,19 +650,30 @@ Panel {
   }
 
   // ── actions ───────────────────────────────────────────────────────────────
-  function refresh() { root.captureNavigation(); if (hostWidget) hostWidget.refresh(true); root.loadLog() }
+  function refresh() {
+    if (hostWidget) hostWidget.refresh(true)
+    root.loadLog()
+  }
   function shellQuote(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'" }
   function clean(s) { return String(s || "").replace(/\x1b\[[0-9;]*m/g, "").replace(/\n{3,}/g, "\n\n").trim() }
 
   // Every completed write clears the busy state and refreshes the panel from
   // the system. The controller owns the process; the panel owns the result.
-  function finish(label, code, out, err) {
+  function finish(label, code, out, err, result) {
     root.busyLabel = ""
     var text = root.clean(String(out || "") + "\n" + String(err || ""))
-    root.lastOk = code === 0
-    root.lastTitle = label
-    if (code !== 0) text = label + " failed (exit " + code + ")\n" + text
-    else if (text === "") text = label + ": done."
+    var outcome = result ? String(result.outcome || "") : ""
+    root.lastCancelled = outcome === "cancelled"
+    root.lastOk = code === 0 || outcome === "local-only" || outcome === "noop" || outcome === "cancelled"
+    root.lastTitle = outcome === "local-only" ? "Saved locally" : outcome === "cancelled" ? "Cancelled" : label
+    if (outcome === "local-only") {
+      text = String(result.message || "Saved locally, but the push is pending.")
+      if (result.recoveryCommand) text += "\nRetry: " + result.recoveryCommand
+    } else if (outcome === "cancelled") {
+      text = String(result.message || "Cancelled before the commit.")
+    } else if (code !== 0 && outcome !== "noop") {
+      text = label + " failed (exit " + code + ")\n" + text
+    } else if (text === "") text = label + ": done."
     root.lastOutput = text.length > 20000 ? "…" + text.slice(-20000) : text
     root.refresh()
     root.loadBackups()
@@ -641,7 +691,7 @@ Panel {
   function doPull()     { root.busyLabel = "Pulling from GitHub…"; controller.run("pull", [root.cli, "pull"], { label: "Pull" }) }
   function doBackup()   { root.busyLabel = "Copying files into the repo…"; controller.run("backup", [root.cli, "backup"], { label: "Copy" }) }
   function doDoctor()   { root.busyLabel = "Running the health check…"; controller.run("doctor", [root.cli, "doctor"], { label: "Health check" }) }
-  function loadSetupStatus() { controller.run("setup-status", [root.cli, "setup-status", "--json"], { busy: false }) }
+  function loadSetupStatus() { controller.run("setup-status", [root.cli, "setup-status", "--json"], { busy: false, background: true }) }
   function githubReady() { return root.setupStatus.github && root.setupStatus.github.authenticated === true && root.setupStatus.github.reachable === true }
   function sshReady() { return root.setupStatus.ssh && root.setupStatus.ssh.authenticated === true && root.setupStatus.ssh.reachable === true }
   function setupState(value, kind) {
@@ -652,10 +702,15 @@ Panel {
     return "Checking…"
   }
   function openCreateDialog() {
+    root.openTransient("create-repo")
     root.createRepoName = String(root.setupStatus.default_repo_name || "replicant")
     root.createTransport = "https"
     root.createDialogOpen = true
     Qt.callLater(function() { createNameField.forceActiveFocus(); createNameField.selectAll() })
+  }
+  function closeCreateDialog() {
+    root.createDialogOpen = false
+    root.closeTransient()
   }
   function createRepo() {
     var name = root.createRepoName.trim()
@@ -667,10 +722,9 @@ Panel {
   }
   function startGithubLogin() { root.setupPollAttempts = 10; root.setupStatusLoaded = false; root.runVisible(root.cli + " login") }
 
-  function loadShortcuts() { controller.run("shortcuts", [root.cli, "shortcuts", "--json"], { busy: false }) }
+  function loadShortcuts() { controller.run("shortcuts", [root.cli, "shortcuts", "--json"], { busy: false, background: true }) }
   function loadLog() {
-    if (controller.running) return
-    controller.run("log", [root.cli, "log", "--json", "-n", String(root.logCount)], { busy: false })
+    controller.run("log", [root.cli, "log", "--json", "-n", String(root.logCount)], { busy: false, background: true })
   }
 
   // Open the editor. Deliberately NOT through
@@ -680,20 +734,21 @@ Panel {
   // editor is closed, same tab and same open cards. Only some editors can be
   // waited on, so the CLI says whether it actually waited.
   function doEdit(id) {
-    root.captureNavigation()
-    controller.run("edit", [root.cli, "edit", id, "--wait"], { busy: false })
+    root.openTransient("edit")
+    var accepted = controller.run("edit", [root.cli, "edit", id, "--wait"], { busy: false })
+    if (!accepted) { root.transientView = ""; return false }
     root.lastOk = true
     root.lastOutput = "Opening " + id + " in your editor…"
     root.close()
+    return true
   }
 
   // Diffs are read, not interacted with, so they belong in the panel next to
   // the file they describe rather than in a terminal that has to be dismissed.
   function doDiff(id) {
-    root.captureNavigation()
     root.viewerRowId = id
     root.openViewer(id, "Loading…", "diff")
-    controller.run("diff", [root.cli, "diff", id], { busy: false })
+    return controller.run("diff", [root.cli, "diff", id], { busy: false })
   }
 
   function moveDiff(delta) {
@@ -709,7 +764,8 @@ Panel {
 
   function doSaveFile(id) {
     root.busyLabel = "Saving " + id + "…"
-    controller.run("save-file", [root.cli, "save-file", id, "-m", "config: update " + id], { label: "Save file" })
+    controller.run("save-file", [root.cli, "save-file", id, "-m", "config: update " + id],
+                   { label: "Save file", cancelable: true })
   }
   function copyPath(path, secret) {
     if (secret === true || String(path || "") === "") return
@@ -732,13 +788,19 @@ Panel {
     }
     cmd.push("--"); for (var i = 0; i < targets.length; i++) cmd.push(targets[i])
     root.busyLabel = "Applying bulk change…"
-    controller.run("bulk", cmd, { label: "Bulk change", bulkAction: action })
+    var scopeIds = action.indexOf("scope-") === 0 ? root.selectedIds.slice() : []
+    var accepted = controller.run("bulk", cmd, {
+      label: "Bulk change", bulkAction: action, scopeIds: scopeIds
+    })
+    if (!accepted) { root.busyLabel = ""; return false }
+    if (scopeIds.length > 0) root.scopePending += 1
     if (action.indexOf("scope-") === 0) {
       var next = {}; for (var k in root.scopeOverrides) next[k] = root.scopeOverrides[k]
       var optimistic = action.slice(6)
-      for (var j = 0; j < root.selectedIds.length; j++) next[root.selectedIds[j]] = optimistic
+      for (var j = 0; j < scopeIds.length; j++) next[scopeIds[j]] = optimistic
       root.scopeOverrides = next
     }
+    return true
   }
   function doBulk(action) {
     if (["scope-off", "convert-secret", "untrack"].indexOf(action) >= 0) {
@@ -780,45 +842,46 @@ Panel {
     return "Shared: one copy in your repo, saved and restored by every machine."
   }
 
-  // A scope change shows at once. It used to disable the whole panel while
-  // the command committed and pushed, and then wait for a full status with a
-  // fetch: six seconds between the click and the button saying what was
-  // clicked. Now the row shows the new scope straight away, the changes run
-  // one after another in their own queue, and the status that follows does
-  // not force a fetch. The CLI's lock keeps them in order with everything else.
+  // Scope changes share the controller queue with every other process. Show
+  // the new value only after the controller accepts the action. A failed
+  // command drops the override; a later full status confirms a success.
   property var scopeOverrides: ({})
-  property var scopeQueue: []
   property bool scopeAwaitingStatus: false
+  property int scopePending: 0
   function setScope(id, scope) {
+    var accepted = controller.run("scope", [root.cli, "scope", id, scope],
+                                  { jobId: id, label: "Sync" })
+    if (!accepted) return false
+    root.scopePending += 1
     var next = {}
     for (var k in root.scopeOverrides) next[k] = root.scopeOverrides[k]
     next[id] = scope
     root.scopeOverrides = next
-    var q = root.scopeQueue.filter(function(j) { return j.id !== id })
-    q.push({ id: id, scope: scope })
-    root.scopeQueue = q
-    if (!controller.running) root.runNextScope()
-  }
-  function runNextScope() {
-    if (root.scopeQueue.length === 0) {
-      root.scopeAwaitingStatus = true
-      if (hostWidget) hostWidget.refresh(false)
-      return
-    }
-    var job = root.scopeQueue[0]
-    root.scopeQueue = root.scopeQueue.slice(1)
-    controller.run("scope", [root.cli, "scope", job.id, job.scope], { jobId: job.id, label: "Sync" })
+    root.busyLabel = "Syncing " + id + "…"
+    return true
   }
   function dropScopeOverride(id) {
     var next = {}
     for (var k in root.scopeOverrides) if (k !== id) next[k] = root.scopeOverrides[k]
     root.scopeOverrides = next
   }
+  function scopeChangeQueued(id) {
+    return controller.queue.some(function(job) {
+      var meta = job.meta || ({})
+      if (job.job === "scope") return String(meta.jobId || "") === String(id)
+      if (job.job === "bulk" && String(meta.bulkAction || "").indexOf("scope-") === 0)
+        return (meta.scopeIds || []).indexOf(id) !== -1
+      return false
+    })
+  }
+  function rollbackScopeOverride(id) {
+    if (!root.scopeChangeQueued(id)) root.dropScopeOverride(id)
+  }
   // A full status built after the last change finished is the truth. A brief
   // one carries no rows, so it cannot confirm anything.
   onRepoStateChanged: {
-    if (root.navigationSnapshot) root.restoreNavigation()
-    if (root.scopeAwaitingStatus && !controller.running && root.scopeQueue.length === 0
+    if (root.navigationSnapshot && root.transientView === "") root.restoreNavigation()
+    if (root.scopeAwaitingStatus && root.scopePending === 0
         && root.repoState && root.repoState.brief !== true) {
       root.scopeOverrides = ({})
       root.scopeAwaitingStatus = false
@@ -832,7 +895,7 @@ Panel {
   property var suggestions: []
   property bool suggestLoaded: false
   function loadSuggestions() {
-    controller.run("suggest", [root.cli, "suggest", "--json"], { busy: false })
+    controller.run("suggest", [root.cli, "suggest", "--json"], { busy: false, background: true })
   }
   property string addMode: "suggest"
   function setAddMode(m) {
@@ -841,9 +904,7 @@ Panel {
   }
   property var browseData: ({})
   property bool browseLoading: controller.isRunning("browse")
-  property string browsePending: ""
   function browseTo(dir) {
-    if (controller.running) { root.browsePending = dir; return }
     controller.run("browse", [root.cli, "browse-json", dir], { busy: false })
   }
   function browseUp() { if (root.browseData.parent) root.browseTo(root.browseData.parent) }
@@ -873,7 +934,7 @@ Panel {
   property var backups: []
   property bool backupsLoaded: false
   function loadBackups() {
-    controller.run("backups", [root.cli, "backups-json"], { busy: false })
+    controller.run("backups", [root.cli, "backups-json"], { busy: false, background: true })
   }
   // Newest per id (replicant.js, backupRows): undo takes the newest, so a row
   // per id is a row per button.
@@ -891,8 +952,7 @@ Panel {
   // kept them, and one button undoes one commit's deletions.
   property var deletedList: []
   function loadDeleted() {
-    if (controller.running) return
-    controller.run("deleted", [root.cli, "deleted", "--json"], { busy: false })
+    controller.run("deleted", [root.cli, "deleted", "--json"], { busy: false, background: true })
   }
   function askRecover(item) {
     var names = (item.files || []).map(function(f) { return R.repoPathLabel(f).label })
@@ -923,7 +983,6 @@ Panel {
   // `omarchy plugin update`, which validates the new version and rolls back one
   // that fails, and then the shell restarts to load it.
   property var updateInfo: ({})
-  property bool updateCheckForced: false
   property bool updateCheckedOnce: false
   readonly property bool updateAvailable: root.updateInfo.available === true && root.updateInfo.installed === true
   readonly property string updateTooltip: {
@@ -935,11 +994,10 @@ Panel {
          + (u.installed === true ? "" : "\nThis copy is a development checkout: update it with git pull.")
   }
   function checkUpdates(force) {
-    if (controller.isRunning("update-check")) return
-    root.updateCheckForced = force === true
     root.updateCheckedOnce = true
     controller.run("update-check", force === true ? [root.cli, "update-check", "--json", "--fetch"]
-                                                   : [root.cli, "update-check", "--json"], { busy: false })
+                                                    : [root.cli, "update-check", "--json"],
+                   { busy: false, background: force !== true, forced: force === true })
   }
   function askUpdate() {
     var u = root.updateInfo
@@ -963,7 +1021,7 @@ Panel {
   property string confirmAction: ""
   property string confirmArg: ""
   function ask(action, arg, message, confirmText) {
-    root.captureNavigation()
+    root.openTransient("confirmation")
     root.confirmAction = action
     root.confirmArg = arg || ""
     confirmDialog.message = message
@@ -971,10 +1029,17 @@ Panel {
     confirmDialog.selectedIndex = 0
     confirmDialog.opened = true
   }
+  function cancelConfirmation() {
+    confirmDialog.opened = false
+    root.confirmAction = ""
+    root.confirmArg = ""
+    root.closeTransient()
+  }
   function runConfirmed() {
     var a = root.confirmAction, arg = root.confirmArg
     root.confirmAction = ""; root.confirmArg = ""
     confirmDialog.opened = false
+    root.transientView = ""
     var command = null, label = "Restore"
     if (a === "reset-file")        { root.busyLabel = "Resetting " + arg + "…"; command = [root.cli, "reset", arg]; label = "Reset" }
     else if (a === "restore-file") { root.busyLabel = "Restoring " + arg + "…"; command = [root.cli, "restore-file", arg] }
@@ -1027,15 +1092,19 @@ Panel {
   property string viewerRowId: ""
   readonly property var diffRows: root.visibleConfigRows.filter(function(r) { return r.suggestion !== true })
   function openViewer(title, text, kind) {
+    root.openTransient("viewer")
     root.viewerTitle = title
     root.viewerText = text
     root.viewerKind = kind || "output"
     root.viewerOpen = true
   }
-  function closeViewer() { root.viewerOpen = false; root.viewerRowId = "" }
+  function closeViewer() {
+    root.viewerOpen = false
+    root.viewerRowId = ""
+    root.closeTransient()
+  }
   // A dry run, read in full in the reader. It writes nothing.
   function runPreview(title, args) {
-    if (controller.isRunning("preview")) return
     root.openViewer(title, "Working out what would change…", "output")
     controller.run("preview", [root.cli].concat(args), { busy: false })
   }
@@ -1043,6 +1112,9 @@ Panel {
   // Every write refreshes status on exit, so the badges never drift from disk.
   Connections {
     target: controller
+    function onStarted(job, meta) {
+      if (meta.background !== true) root.lastCancelled = false
+    }
     function onCompleted(job, code, stdoutText, stderrText, meta) {
       var text = root.clean(stderrText + "\n" + stdoutText)
       if (job === "setup-status") {
@@ -1056,7 +1128,6 @@ Panel {
         root.suggestLoaded = true
       } else if (job === "browse") {
         try { root.browseData = JSON.parse(stdoutText || "{}") } catch (e) { root.browseData = ({ error: "could not be read", entries: [] }) }
-        if (root.browsePending !== "") { var d = root.browsePending; root.browsePending = ""; root.browseTo(d) }
       } else if (job === "backups") {
         try { root.backups = JSON.parse(stdoutText || "[]") } catch (e) { root.backups = [] }
         root.backupsLoaded = true
@@ -1071,7 +1142,7 @@ Panel {
         if (install) root.ask("install-plugin", install.id, install.message + "\n\n" + (text || "The marketplace check printed nothing."), "Install")
       } else if (job === "update-check") {
         try { root.updateInfo = JSON.parse(stdoutText || "{}") } catch (e) { root.updateInfo = ({}) }
-        if (root.updateCheckForced) {
+        if (meta.forced === true) {
           var u = root.updateInfo
           root.lastTitle = "Check for updates"
           root.lastOk = u.fetch_failed !== true
@@ -1081,18 +1152,38 @@ Panel {
                           : "Replicant " + u.current + " is up to date."
         }
       } else if (job === "edit") {
-        if (stdoutText.indexOf("replicant:waited") !== -1) root.open()
-      } else if (job === "scope") {
-        if (code !== 0) {
-          root.lastOk = false; root.lastTitle = "Sync"
-          root.lastOutput = root.clean("Sync of " + (meta.jobId || "entry") + " failed (exit " + code + ")\n" + stdoutText + "\n" + stderrText)
-          root.dropScopeOverride(meta.jobId || "")
+        if (stdoutText.indexOf("replicant:waited") !== -1) {
+          root.transientView = ""
+          root.open()
         }
-        root.runNextScope()
+      } else if (job === "scope") {
+        root.busyLabel = ""
+        root.scopePending = Math.max(0, root.scopePending - 1)
+        if (meta.outcome === "cancelled") {
+          root.lastOk = true; root.lastCancelled = true; root.lastTitle = "Cancelled"
+          root.lastOutput = String(meta.progressResult ? meta.progressResult.message : "Cancelled")
+          root.rollbackScopeOverride(meta.jobId || "")
+        } else if (code !== 0 && meta.outcome !== "local-only" && meta.outcome !== "noop") {
+          root.lastOk = false; root.lastTitle = "Sync"
+          root.lastCancelled = false
+          root.lastOutput = root.clean("Sync of " + (meta.jobId || "entry") + " failed (exit " + code + ")\n" + stdoutText + "\n" + stderrText)
+          root.rollbackScopeOverride(meta.jobId || "")
+        } else {
+          root.scopeAwaitingStatus = true
+          if (meta.outcome === "local-only") root.finish("Sync", code, stdoutText, stderrText, meta.progressResult)
+          else if (hostWidget) hostWidget.refresh(false)
+        }
       } else if (job === "bulk") {
-        root.finish(meta.label || "Bulk change", code, stdoutText, stderrText)
-        if (code === 0) { root.scopeOverrides = ({}); root.clearSelection() }
-        else if (String(meta.bulkAction || "").indexOf("scope-") === 0) root.scopeOverrides = ({})
+        var bulkScope = String(meta.bulkAction || "").indexOf("scope-") === 0
+        var bulkApplied = code === 0 || meta.outcome === "local-only"
+        if (bulkScope) root.scopePending = Math.max(0, root.scopePending - 1)
+        if (bulkApplied) {
+          root.clearSelection()
+          if (bulkScope) root.scopeAwaitingStatus = true
+        } else if (bulkScope) {
+          (meta.scopeIds || []).forEach(root.rollbackScopeOverride)
+        }
+        root.finish(meta.label || "Bulk change", code, stdoutText, stderrText, meta.progressResult)
       } else if (job === "doctor") {
         root.busyLabel = ""; root.lastTitle = "Health check"; root.lastOk = text.indexOf("No problems found.") !== -1
         root.lastOutput = text; root.openViewer("Health check", text, "output")
@@ -1102,7 +1193,7 @@ Panel {
         root.lastOk = code === 0
         root.lastOutput = code === 0 ? "Copied the path to the clipboard." : "Could not copy the path. Is wl-copy available?"
       } else if (job !== "") {
-        root.finish(meta.label || job, code, stdoutText, stderrText)
+        root.finish(meta.label || job, code, stdoutText, stderrText, meta.progressResult)
         if (job === "track") { root.loadSuggestions(); if (root.browseData.dir) root.browseTo(root.browseData.dir) }
       }
     }
@@ -1135,7 +1226,18 @@ Panel {
     root.loadDeleted()
     if (!root.updateCheckedOnce) root.checkUpdates(false)
   }
-  function close() { root.opened = false; root.viewerOpen = false; root.keyboardHelpOpen = false; root.createDialogOpen = false; confirmDialog.opened = false; root.focusedField = null }
+  function close() {
+    root.opened = false
+    root.viewerOpen = false
+    root.keyboardHelpOpen = false
+    root.createDialogOpen = false
+    confirmDialog.opened = false
+    root.confirmAction = ""
+    root.confirmArg = ""
+    if (root.transientView !== "edit") root.transientView = ""
+    root.focusedField = null
+    root.focusedFieldId = ""
+  }
   function toggle() { root.opened ? root.close() : root.open() }
   Timer {
     interval: 1500
@@ -1149,6 +1251,13 @@ Panel {
   function showTab(name) {
     if (["overview", "configs", "settings", "restore"].indexOf(name) < 0) return false
     if (!root.opened) root.open()
+    root.transientView = ""
+    root.navigationSnapshot = null
+    root.navigationRestorePending = false
+    root.viewerOpen = false
+    confirmDialog.opened = false
+    root.confirmAction = ""
+    root.confirmArg = ""
     root.activeTab = name
     return true
   }
@@ -1159,7 +1268,13 @@ Panel {
     root.lastScrollTab = root.activeTab
     var y = root.scrollPositions[root.activeTab] || 0
     if (body) body.contentY = Math.max(0, Math.min(y, body.contentHeight - body.height))
-    if (!root.restoringNavigation) Qt.callLater(root.restoreNavigation)
+    if (!root.restoringNavigation) {
+      if (root.navigationSnapshot && root.transientView === "") {
+        root.navigationSnapshot = null
+        root.navigationRestorePending = false
+      }
+      Qt.callLater(root.restoreNavigation)
+    }
   }
 
   KeyboardPanel {
@@ -1194,8 +1309,8 @@ Panel {
       onCloseRequested: {
         if (root.keyboardHelpOpen) root.keyboardHelpOpen = false
         else if (root.viewerOpen) root.closeViewer()
-        else if (confirmDialog.opened) confirmDialog.opened = false
-        else if (root.createDialogOpen) { root.createDialogOpen = false; root.releaseFocus() }
+        else if (confirmDialog.opened) root.cancelConfirmation()
+        else if (root.createDialogOpen) root.closeCreateDialog()
         else if (root.openRow !== "") root.openRow = ""
         else if (root.keyboardFocus.kind === "card" && root.isOpen(root.keyboardFocus.id))
           root.toggleCard(root.keyboardFocus.id)
@@ -1469,7 +1584,7 @@ Panel {
             spacing: Style.space(8)
             Button {
               text: "Cancel"; bordered: true; fontFamily: root.ff; foreground: root.dim
-              onClicked: { root.createDialogOpen = false; root.releaseFocus() }
+              onClicked: root.closeCreateDialog()
             }
             Button {
               text: "Create private repo"; iconText: root.icPlus; bordered: true
@@ -1491,7 +1606,7 @@ Panel {
         foreground: root.fg
         fontFamily: root.ff
         cancelText: "Cancel"
-        onCanceled: { confirmDialog.opened = false; root.confirmAction = "" }
+        onCanceled: root.cancelConfirmation()
         onConfirmed: root.runConfirmed()
       }
 

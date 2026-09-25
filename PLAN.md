@@ -4,20 +4,20 @@
 
   - [x] Replace the current PLAN.md with this complete plan before changing code.
   - [x] Record 4c9c4b580d4d190ea2efd6e0b8449ffd790d091e as the audit baseline.
-  - [ ] Assign only one phase to each agent.
-  - [ ] Complete phases in numeric order.
-  - [ ] Add a failing regression test before each fix.
-  - [ ] Keep unfinished phase changes uncommitted for the next agent.
-  - [ ] Do not commit a phase until every phase gate passes.
-  - [ ] Mark completed phase checkboxes before its commit.
-  - [ ] Review git diff, git diff --check, and git status --short.
-  - [ ] Stage only files that belong to the current phase.
-  - [ ] Never add AGENTS.md.
+  - [x] Assign only one phase to each agent.
+  - [x] Complete phases in numeric order.
+  - [x] Add a failing regression test before each fix.
+  - [x] Keep unfinished phase changes uncommitted for the next agent.
+  - [x] Do not commit a phase until every phase gate passes.
+  - [x] Mark completed phase checkboxes before its commit.
+  - [x] Review git diff, git diff --check, and git status --short.
+  - [x] Stage only files that belong to the current phase.
+  - [x] Never add AGENTS.md.
   - [ ] Create one local commit after each completed phase.
-  - [ ] Never amend a completed phase commit.
-  - [ ] Never add AI attribution to commits.
-  - [ ] Never push, create a pull request, create a release, or create a tag.
-  - [ ] If a gate fails, do not commit the phase.
+  - [x] Never amend a completed phase commit.
+  - [x] Never add AI attribution to commits.
+  - [x] Never push, create a pull request, create a release, or create a tag.
+  - [x] If a gate fails, do not commit the phase.
   - [ ] After all phases, leave the complete plugin and local commits for user review.
   - [ ] Only the user can authorize the final push.
 
@@ -51,15 +51,15 @@
 
   ## Public Contract Changes
 
-  - [ ] Introduce repository dataVersion: 3.
-  - [ ] Set secretFormat to age-pq-v2.
-  - [ ] Add migrate-v3 for v1 and v2 repositories.
-  - [ ] Keep migrate-v2 as a deprecated forwarding alias for one release.
-  - [ ] Add the global --progress-json CLI option.
-  - [ ] Add key export --force.
-  - [ ] Represent unknown secret persistence as "saved": null.
-  - [ ] Add "savedKnown": false when the vault is locked.
-  - [ ] Keep normal human-readable CLI output compatible.
+  - [x] Introduce repository dataVersion: 3.
+  - [x] Set secretFormat to age-pq-v2.
+  - [x] Add migrate-v3 for v1 and v2 repositories.
+  - [x] Keep migrate-v2 as a deprecated forwarding alias for one release.
+  - [x] Add the global --progress-json CLI option.
+  - [x] Add key export --force.
+  - [x] Represent unknown secret persistence as "saved": null.
+  - [x] Add "savedKnown": false when the vault is locked.
+  - [x] Keep normal human-readable CLI output compatible.
   - [ ] Bump the plugin version to 0.13.0 after all gates pass.
 
   ## Phase G0: Automated Test Infrastructure
@@ -365,45 +365,45 @@
   {"protocol":1,"type":"stage","stage":"scan","cancellable":true,"message":"Scanning"}
   {"protocol":1,"type":"result","outcome":"success","message":"Saved","recoveryCommand":null}
 
-  - [ ] Emit JSON Lines on stderr when --progress-json is present.
-  - [ ] Stream progress while commands run.
-  - [ ] Disable cancellation before commit starts.
-  - [ ] Support success, noop, cancelled, local-only, and failed.
-  - [ ] Replace delayed progress parsing with a streaming parser.
-  - [ ] Implement one queue for every controller process.
-  - [ ] Prioritize interactive jobs over background refreshes.
-  - [ ] Coalesce duplicate background jobs.
-  - [ ] Never discard an accepted user action.
-  - [ ] Return an explicit queue result.
-  - [ ] Apply optimistic state only after queue acceptance.
-  - [ ] Roll back optimistic state after failure or cancellation.
-  - [ ] Settle each job exactly once.
-  - [ ] Clear process metadata before the next job.
-  - [ ] Add explicit transient-view lifecycle functions.
-  - [ ] Capture tab, filter, mode, selected ID, scroll, and focus.
-  - [ ] Restore the snapshot after closing Edit or Show Changes.
-  - [ ] Restore it after Escape and confirmation cancellation.
-  - [ ] Clear snapshots after successful navigation.
-  - [ ] Select the nearest row when the old row disappears.
-  - [ ] Keep errors visible until dismissal or retry.
-  - [ ] Show local-only commits as pending pushes.
-  - [ ] Disable only conflicting actions.
-  - [ ] Preserve keyboard navigation during refreshes.
+  - [x] Emit JSON Lines on stderr when --progress-json is present.
+  - [x] Stream progress while commands run.
+  - [x] Disable cancellation before commit starts.
+  - [x] Support success, noop, cancelled, local-only, and failed.
+  - [x] Replace delayed progress parsing with a streaming parser.
+  - [x] Implement one queue for every controller process.
+  - [x] Prioritize interactive jobs over background refreshes.
+  - [x] Coalesce duplicate background jobs.
+  - [x] Never discard an accepted user action.
+  - [x] Return an explicit queue result.
+  - [x] Apply optimistic state only after queue acceptance.
+  - [x] Roll back optimistic state after failure or cancellation.
+  - [x] Settle each job exactly once.
+  - [x] Clear process metadata before the next job.
+  - [x] Add explicit transient-view lifecycle functions.
+  - [x] Capture tab, filter, mode, selected ID, scroll, and focus.
+  - [x] Restore the snapshot after closing Edit or Show Changes.
+  - [x] Restore it after Escape and confirmation cancellation.
+  - [x] Clear snapshots after successful navigation.
+  - [x] Select the nearest row when the old row disappears.
+  - [x] Keep errors visible until dismissal or retry.
+  - [x] Show local-only commits as pending pushes.
+  - [x] Disable only conflicting actions.
+  - [x] Preserve keyboard navigation during refreshes.
 
   Tests:
 
-  - [ ] Queue an action during background status.
-  - [ ] Coalesce repeated refreshes.
-  - [ ] Cancel before commit and verify no mutation.
-  - [ ] Reject cancellation after the commit boundary.
-  - [ ] Close every transient view through every path.
-  - [ ] Restore exact selection, scroll, filter, mode, and focus.
-  - [ ] Refresh while a transient view is open.
-  - [ ] Remove the selected row before restoration.
-  - [ ] Parse partial, combined, malformed, and delayed progress lines.
-  - [ ] Render deterministic offscreen screenshots.
-  - [ ] Compare screenshots with fixed visual fixtures.
-  - [ ] Test loading, empty, locked, failure, conflict, and local-only states.
+  - [x] Queue an action during background status.
+  - [x] Coalesce repeated refreshes.
+  - [x] Cancel before commit and verify no mutation.
+  - [x] Reject cancellation after the commit boundary.
+  - [x] Close every transient view through every path.
+  - [x] Restore exact selection, scroll, filter, mode, and focus.
+  - [x] Refresh while a transient view is open.
+  - [x] Remove the selected row before restoration.
+  - [x] Parse partial, combined, malformed, and delayed progress lines.
+  - [x] Render deterministic offscreen screenshots.
+  - [x] Compare screenshots with fixed visual fixtures.
+  - [x] Test loading, empty, locked, failure, conflict, and local-only states.
 
   Gate and commit:
 

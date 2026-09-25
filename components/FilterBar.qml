@@ -27,6 +27,7 @@ Column {
     spacing: Style.space(8)
     TextField {
       id: field
+      objectName: panel.activeTab === "settings" ? "settings-search" : "configs-search"
       width: parent.width - collapseBtn.width - Style.space(8)
       placeholderText: fb.placeholder
       foreground: panel.fg

@@ -14,6 +14,7 @@ import "../replicant.js" as R
 Card {
   id: ac
   property string navigationId: "__suggest"
+  function focusPath() { pathField.forceActiveFocus() }
   readonly property var items: panel.suggestions || []
   readonly property var entries: (panel.browseData.entries || []).slice(0, 200)
 
@@ -76,6 +77,7 @@ Card {
     visible: panel.addMode === "browse"
     TextField {
       id: pathField
+      objectName: "suggest-path"
       anchors.left: parent.left
       anchors.leftMargin: Style.spacing.rowPaddingX
       anchors.right: trackTyped.left

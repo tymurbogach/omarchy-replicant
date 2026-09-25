@@ -27,6 +27,38 @@ ok()   { echo -e "\e[32m$*\e[0m" >&2; }
 [[ -f "$PLUGIN_DIR/bin/lib/common.sh" ]] || fail "bin/lib/common.sh not found under $PLUGIN_DIR"
 # shellcheck source=bin/lib/common.sh
 source "$PLUGIN_DIR/bin/lib/common.sh"
+# shellcheck source=bin/lib/progress.sh
+source "$PLUGIN_DIR/bin/lib/progress.sh"
+
+progress_cli_exit() {
+  local rc=$?
+  [[ "${REPLICANT_PROGRESS_JSON:-0}" == 1 ]] || return "$rc"
+  [[ "${REPLICANT_PROGRESS_RESULT_EMITTED:-0}" != 1 ]] || return "$rc"
+  # Save owns its richer result because it knows whether the repository
+  # committed locally, reached the remote, or had nothing to do.
+  case "${REPLICANT_PROGRESS_COMMAND:-}" in save|savegame|save-file) return "$rc" ;; esac
+  if (( rc == 0 )); then
+    progress_result success "Command completed" ""
+  elif (( rc == 130 || rc == 143 )); then
+    progress_result cancelled "Cancelled" ""
+  else
+    progress_result failed "Command failed" ""
+  fi
+  return "$rc"
+}
+
+progress_cli_cancel() {
+  local status=143
+  trap '' INT TERM
+  progress_result cancelled "Cancelled before the commit boundary" ""
+  # The panel starts this CLI in its own session. Signal every child process
+  # in that session, including git and age, so a cancelled save cannot keep
+  # running after Quickshell stops waiting for it.
+  if [[ "${REPLICANT_PROCESS_GROUP:-0}" == 1 ]]; then
+    kill -TERM -- "-$$" 2>/dev/null || true
+  fi
+  exit "$status"
+}
 
 # Default name for `create`: <machine>-replicant, so that each machine gets its
 # own private repo. The machine name is the core's, cut at the first dot. A
@@ -1308,10 +1340,11 @@ cmd_purge() {
 
 usage() {
   cat <<USAGE
-omarchy-replicant — back up, restore and replicate your Omarchy setup
+omarchy-replicant [--progress-json] — back up, restore and replicate your Omarchy setup
 
   The panel in your bar does all of this without a terminal. These are here for
-  scripts, and for the days you would rather type.
+  scripts, and for the days you would rather type. With --progress-json the
+  command streams JSON Lines progress events on stderr.
 
 First machine
   create [name] [--push]      Make the PRIVATE GitHub repo and push this machine into it
@@ -1604,7 +1637,22 @@ cmd_restore() { ensure_core; bash "$CORE" restore "$@"; }
 cmd_reset_all() { ensure_core; bash "$CORE" reset-all "$@"; }
 
 main() {
+  # Global streaming option for the panel. It must come before the command so
+  # that it never collides with a commit message or a file path, and it is
+  # exported so the core and every module see it. Human output is unchanged.
+  if [[ "${1:-}" == "--progress-json" ]]; then
+    export REPLICANT_PROGRESS_JSON=1
+    shift
+  fi
   local cmd="${1:-}"; [[ -z "$cmd" ]] && { usage; exit 0; }
+  export REPLICANT_PROGRESS_COMMAND="$cmd"
+  if [[ "${REPLICANT_PROGRESS_JSON:-0}" == 1 ]]; then
+    trap progress_cli_exit EXIT
+    progress_stage run false "Running"
+  fi
+  if [[ "${REPLICANT_PROCESS_GROUP:-0}" == 1 ]]; then
+    trap 'progress_cli_cancel' INT TERM
+  fi
   # Before the lock, and before anything else: help is not an action. This ran
   # after acquire_repo_lock once, so `push --help` also took the write lock on
   # its way to pushing.

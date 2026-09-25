@@ -210,11 +210,33 @@ save_plan() {
 # Planning, staging, validation and activation are separate phases below; this
 # orchestrates them and nothing else.
 core_save() {
-  save_plan "$@" || return $?
-  [[ -n "$SAVE_SCOPE" ]] || return 0
-  save_stage || return $?
-  save_validate_commit || return $?
-  save_activate
+  # A cancelled save must say so on the progress stream and must not commit:
+  # every phase below fails before the fast-forward, so exiting here leaves
+  # the active repository exactly as it was.
+  trap '[[ "${REPLICANT_PROCESS_GROUP:-0}" == 1 ]] || progress_result cancelled "Cancelled" ""; exit 130' INT TERM
+  local _save_rc=0
+  save_plan "$@" || _save_rc=$?
+  if (( _save_rc )); then
+    progress_result failed "Save failed before it started" ""
+    trap - INT TERM
+    return "$_save_rc"
+  fi
+  [[ -n "$SAVE_SCOPE" ]] || { trap - INT TERM; return 0; }
+  save_stage || _save_rc=$?
+  if (( _save_rc )); then
+    progress_result failed "Save failed while scanning" ""
+    trap - INT TERM
+    return "$_save_rc"
+  fi
+  save_validate_commit || _save_rc=$?
+  if (( _save_rc )); then
+    progress_result failed "Save failed before the commit" ""
+    trap - INT TERM
+    return "$_save_rc"
+  fi
+  save_activate || _save_rc=$?
+  trap - INT TERM
+  return "$_save_rc"
 }
 # save_stage: run the save plan against a snapshot (staging). With commits in
 # the repo this opens a transaction worktree through the shared journal: the
@@ -250,6 +272,7 @@ save_stage() {
       return 1
     }
     echo "stage: scanning" >&2
+    progress_stage scan true "Scanning"
     echo "→ save: snapshotting into a transaction worktree" >&2
     git -C "$REPO_DIR" worktree add --detach -- "$SAVE_REPO" "$SAVE_BASE" >/dev/null 2>&1 || {
       echo "save: cannot create the transaction worktree" >&2
@@ -258,6 +281,7 @@ save_stage() {
     }
   else
     echo "stage: scanning" >&2
+    progress_stage scan true "Scanning"
     echo "→ save: snapshotting into the repo (no commits yet)" >&2
   fi
 
@@ -302,6 +326,7 @@ save_stage() {
     }
   fi
   echo "stage: encrypting" >&2
+  progress_stage encrypt true "Encrypting"
   return 0
 }
 
@@ -395,6 +420,7 @@ save_validate_commit() {
     # explicit scan above already passed, so a hook failure here is about the
     # hook setup, not the content, and it must still stop the save.
     echo "stage: committing" >&2
+    progress_stage commit false "Committing"
     git -C "$SAVE_REPO" commit -q -m "$SAVE_SUBJECT" || {
       echo "save: the commit failed — nothing was committed" >&2
       (( SAVE_TXMODE )) && tx_remove "$SAVE_TXDIR"
@@ -429,12 +455,14 @@ save_activate() {
   if (( SAVE_TXMODE )) && (( SAVE_DID_COMMIT )) && [[ "$now_head" != "$SAVE_BASE" ]]; then
     echo "save: the active repo moved during the save (another save landed first)" >&2
     echo "The transaction is kept at $SAVE_TXDIR — pull, then save again." >&2
+    progress_result failed "The active repo moved during the save" "omarchy-replicant pull"
     return 1
   fi
   if (( SAVE_TXMODE )) && (( SAVE_DID_COMMIT )); then
     git -C "$REPO_DIR" merge --ff-only -q "$SAVE_CANDIDATE" 2>/dev/null || {
       echo "save: cannot fast-forward the active repo (it has changes the save did not make)" >&2
       echo "The transaction is kept at $SAVE_TXDIR — resolve the worktree, then save again." >&2
+      progress_result failed "Cannot fast-forward the active repo" "omarchy-replicant changes"
       return 1
     }
     tx_meta_write "$SAVE_TXDIR" fast-forwarded "$SAVE_BASE" "$SAVE_SCOPE" "$SAVE_SUBJECT" ${SAVE_IDS[@]+"${SAVE_IDS[@]}"} \
@@ -447,6 +475,7 @@ save_activate() {
 
   local PUSHED="" PUSH_ERR=""
   echo "stage: publishing" >&2
+  progress_stage publish false "Publishing"
   save_push "$SAVE_PUSH"
   if (( SAVE_TXMODE )); then
     tx_meta_field "$SAVE_TXDIR" push "$PUSHED" \
@@ -457,18 +486,29 @@ save_activate() {
     printf '%s\n' "$PUSH_ERR" | sed 's/^/    /' >&2
     echo "Another machine may have saved first. Run 'omarchy-replicant pull', then save again." >&2
     echo "The next save (or an explicit push) retries it." >&2
+    progress_result local-only "Saved locally, but the push failed" "omarchy-replicant push"
     return 1
   fi
   if (( ! SAVE_DID_COMMIT )) && [[ "$PUSHED" != "ok" ]]; then
     echo "No changes. Nothing to save." >&2
     (( SAVE_TXMODE )) && tx_remove "$SAVE_TXDIR"
+    progress_result noop "No changes. Nothing to save." ""
     return 0
   fi
   (( SAVE_TXMODE )) && tx_remove "$SAVE_TXDIR"
   case "$PUSHED" in
-    no-remote) echo "Everything saved on this machine. There is no remote yet: run 'omarchy-replicant create --push'." >&2 ;;
-    held)      echo "Everything saved on this machine, not pushed (--no-push)." >&2 ;;
-    *)         echo "Everything saved and pushed." >&2 ;;
+    no-remote)
+      echo "Everything saved on this machine. There is no remote yet: run 'omarchy-replicant create --push'." >&2
+      progress_result local-only "Saved on this machine, no remote yet" "omarchy-replicant create --push"
+      ;;
+    held)
+      echo "Everything saved on this machine, not pushed (--no-push)." >&2
+      progress_result local-only "Saved on this machine, not pushed" "omarchy-replicant push"
+      ;;
+    *)
+      echo "Everything saved and pushed." >&2
+      progress_result success "Saved" ""
+      ;;
   esac
   return 0
 }

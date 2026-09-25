@@ -8,8 +8,9 @@
 #   tests/panel-shot.sh /tmp/c.png configs "" 'p.openRow = "hypr/input.lua"'
 #
 # STATUS=<file> renders a saved `status --json` payload instead of this
-# machine's. SCROLL=<px> scrolls the body before the capture. LATE_JS runs
-# just before the capture, after the panel's own commands have answered.
+# machine's. SHOT_STATIC=1 prevents panel commands and renders only that
+# fixture. SCROLL=<px> scrolls the body before the capture. LATE_JS runs just
+# before the capture, after the panel's own commands have answered.
 #
 # The panel runs the plugin's real read-only commands (log, backups, suggest,
 # deleted, update-check). The KeyboardPanel is replaced by a plain item that
@@ -130,7 +131,14 @@ ShellRoot {
         if (!p) return
         p.repoState = JSON.parse(statusFile.text())
         p.asked = true
-        p.open()
+        if (Quickshell.env("SHOT_STATIC") === "1") {
+          p.setupStatusLoaded = true
+          p.shortcutsLoaded = true
+          p.suggestLoaded = true
+          p.backupsLoaded = true
+          p.updateCheckedOnce = true
+          p.opened = true
+        } else p.open()
         p.activeTab = Quickshell.env("SHOT_TAB") || "overview"
         var cards = (Quickshell.env("SHOT_CARDS") || "").split(",").filter(function(s) { return s !== "" })
         for (var i = 0; i < cards.length; i++) p.toggleCard(cards[i])
@@ -167,6 +175,7 @@ out=$(realpath -m -- "$out")
 rm -f -- "$out"
 SHOT_PANEL="file://$ROOT/Panel.qml" SHOT_STATUS="$status" SHOT_TAB="$tab" SHOT_CARDS="$cards" \
 SHOT_JS="$js" SHOT_LATE_JS="${LATE_JS:-}" SHOT_SCROLL="${SCROLL:-0}" SHOT_OUT="$out" \
+SHOT_STATIC="${SHOT_STATIC:-0}" \
 XDG_RUNTIME_DIR="$work/runtime" QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME='' QT_QUICK_BACKEND=software \
   timeout 60 quickshell -p "$work" > "$work/log" 2>&1 || true
 if [[ -f "$out" ]]; then

@@ -22,6 +22,7 @@ Column {
     return addFiles.navigationId && openCards && openCards["__suggest"] ? addFiles : null
   }
   function focusSearch() { filterBar.focusSearch() }
+  function focusPath() { addFiles.focusPath() }
   spacing: Style.space(8)
 
   FilterBar {

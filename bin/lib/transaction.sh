@@ -416,6 +416,7 @@ tx_shape_commit() {
     return 0
   fi
   local candidate
+  progress_stage commit false "Committing"
   git -C "$REPO_DIR" commit -q -m "$msg" -- "${staged[@]}" >/dev/null 2>&1 || {
     echo "transaction: the commit failed — nothing was committed" >&2
     tx_abort "$txdir"
@@ -444,8 +445,10 @@ tx_shape_finish() {
       || echo "transaction: warning: the push state did not reach the journal" >&2
     tx_remove "$txdir"
     briefcache_invalidate 2>/dev/null || true
+    progress_result local-only "Saved on this machine, no remote yet" "omarchy-replicant create --push"
     return 0
   fi
+  progress_stage publish false "Publishing"
   if ! push_err=$(git -C "$REPO_DIR" push -q 2>&1); then
     tx_meta_field "$txdir" push "failed" \
       || echo "transaction: warning: the push state did not reach the journal" >&2
@@ -454,12 +457,14 @@ tx_shape_finish() {
     echo "Another machine may have saved first. Run 'omarchy-replicant pull', then push again." >&2
     echo "The next save (or an explicit push) retries it." >&2
     briefcache_invalidate 2>/dev/null || true
+    progress_result local-only "Saved locally, but the push failed" "omarchy-replicant push"
     return 1
   fi
   tx_meta_field "$txdir" push "ok" \
     || echo "transaction: warning: the push state did not reach the journal" >&2
   tx_remove "$txdir"
   briefcache_invalidate 2>/dev/null || true
+  progress_result success "Saved" ""
   return 0
 }
 
@@ -487,7 +492,10 @@ core_shape_transact() {
     return 1
   }
   candidate=$(tx_shape_commit "$msg" "$txdir" -- "${paths[@]}") || return 1
-  [[ -n "$candidate" ]] || return 0
+  if [[ -z "$candidate" ]]; then
+    progress_result noop "No changes" ""
+    return 0
+  fi
   tx_shape_finish "$txdir" || return 1
   return 0
 }

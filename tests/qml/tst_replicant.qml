@@ -358,6 +358,8 @@ TestCase {
       fileSearch: "input", stateFilter: "changed",
       settingSearch: "font", settingFilter: "customised",
       manageMode: true, selectedIds: ["a", "b"], selectionAnchor: "b",
+      focusIndex: 8, manageCursor: 1,
+      focus: { kind: "row", id: "hypr/input.lua" }, focusedField: "configs-search",
       anchor: { kind: "row", id: "hypr/input.lua", offset: 18 }
     })
     compare(snapshot.activeTab, "configs")
@@ -367,6 +369,10 @@ TestCase {
     compare(snapshot.selectedIds.join(","), "a,b")
     compare(snapshot.anchor.kind, "row")
     compare(snapshot.anchor.offset, 18)
+    compare(snapshot.focusIndex, 8)
+    compare(snapshot.manageCursor, 1)
+    compare(snapshot.focus.id, "hypr/input.lua")
+    compare(snapshot.focusedField, "configs-search")
   }
 
   function test_navigation_snapshot_does_not_share_mutable_values() {
@@ -395,6 +401,31 @@ TestCase {
     })
     compare(R.navigationScroll(snapshot, "configs", 100), 100)
     compare(snapshot.anchor.id, "removed")
+  }
+
+  function test_navigation_selects_nearest_surviving_row() {
+    var rows = [{ id: "first" }, { id: "third" }, { id: "fourth" }]
+    compare(R.nearestRowId(rows, "third", 2), "third")
+    compare(R.nearestRowId(rows, "removed", 1), "third")
+    compare(R.nearestRowId([], "removed", 1), "")
+  }
+
+  function test_navigation_restores_selection_and_nearest_anchor() {
+    var rows = [{ id: "first" }, { id: "third" }, { id: "fourth" }]
+    var removed = R.restoreSelection(rows, ["gone"], "gone", 1)
+    compare(removed.selectedIds.join(","), "third")
+    compare(removed.selectionAnchor, "third")
+    var partial = R.restoreSelection(rows, ["first", "gone"], "gone", 2)
+    compare(partial.selectedIds.join(","), "first")
+    compare(partial.selectionAnchor, "first")
+  }
+
+  function test_keyboard_focus_restores_by_id_and_falls_back_to_near_row() {
+    var items = [{ kind: "tab", id: "configs" }, { kind: "row", id: "first" },
+                 { kind: "row", id: "third" }, { kind: "card", id: "suggest" }]
+    compare(R.focusIndexFor(items, { kind: "row", id: "third" }, 2), 2)
+    compare(R.focusIndexFor(items, { kind: "row", id: "removed" }, 2), 2)
+    compare(R.focusIndexFor(items, { kind: "card", id: "gone" }, 3), 3)
   }
 
   function test_navigation_does_not_store_viewer_offset() {

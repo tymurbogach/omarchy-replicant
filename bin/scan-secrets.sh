@@ -38,6 +38,8 @@ PATTERNS=(
   'xox[baprse]-[A-Za-z0-9-]{10,}:Slack token'
   '[srp]k_live_[A-Za-z0-9]{20,}:Stripe live key'
   'AKIA[0-9A-Z]{16}:AWS access key id'
+  'AGE-SECRET-KEY-1[A-Z0-9]{20,}:age secret identity'
+  'AGE-SECRET-KEY-PQ-1[A-Z0-9]{20,}:post-quantum age secret identity'
   'BEGIN [A-Z ]*PRIVATE KEY:private key'
   'APP_KEY=base64:[A-Za-z0-9+/=]{40,}:Laravel APP_KEY'
   '^[[:space:]]*password[[:space:]]*=[[:space:]]*[^<[:space:]].*:plaintext password'

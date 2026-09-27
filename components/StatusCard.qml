@@ -92,7 +92,7 @@ BorderSurface {
         tooltipText: !panel.ready ? "Disabled: configure a repository first."
                     : panel.busy ? "Disabled: another Replicant operation is running."
                     : panel.remoteState === "ahead" ? "Retry publishing the local commits" : "Copy this machine into the repo, commit and push  (s)"
-        onClicked: panel.remoteState === "ahead" && panel.nDirty === 0 ? panel.doRetryPush() : panel.doSavegame()
+        onClicked: panel.remoteState === "ahead" && panel.nDirty === 0 ? panel.doRetryPush() : panel.doSave()
       }
       Button {
         text: "Pull"; iconText: panel.icPull; bordered: true

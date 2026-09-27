@@ -36,7 +36,7 @@ progress_cli_exit() {
   [[ "${REPLICANT_PROGRESS_RESULT_EMITTED:-0}" != 1 ]] || return "$rc"
   # Save owns its richer result because it knows whether the repository
   # committed locally, reached the remote, or had nothing to do.
-  case "${REPLICANT_PROGRESS_COMMAND:-}" in save|savegame|save-file) return "$rc" ;; esac
+  case "${REPLICANT_PROGRESS_COMMAND:-}" in save|save-file) return "$rc" ;; esac
   if (( rc == 0 )); then
     progress_result success "Command completed" ""
   elif (( rc == 130 || rc == 143 )); then
@@ -79,12 +79,12 @@ fi
 # `git -C` here would be transaction ownership outside the engine.
 
 # Serialize everything that writes to the repo. Without this, two commands
-# racing (the panel firing `set` twice while a savegame is still committing)
+# racing (the panel firing `set` twice while a save is still committing)
 # collide on .git/index.lock and one of them dies half-done. Commands queue
 # instead of failing; 90s is far longer than any real operation here.
 acquire_repo_lock() {
-  mkdir -p "$REPLICANT_HOME"
-  exec 9>"$REPLICANT_HOME/.replicant.lock" || return 0
+  mkdir -p -- "$REPLICANT_HOME" || fail "cannot create the Replicant lock directory: $REPLICANT_HOME"
+  exec 9>"$REPLICANT_HOME/.replicant.lock" || fail "cannot open the Replicant lock file: $REPLICANT_HOME/.replicant.lock"
   # REPLICANT_LOCK_WAIT exists for the tests, which cannot wait 90 s per check.
   if ! flock -w "${REPLICANT_LOCK_WAIT:-90}" 9; then
     fail "another omarchy-replicant operation is still running — try again in a moment"
@@ -111,13 +111,6 @@ cmd_changes() {
   load_core
   core_changes
 }
-# backup: read-only alias for changes. The copy pass lives on inside the core
-# for save transactions (backup --for-savegame); the user-facing command only
-# reviews, and save commits.
-cmd_backup() {
-  warn "backup is deprecated — it only reviews now; 'changes' shows the same, 'save --id <id> -m \"why\"' commits one entry"
-  cmd_changes "$@"
-}
 # tx: resume or discard an abandoned save transaction, or list them.
 cmd_tx() {
   ensure_core
@@ -132,11 +125,7 @@ cmd_tx() {
 }
 
 cmd_init() {
-  # --savegame is accepted and ignored: init has always done the full savegame
-  # layout, and the flag survives only so the documented command line and any
-  # script that learned it keep working. It used to be parsed into a variable
-  # nothing read, which is a promise of a behaviour that does not exist.
-  while (( $# )); do shift; done
+  (( $# == 0 )) || fail "init accepts no options"
   ensure_core
   load_core
   core_init
@@ -219,9 +208,9 @@ cmd_create() {
   repo_create "$name" "$do_push" "$transport" || fail "create failed"
 }
 
-# savegame — system -> repo -> GitHub (ported from savegame.sh)
+# save — system -> repo -> GitHub.
 # The panel has no field to type a commit message in, so from the panel a save
-# could never commit anything: savegame without -m deliberately leaves config
+# could never commit anything: a save without -m deliberately leaves config
 # and secrets copied-in-but-uncommitted, so a human can write one commit per
 # change explaining WHY. That discipline is a terminal workflow. A button
 # labelled "commit and push" that neither commits nor pushes is not — the user
@@ -240,34 +229,6 @@ cmd_save() {
   local rc=0
   bash "$CORE" save "$@" || rc=$?
   bash "$CORE" cache-invalidate
-  return "$rc"
-}
-
-cmd_savegame() {
-  ensure_core
-  # Deprecated alias for `save`, kept for one compatibility release. Bare
-  # savegame keeps its old meaning (the inventory is committed, config is
-  # left copied-in but uncommitted for a reasoned commit by hand); with -m
-  # or --auto it is a global save.
-  warn "savegame is deprecated — 'save' does this now (same options)"
-  local has_msg=0 has_auto=0 a
-  for a in "$@"; do case "$a" in
-    -m|--message) has_msg=1 ;;
-    -a|--auto) has_auto=1 ;;
-  esac; done
-  if (( has_msg || has_auto )); then
-    cmd_save --all "$@"
-    return "$?"
-  fi
-  local rc=0
-  cmd_save --inventory "$@" || rc=$?
-  if (( rc == 0 )); then
-    local unsaved=0
-    unsaved=$(bash "$CORE" status --json --brief --no-fetch 2>/dev/null | jq -r .unsaved 2>/dev/null || echo 0)
-    if [[ "$unsaved" != "0" && -n "$unsaved" ]]; then
-      echo "Config is left uncommitted — 'save --all -m \"why\"' to save it." >&2
-    fi
-  fi
   return "$rc"
 }
 
@@ -382,14 +343,14 @@ cmd_reset() {
 #
 # It used to mean "copy everything in, stage the lot with `add -A`, invent a
 # commit message out of the current date, commit, push" — a second, worse
-# savegame, inline in the dispatcher, that nothing called: not the panel, not
+# save, inline in the dispatcher, that nothing called: not the panel, not
 # the docs, not --help, not one test. It also took whatever arguments it was
 # handed as the commit subject, which is how a commit titled "--help" reached
 # GitHub.
 #
 # The bar reads "↑ 3 to push", so that is what the word has to do here: send
 # the commits that already exist, and nothing else. Copying and committing
-# first is savegame's job, and when there is uncommitted work this says so
+# first is save's job, and when there is uncommitted work this says so
 # rather than quietly deciding on the user's behalf.
 cmd_push() {
   ensure_core
@@ -429,11 +390,6 @@ cmd_migrate_v3() {
   load_core
   core_migrate_v3 "$@" || exit 1
   bash "$CORE" cache-invalidate
-}
-
-cmd_migrate_v2() {
-  warn "migrate-v2 is deprecated — it migrates to version 3 now; use migrate-v3"
-  cmd_migrate_v3 "$@"
 }
 
 cmd_migration_confirm() {
@@ -540,16 +496,7 @@ cmd_settings() {
     ""'
 }
 
-cmd_sync() {
-  local id="${1:-}" want="${2:-}"
-  [[ -n "$id" && -n "$want" ]] || fail "usage: omarchy-replicant sync <id> on|off"
-  load_core
-  core_sync_transact "$id" "$want" || exit 1
-  bash "$CORE" cache-invalidate
-}
-
-# cmd_scope <id> <shared|profile|off> — the three-state version of `sync`, and
-# what the control in every Configs row actually calls. One scope change, one
+# cmd_scope <id> <shared|profile|off> changes one Configs row. One scope change, one
 # commit of exactly that entry's paths: staging the directories would sweep
 # every unrelated dotfile that happened to be pending into a commit whose
 # message says "scope:", which is exactly the thing the data repo's
@@ -1236,7 +1183,7 @@ cmd_undo() {
     case "$arg" in
       --apply) DRY=0 ;;
       --dry-run) DRY=1 ;;
-      -y|--yes) DRY=0 ;;
+      -y|--yes) fail "undo: --yes is not supported; use --apply" ;;
       -*) ;;
       *) [[ -z "$id" ]] && id="$arg" ;;
     esac
@@ -1247,7 +1194,7 @@ cmd_undo() {
   # twice by two different mechanisms and shellcheck was right to call it out:
   # the prefix is seen only by the forked shell, which then immediately
   # overwrote it with a spliced literal. One way in is enough.
-  bash -c 'DRY="$3"; source "$1" 2>/dev/null; core_undo "$2"' \
+  bash -c 'DRY="$3"; source "$1" || exit $?; core_undo "$2"' \
     _ "$CORE" "$id" "$DRY" || fail "nothing undone"
   if (( DRY )); then
     echo >&2; skip "dry-run — nothing was touched. Repeat with --apply"
@@ -1265,6 +1212,7 @@ cmd_purge() {
   esac; done
 
   local -a targets=()
+  local -a recovery=()
   [[ -L "$LINK_PATH" ]] && targets+=("$LINK_PATH")
   [[ -f "$REPLICANT_HOME/.replicant.lock" ]] && targets+=("$REPLICANT_HOME/.replicant.lock")
   [[ -f "$REPLICANT_HOME/.last-fetch" ]] && targets+=("$REPLICANT_HOME/.last-fetch")
@@ -1285,6 +1233,14 @@ cmd_purge() {
   # Abandoned save transactions (worktree plus meta.json journal). A finished
   # save removes its own; only interrupted ones are ever still here.
   [[ -d "$REPLICANT_HOME/transactions" ]] && targets+=("$REPLICANT_HOME/transactions")
+  [[ -d "$REPO_DIR" ]] && recovery+=("$REPO_DIR")
+  [[ -d "$REPLICANT_HOME/keys" ]] && recovery+=("$REPLICANT_HOME/keys")
+  [[ -d "$REPLICANT_HOME/migration" ]] && recovery+=("$REPLICANT_HOME/migration")
+  [[ -f "$REPLICANT_HOME/migration-warning" ]] && recovery+=("$REPLICANT_HOME/migration-warning")
+  local legacy
+  for legacy in "$REPLICANT_HOME"/legacy-repo-*; do
+    [[ -e "$legacy" ]] && recovery+=("$legacy")
+  done
   if (( ! KEEP_REPO )); then
     [[ -d "$REPLICANT_HOME" ]] && targets+=("$REPLICANT_HOME")
   fi
@@ -1314,7 +1270,16 @@ cmd_purge() {
   local t
   for t in "${targets[@]}"; do echo "  · ${t/#$HOME/\~}" >&2; done
   (( ${#backups[@]} > 0 )) && echo "  · $(plural "${#backups[@]}" ".bak.<epoch> backup") next to your configs" >&2
-  if (( KEEP_REPO )) && [[ -d "$REPLICANT_HOME" ]]; then
+  if (( ${#recovery[@]} > 0 )); then
+    if (( KEEP_REPO )); then
+      echo "── would keep for recovery ──" >&2
+      for t in "${recovery[@]}"; do echo "  · ${t/#$HOME/\~}" >&2; done
+      echo >&2; info "pass --repo to remove the repository, keys, legacy repositories, and migration recovery data"
+    else
+      echo "── recovery data included by --repo ──" >&2
+      for t in "${recovery[@]}"; do echo "  · ${t/#$HOME/\~}" >&2; done
+    fi
+  elif (( KEEP_REPO )) && [[ -d "$REPLICANT_HOME" ]]; then
     echo >&2; info "keeping your backup repo at $REPLICANT_HOME — pass --repo to remove that too"
   fi
   if (( ! KEEP_REPO )) && [[ -f "$REPLICANT_HOME/keys/identity.txt" ]]; then
@@ -1343,17 +1308,15 @@ omarchy-replicant [--progress-json] — back up, restore and replicate your Omar
 
 First machine
   create [name] [--push]      Make the PRIVATE GitHub repo and push this machine into it
-  setup-status --json         Show GitHub HTTPS and SSH setup without credentials
+  setup-status --json         Show GitHub API and SSH transport setup without credentials
   login                       gh auth, if you are not logged in yet
-  init [--savegame]           Prepare the local repo without touching GitHub
+  init                        Prepare the local repo without touching GitHub
 
 Every day
   save [--all] [-m "why"] [--auto]   Copy everything in, one commit, push
              [--id <id> ...]         (--no-push to hold; --auto writes the
              [--inventory]           subject from what changed)
-  savegame [-m "why"] [--auto]       Deprecated alias for save (same options)
   changes                     Review what a save would commit — read-only
-  backup                      Deprecated read-only alias for changes
   tx list|resume|discard      Recover an abandoned save transaction
   status [--json] [--brief]   What changed, what is pushed, what is not
   diff [id]                   Pending changes, or what changed in one file
@@ -1365,7 +1328,7 @@ What gets backed up
   track <path> [name] [--secret]   Add a file or directory to YOUR list
   untrack <id>                Drop one of your own entries, and its copy
   forget <id>                 A file you deleted: its copy leaves the repo too
-  scope <id> shared|profile|off    Who syncs this file        (sync <id> on|off is the old form)
+  scope <id> shared|profile|off    Who syncs this file
   policy set --scope <scope> -- <id...>  Set one scope for several entries in one commit
   bulk save|scope|track|convert-secret|untrack [options] -- <id...>
                               Apply one validated multi-entry operation atomically
@@ -1404,7 +1367,6 @@ Second machine
   clone <url>                 Point this machine at the repo you already have
   migrate-v3 --github-name <name> --identity-backup <path> [--remote <url>] [--yes]
                               Create and activate a clean encrypted v3 repository
-  migrate-v2                  Deprecated alias for migrate-v3 (migrates to v3)
 
 The plugin itself
   update-check [--fetch]      Whether a newer Replicant is at its origin    (--json)
@@ -1435,7 +1397,7 @@ USAGE
 # what it does must never be the same as doing it.
 #
 # Only the FIRST argument is inspected, so a message that happens to be "-h"
-# (`savegame -m -h`) is still a message and not a help request.
+# (`save -m -h`) is still a message and not a help request.
 declare -A HELP=(
   [backups]="backups [--prune] [--apply]  —  the safety net, listed
 
@@ -1460,7 +1422,7 @@ Dry-run by default, like everything here that writes.
   omarchy-replicant backups          which ids have one
   omarchy-replicant undo hypr/input.lua
   omarchy-replicant undo hypr/input.lua --apply"
-  [init]="init [--savegame]
+  [init]="init
   Prepare the local repo without touching GitHub. Safe to re-run: it creates the
   layout, the hooks and the .gitignore, and migrates an older repo shape."
   [login]="login
@@ -1470,10 +1432,7 @@ Dry-run by default, like everything here that writes.
   Add --transport https or --transport ssh to choose the Git URL.
   Defaults to <hostname>-replicant. Always private. Asks; run it in a terminal."
   [setup-status]="setup-status --json
-  Report GitHub HTTPS and SSH readiness without exposing credentials."
-  [backup]="backup
-  Deprecated read-only alias for changes. It copies nothing, commits nothing
-  and pushes nothing. Review with changes, save with save."
+  Report GitHub API authentication and SSH transport readiness without exposing credentials."
   [changes]="changes
   Review what a save would commit: pending repo paths plus staged stats.
   Read-only: it never writes to the repo. Save with save --all -m, or
@@ -1490,9 +1449,6 @@ Dry-run by default, like everything here that writes.
   derived from the paths that changed (what the panel's Save button uses).
   With neither, the inventory is committed when it moved and anything else is
   left for a reasoned commit by hand. --no-push holds it all locally."
-  [savegame]="savegame [-m \"why\"] [--auto] [--no-push]
-  Deprecated alias for save, kept for one compatibility release.
-  With -m or --auto it is 'save --all'; bare it is 'save --inventory'."
   [status]="status [--json] [--brief] [--fetch|--no-fetch]
   What changed, what is saved, what is still to push. --json is what the panel
   reads. Read-only: it never writes to the repo."
@@ -1519,8 +1475,6 @@ Dry-run by default, like everything here that writes.
   [doctor]="doctor
   Check auth, that the remote really is private, the git hooks, file modes and
   version skew between machines. Read-only; it fixes nothing."
-  [sync]="sync <id> on|off
-  The old two-state form of scope. 'scope <id> shared|profile|off' replaced it."
   [scope]="scope <id> shared|profile|off
   Who gets this file. shared: every machine. profile: each profile keeps its own
   copy, so neither overwrites the other. off: nobody backs it up."
@@ -1615,9 +1569,6 @@ Dry-run by default, like everything here that writes.
   it, fetching whatever is at its origin right now. It first says what the
   Omarchy marketplace checked, and whether the origin has moved since.
   --check  say that, and install nothing"
-  [migrate-v2]="migrate-v2 --github-name <name> --identity-backup <absolute-path> [--remote <url>] [--yes]
-  Deprecated alias for migrate-v3: migrates a clean v1 or v2 repository into
-  a new encrypted v3 repository. The legacy repository remains at legacy-repo-<epoch>."
   [migrate-v3]="migrate-v3 --github-name <name> --identity-backup <absolute-path> [--remote <url>] [--yes]
   Migrate a clean v1 or v2 repository into a new encrypted v3 repository.
   Without --yes it prints the migration summary and stops; --yes acknowledges
@@ -1640,6 +1591,12 @@ main() {
     shift
   fi
   local cmd="${1:-}"; [[ -z "$cmd" ]] && { usage; exit 0; }
+  case "$cmd" in
+    savegame) fail "savegame was removed in 0.14.0; use save --all" ;;
+    backup) fail "backup was removed in 0.14.0; use changes" ;;
+    migrate-v2) fail "migrate-v2 was removed in 0.14.0; use migrate-v3" ;;
+    sync) fail "sync was removed in 0.14.0; use scope <id> shared|profile|off" ;;
+  esac
   export REPLICANT_PROGRESS_COMMAND="$cmd"
   if [[ "${REPLICANT_PROGRESS_JSON:-0}" == 1 ]]; then
     trap progress_cli_exit EXIT
@@ -1648,10 +1605,16 @@ main() {
   if [[ "${REPLICANT_PROCESS_GROUP:-0}" == 1 ]]; then
     trap 'progress_cli_cancel' INT TERM
   fi
-  # Before the lock, and before anything else: help is not an action. This ran
-  # after acquire_repo_lock once, so `push --help` also took the write lock on
-  # its way to pushing.
-  if [[ "${2:-}" == "-h" || "${2:-}" == "--help" ]]; then
+  # Before the lock, and before anything else: help is not an action. `--help`
+  # is reserved wherever it appears. `-h` stays a value after the command, so
+  # settings and save messages can use it unchanged.
+  local arg
+  for arg in "${@:2}"; do
+    [[ "$arg" == "--help" ]] || continue
+    if [[ -n "${HELP[$cmd]:-}" ]]; then printf '%s\n' "${HELP[$cmd]}"; else usage; fi
+    exit 0
+  done
+  if [[ "${2:-}" == "-h" ]]; then
     if [[ -n "${HELP[$cmd]:-}" ]]; then printf '%s\n' "${HELP[$cmd]}"; else usage; fi
     exit 0
   fi
@@ -1665,12 +1628,11 @@ main() {
   # Anything that writes to the repo takes the lock first; read-only commands
   # (status/get/diff/edit) stay lock-free so the panel's polling never blocks.
   case "$cmd" in
-    init|create|save|savegame|set|save-file|reset|reset-all|push|pull|clone|restore|sync|scope|policy|bulk|track|untrack|forget|profile|revert|restore-file|install-theme|install-plugin|tx|migrate-v2|migrate-v3) acquire_repo_lock ;;
+    init|create|save|set|save-file|reset|reset-all|push|pull|clone|restore|scope|policy|bulk|track|untrack|forget|profile|revert|restore-file|install-theme|install-plugin|tx|migrate-v3) acquire_repo_lock ;;
     # These write only when they apply. A dry run takes no lock: taking it
     # creates the lock file, and purge would then list its own lock.
     undo|backups|purge|recover)
-      if [[ -d "$REPLICANT_HOME" ]] && [[ " $* " == *" --apply "* ||
-            ( "$cmd" == undo && ( " $* " == *" --yes "* || " $* " == *" -y "* ) ) ]]; then
+      if [[ -d "$REPLICANT_HOME" ]] && [[ " $* " == *" --apply "* ]]; then
         acquire_repo_lock
       fi ;;
   esac
@@ -1680,11 +1642,9 @@ main() {
     login) shift; cmd_login "$@";;
     create) shift; cmd_create "$@";;
     setup-status) shift; [[ "${1:-}" == "--json" ]] || fail "usage: setup-status --json"; cmd_setup_status;;
-    backup) shift; cmd_backup "$@";;
     changes) shift; cmd_changes "$@";;
     tx) shift; cmd_tx "$@";;
     save) shift; cmd_save "$@";;
-    savegame) shift; cmd_savegame "$@";;
     status) shift; cmd_status "$@";;
     get) shift; cmd_get "$@";;
     set) shift; cmd_set "$@";;
@@ -1697,7 +1657,6 @@ main() {
     log) shift; cmd_log "$@";;
     settings) shift; cmd_settings "$@";;
     doctor) shift; cmd_doctor "$@";;
-    sync) shift; cmd_sync "$@";;
     scope) shift; cmd_scope "$@";;
     policy) shift; cmd_policy "$@";;
     bulk) shift; cmd_bulk "$@";;
@@ -1730,7 +1689,6 @@ main() {
     push) shift; cmd_push "$@";;
     pull) shift; cmd_pull "$@";;
     clone) shift; cmd_clone "$@";;
-    migrate-v2) shift; cmd_migrate_v2 "$@";;
     migrate-v3) shift; cmd_migrate_v3 "$@";;
     install-theme) shift; cmd_install_theme "$@";;
     install-plugin) shift; cmd_install_plugin "$@";;

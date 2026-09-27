@@ -93,19 +93,11 @@ check "…under the inventory subject" "1" \
 check "…while the config edit is still pending" "1" \
   "$(run status --json --brief --no-fetch | jq -r .unsaved)"
 
-section "savegame stays compatible through the alias"
-check_contains "it says it is deprecated" "deprecated" "$(run savegame --auto --no-push)"
-run save --all -m "clear the decks" --no-push >/dev/null 2>&1
-printf 'left for a reason\n' >> "$HOME/.config/hypr/input.lua"
-before=$(head_now)
-out=$(run savegame --no-push; echo "rc=$?")
-check "bare savegame exits 0" "1" "$(grep -c 'rc=0' <<<"$out" || true)"
-check "…leaves the config uncommitted" "$before" "$(head_now)"
-check "…which still reads unsaved" "1" \
-  "$(run status --json --brief --no-fetch | jq -r .unsaved)"
-run savegame --auto --no-push >/dev/null 2>&1
-check "savegame --auto still saves everything" "0" \
-  "$(run status --json --brief --no-fetch | jq -r .unsaved)"
+section "removed aliases fail with the canonical command"
+check_false "savegame is removed" "$CLI" savegame --auto --no-push
+check_contains "…and names save" "use save --all" "$(run savegame)"
+check_false "backup is removed" "$CLI" backup
+check_contains "…and names changes" "use changes" "$(run backup)"
 
 section "save-file is save --id with a default subject"
 printf 'per-file\n' >> "$HOME/.config/hypr/input.lua"
@@ -182,7 +174,7 @@ check "it exits 0" "1" "$(grep -c 'rc=0' <<<"$out" || true)"
 check "…commits nothing" "$before" "$(head_now)"
 check_contains "…and says so plainly" "Nothing to save" "$out"
 
-section "changes reviews without writing, backup is its alias"
+section "changes reviews without writing"
 printf 'review me\n' >> "$HOME/.config/hypr/input.lua"
 copy_backup >/dev/null 2>&1
 before=$(head_now)
@@ -191,10 +183,6 @@ check "changes exits 0" "1" "$(grep -c 'rc=0' <<<"$out" || true)"
 check "…writes nothing" "$before" "$(head_now)"
 check "…leaving the pending copies in place" "1" "$(git -C "$REPO" status --porcelain | grep -c . || true)"
 check_contains "…and points at save" "save --all" "$out"
-out=$(run backup 2>&1; echo "rc=$?")
-check "backup still runs as the alias" "1" "$(grep -c 'rc=0' <<<"$out" || true)"
-check "…saying it is deprecated" "1" "$(grep -ci 'deprecated' <<<"$out" || true)"
-check "…writing nothing either" "$before" "$(head_now)"
 git -C "$REPO" checkout -- . >/dev/null 2>&1
 git -C "$REPO" clean -fdq >/dev/null 2>&1
 run save --all --auto --no-push >/dev/null 2>&1

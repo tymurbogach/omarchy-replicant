@@ -25,7 +25,7 @@ Column {
   StatusCard { panel: ot.panel; width: ot.width }
 
   BorderSurface {
-    visible: panel.repoState.migration && panel.repoState.migration.legacy_warning === true
+    visible: panel.repoState.migration ? panel.repoState.migration.legacy_warning === true : false
     width: ot.width
     implicitHeight: migrationWarning.implicitHeight + Style.space(20)
     radius: Style.cornerRadius
@@ -84,7 +84,7 @@ Column {
     }
   }
 
-  // The tools. Each one is read-only or copies into the local repo only.
+  // Read-only tools and links.
   Flow {
     width: ot.width
     spacing: Style.space(4)
@@ -108,14 +108,6 @@ Column {
       fontSize: Style.font.bodySmall; foreground: panel.fg; fontFamily: panel.ff
       tooltipText: "Open " + ot.url
       onClicked: panel.openUrl(ot.url)
-    }
-    Button {
-      text: "Copy without saving"; iconText: panel.icCopy; bordered: false
-      fontSize: Style.font.bodySmall; foreground: panel.fg; fontFamily: panel.ff
-      enabled: !panel.busy
-      tooltipText: panel.busy ? "Disabled: another Replicant operation is running."
-                   : "Copy this machine into the local repo. Nothing is committed or pushed."
-      onClicked: panel.doBackup()
     }
   }
 }

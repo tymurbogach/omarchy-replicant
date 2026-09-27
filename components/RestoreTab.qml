@@ -32,6 +32,12 @@ Column {
 
     CardNote {
       panel: rt.panel
+      visible: panel.backupsLoading || panel.deletedLoading
+      text: "Loading restore history…"
+    }
+
+    CardNote {
+      panel: rt.panel
       text: "The theme is applied again, Hyprland reloads and terminals restart. Every file that a restore overwrites is kept as .bak.<epoch>."
     }
     Row {
@@ -143,7 +149,7 @@ Column {
   Card {
     panel: rt.panel
     width: rt.width
-    visible: panel.deletedList.length > 0
+    visible: panel.deletedLoading || panel.deletedError !== "" || panel.deletedLoaded || panel.deletedList.length > 0
     icon: panel.icRecover
     title: "Deleted from your repo"
     subtitle: "Git history kept these copies"
@@ -151,7 +157,23 @@ Column {
 
     CardNote {
       panel: rt.panel
+      visible: panel.deletedError === ""
       text: "Bring back restores the copy, tracks it again if it was untracked, and puts it on this machine."
+    }
+    CardNote { panel: rt.panel; visible: panel.deletedError !== ""; text: panel.deletedError }
+    CardNote {
+      panel: rt.panel
+      visible: panel.deletedLoaded && panel.deletedError === "" && panel.deletedList.length === 0
+      text: "Nothing was deleted from your repo."
+    }
+    Row {
+      visible: panel.deletedError !== ""
+      leftPadding: Style.spacing.rowPaddingX
+      Button {
+        text: "Retry"; iconText: panel.icRefresh; bordered: true
+        foreground: panel.fg; accent: Color.accent; fontFamily: panel.ff
+        onClicked: { panel.deletedLoaded = false; panel.loadDeleted() }
+      }
     }
     Repeater {
       model: panel.deletedList.slice(0, 8)
@@ -222,7 +244,7 @@ Column {
   Card {
     panel: rt.panel
     width: rt.width
-    visible: panel.backupRows.length > 0
+    visible: panel.backupsLoading || panel.backupsError !== "" || panel.backupsLoaded || panel.backupRows.length > 0
     icon: panel.icHistory
     title: "Undo a restore"
     subtitle: "The version that each write replaced"
@@ -230,7 +252,23 @@ Column {
 
     CardNote {
       panel: rt.panel
+      visible: panel.backupsError === ""
       text: "Undo swaps the newest backup back and keeps what it replaces, so an undo can be undone too."
+    }
+    CardNote { panel: rt.panel; visible: panel.backupsError !== ""; text: panel.backupsError }
+    CardNote {
+      panel: rt.panel
+      visible: panel.backupsLoaded && panel.backupsError === "" && panel.backupRows.length === 0
+      text: "No restore backups exist."
+    }
+    Row {
+      visible: panel.backupsError !== ""
+      leftPadding: Style.spacing.rowPaddingX
+      Button {
+        text: "Retry"; iconText: panel.icRefresh; bordered: true
+        foreground: panel.fg; accent: Color.accent; fontFamily: panel.ff
+        onClicked: { panel.backupsLoaded = false; panel.loadBackups() }
+      }
     }
     Repeater {
       model: panel.backupRows

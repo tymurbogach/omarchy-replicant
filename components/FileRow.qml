@@ -25,7 +25,7 @@ Item {
       && panel.keyboardFocus.id === frow.config.id
   // Panel.everyRow already projects pending scope changes for every consumer.
   readonly property string scope: frow.config.scope || "shared"
-  readonly property string syncState: frow.config.sync_state || "saved"
+  readonly property string syncState: frow.config.sync_state || "unknown"
   // "Needs the Save button": unsaved, or committed here and never pushed. Not
   // incoming: that difference belongs to another machine, and it asks for
   // Restore instead.

@@ -26,6 +26,7 @@ Column {
         width: parent.width - allBtn.width - Style.space(8)
         text: panel.shortcutsLoaded
               ? (panel.shortcuts.own_count + " of your own · " + panel.shortcuts.active_count + " bound in total")
+              : panel.shortcutsError !== "" ? "Could not read your keybindings"
               : "reading your keybindings…"
         color: panel.dim; font.family: panel.ff; font.pixelSize: Style.font.caption
         elide: Text.ElideRight
@@ -39,6 +40,18 @@ Column {
         onClicked: panel.showAllShortcuts = !panel.showAllShortcuts
       }
     }
+  }
+
+  CardNote {
+    panel: sv.panel
+    visible: panel.shortcutsError !== ""
+    text: panel.shortcutsError
+  }
+  Button {
+    visible: panel.shortcutsError !== ""
+    text: "Retry"; iconText: panel.icRefresh; bordered: true
+    foreground: panel.fg; accent: Color.accent; fontFamily: panel.ff
+    onClicked: { panel.shortcutsLoaded = false; panel.loadShortcuts() }
   }
 
   Text {

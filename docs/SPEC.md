@@ -33,7 +33,9 @@ This document describes the data model of the plugin and the rules that the code
 | `layout.sh` | The repo layout and the pre-commit hook |
 | `inventory.sh` | Machine inventories that a restore or rebuild can consume |
 | `backup.sh` | Copies live configuration and secrets into the save repository |
+| `crypto.sh` | Age identities, encrypted secret blobs, key rotation and recovery |
 | `repo.sh` | Git repository lifecycle and remote transport |
+| `state.sh` | The facts and badge state for each entry |
 | `gitstate.sh` | One git call for the state of every row |
 | `discover.sh` | Entries found rather than listed: plugin configs and Hyprland modules |
 | `settings.sh` | The settings registry, its readers and its writers |
@@ -43,6 +45,8 @@ This document describes the data model of the plugin and the rules that the code
 | `transaction.sh` | The one journal and lifecycle every mutation shares: worktree transactions, shape commits, resume, atomic installs |
 | `bulk.sh` | Validates and applies multi-entry changes in one transaction |
 | `migrate.sh` | Migrates clean v1 and v2 repositories into a new encrypted v3 repository; owns every legacy policy read |
+| `legacy.sh` | Legacy repository paths, migration compatibility and cleanup policy |
+| `progress.sh` | Structured progress and result events for long CLI operations |
 | `restore.sh` | The restore plan for each area, and how each area is put back |
 | `plugins.sh` | Plugins and themes: origins, inventories, and installs on request |
 | `history.sh` | Copies that left the repo, and bringing them back from git history |
@@ -120,8 +124,8 @@ The plugin is built for a desktop and a laptop that share one private repo.
   a personal path or name in `bin/`.
 - The user's own entries live in the user's repo: config entries as `user` records in
   `.replicant/entries.json`, secret entries in the encrypted vault index. They live in the repo,
-  because "back up my script" is a decision about the setup. (Version 1 and 2 kept them in
-  `.replicant-track`; the migration carries them over.)
+  because "back up my script" is a decision about the setup. Version 1 and 2 kept them in a
+  legacy `.replicant-track` file; migration carries them into the v3 repository records.
 - `rebuild_tracked` joins the shipped list, the user's list and the found entries into `TRACKED`
   and `TRACKED_SECRETS`. Every loop that means "everything tracked" reads those two arrays.
 - `load_user_manifest` has a read-only fallback, and `ensure_track_file` does the migration. Without
@@ -251,8 +255,7 @@ commits arrive knows which one is right, so that moment writes it down.
   `save --id` holds exactly the named entries (and overrules the incoming
   hold-back, like `save-file` always did). `save --inventory` holds only
   this machine's inventory. `--auto` writes the subject from the changed
-  paths, and `-m` gives a subject. `savegame` is a deprecated alias for
-  `save`, and `save-file` is `save --id` with a default subject.
+  paths, and `-m` gives a subject. `save-file` is `save --id` with a default subject.
 - The save commits only when the schema validates and the secret scanner
   passes over the transaction. It then verifies that the active HEAD is
   still the base, fast-forwards to the candidate, and pushes. A failure
@@ -365,8 +368,7 @@ commits arrive knows which one is right, so that moment writes it down.
   encrypted index. Other entries carry a boolean `saved` and `savedKnown: true`.
 - Full and brief status derive their unsaved, incoming, locked and missing counts from the same entry
   state. Full status excludes implicit entries that are absent on the machine and in the repo.
-- The full payload also carries `counts`, `encryption` and `migration`. The old `configs` and
-  `secrets` arrays remain for one compatibility release. The brief payload keeps its small shape.
+- The full payload also carries `counts`, `encryption` and `migration`. The brief payload keeps its small shape.
 - `source` is `user` for a personal entry and `override` for shipped, discovered or migrated
   override entries. `kind` is `config`, `dir` or `secret`.
 
@@ -375,8 +377,7 @@ commits arrive knows which one is right, so that moment writes it down.
 - `migrate-v3` moves a clean v1 or v2 repository into a new encrypted v3 repository. It requires a
   clean and synchronized source repo, an empty private remote, a safe external identity backup path
   and post-quantum age support. Without `--yes` it prints the migration summary and stops; `--yes`
-  acknowledges that every recorded machine is upgraded or offline. `migrate-v2` is a deprecated
-  forwarding alias for one release: it migrates to version 3, never to version 2.
+  acknowledges that every recorded machine is upgraded or offline.
 - A v1 or v2 clone stays readable for inspection but every writer refuses it until `migrate-v3`
   runs. The command lists every recorded machine in its summary before accepting `--yes`.
 - The command stages under `$REPLICANT_HOME/migration/<id>/repo`, creates one root commit, pushes it,
@@ -411,6 +412,10 @@ backups and the optional link. `purge` names every trace (hard rule 8):
 - The `.bak.<epoch>` copies beside the files that it overwrote. For a directory entry, a copy is a
   whole tree.
 - `~/.local/bin/omarchy-replicant`, if `link` made it.
+- `$REPLICANT_HOME/keys/identity.txt` and `identity.txt.prev`, mode 600 key material outside Git.
+- `$REPLICANT_HOME/migration-warning`, `legacy-repo-<epoch>`, and migration recovery data.
+- `$REPLICANT_HOME/transactions/`, `$REPLICANT_HOME/migration/`, and
+  `$REPLICANT_HOME/key-rotation.json` journals that resume or explain an interrupted mutation.
 
 Two more places are touched, and neither holds anything of the plugin's. `update-check` writes
 `FETCH_HEAD` inside the plugin's own checkout. `update --restart` removes

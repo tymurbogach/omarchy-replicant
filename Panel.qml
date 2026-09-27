@@ -31,7 +31,7 @@ Panel {
   // The CLI inside this plugin, resolved relative to this file and never looked
   // up on PATH. Service.qml says why.
   readonly property string cli: String(Qt.resolvedUrl("bin/omarchy-replicant")).replace(/^file:\/\//, "")
-  property var repoState: ({ initialized: false, configs: [], secrets: [], settings: [], categories: [], setting_groups: [], machines: [] })
+  property var repoState: ({ initialized: false, entries: [], settings: [], categories: [], setting_groups: [], machines: [] })
   readonly property string remoteState: String(root.repoState.remote_state || (root.repoState.remote ? "synced" : "local-only"))
   readonly property string remoteStateText: R.remoteStateWord(root.remoteState)
   readonly property bool controllerCancelAllowed: controller.cancelAllowed
@@ -44,8 +44,12 @@ Panel {
   // "no repo yet — create one" screen: showing it before we know the state let
   // a stray click re-point an already-configured remote (a real incident).
   property bool asked: false
+  property string statusError: ""
+  property string statusErrorTitle: ""
   property var setupStatus: ({ default_repo_name: "", github: {}, ssh: {} })
   property bool setupStatusLoaded: false
+  property bool setupStatusLoading: false
+  property string setupStatusError: ""
   property int setupPollAttempts: 0
   property string createRepoName: ""
   property string createTransport: "https"
@@ -166,6 +170,8 @@ Panel {
   property int logCount: 6
   property var shortcuts: ({ own: [], active: [], own_count: 0, active_count: 0 })
   property bool shortcutsLoaded: false
+  property bool shortcutsLoading: false
+  property string shortcutsError: ""
   property bool showAllShortcuts: false
 
   // ── what is open ──────────────────────────────────────────────────────────
@@ -490,7 +496,7 @@ Panel {
     var v = root.repoState.plugin_version || root.updateInfo.current || ""
     return v !== "" ? "v" + v : ""
   }
-  readonly property string metaText: root.ready
+  readonly property string metaText: root.statusError !== "" ? "status unavailable" : root.ready
       ? root.summary + "  ·  " + (root.repoState.machine || "") + "  ·  " + root.profileName + " profile"
       : root.summary
 
@@ -535,7 +541,7 @@ Panel {
   }
   function chipClicked(id) {
     if (id === "pull") { root.doPull(); return }
-    if (id === "push") { root.doSavegame(); return }
+    if (id === "push") { root.doSave(); return }
     root.activeTab = "configs"
     if (id === "add") {
       root.stateFilter = "all"
@@ -611,9 +617,9 @@ Panel {
   readonly property int restoreDiffers: root.areaSummaries.reduce(function(n, a) { return n + a.differ }, 0)
   // What reset-all would touch: a file Omarchy ships a default for, here, not
   // at that default, and where `omarchy refresh config` can reach it.
-  readonly property int resetDiffers: (root.repoState.configs || []).filter(function(c) {
-    return c.has_default === true && c.exists === true && c.is_default !== true
-           && c.is_dir !== true && String(c.config_rel || "") !== ""
+  readonly property int resetDiffers: (root.repoState.entries || []).filter(function(entry) {
+    return entry.kind !== "secret" && entry.exists === true && entry.is_default !== true
+           && entry.is_dir !== true && entry.source !== "user"
   }).length
   // Third-party themes/plugins the inventory knows about but this machine
   // does not have. `restore` reports these, it never installs them: one row,
@@ -676,22 +682,28 @@ Panel {
     } else if (text === "") text = label + ": done."
     root.lastOutput = text.length > 20000 ? "…" + text.slice(-20000) : text
     root.refresh()
-    root.loadBackups()
-    root.loadDeleted()
+    if (root.activeTab === "restore" && root.opened) {
+      root.reloadBackups()
+      root.reloadDeleted()
+    } else {
+      root.backupsLoaded = false
+      root.deletedLoaded = false
+    }
   }
 
-  // --auto is not a convenience here, it is the difference between the button
-  // working and not. Bare `savegame` commits the inventory, pushes that, and
-  // deliberately leaves config and secrets copied-in-but-uncommitted so a human
-  // can write one commit per change explaining why — and this panel has nowhere
-  // to type that why.
-  function doSavegame() { root.busyLabel = "Saving to GitHub…"; controller.run("save", [root.cli, "savegame", "--auto"], { label: "Save", cancelable: true }) }
+  // The panel has no subject field. Save every class of data in one transaction
+  // and let the CLI derive the commit subject from the changed paths.
+  function doSave() { root.busyLabel = "Saving to GitHub…"; controller.run("save", [root.cli, "save", "--all", "--auto"], { label: "Save", cancelable: true }) }
   function cancelSave() { if (controller.cancel()) root.busyLabel = "Cancelling save…" }
   function doRetryPush() { root.busyLabel = "Publishing local commits…"; controller.run("push", [root.cli, "push"], { label: "Retry push" }) }
   function doPull()     { root.busyLabel = "Pulling from GitHub…"; controller.run("pull", [root.cli, "pull"], { label: "Pull" }) }
-  function doBackup()   { root.busyLabel = "Copying files into the repo…"; controller.run("backup", [root.cli, "backup"], { label: "Copy" }) }
   function doDoctor()   { root.busyLabel = "Running the health check…"; controller.run("doctor", [root.cli, "doctor"], { label: "Health check" }) }
-  function loadSetupStatus() { controller.run("setup-status", [root.cli, "setup-status", "--json"], { busy: false, background: true }) }
+  function loadSetupStatus() {
+    if (root.setupStatusLoading) return false
+    root.setupStatusLoading = true
+    root.setupStatusError = ""
+    return controller.run("setup-status", [root.cli, "setup-status", "--json"], { busy: false, background: true })
+  }
   function githubReady() { return root.setupStatus.github && root.setupStatus.github.authenticated === true && root.setupStatus.github.reachable === true }
   function sshReady() { return root.setupStatus.ssh && root.setupStatus.ssh.authenticated === true && root.setupStatus.ssh.reachable === true }
   function setupState(value, kind) {
@@ -722,7 +734,12 @@ Panel {
   }
   function startGithubLogin() { root.setupPollAttempts = 10; root.setupStatusLoaded = false; root.runVisible(root.cli + " login") }
 
-  function loadShortcuts() { controller.run("shortcuts", [root.cli, "shortcuts", "--json"], { busy: false, background: true }) }
+  function loadShortcuts() {
+    if (root.shortcutsLoaded || root.shortcutsLoading) return false
+    root.shortcutsLoading = true
+    root.shortcutsError = ""
+    return controller.run("shortcuts", [root.cli, "shortcuts", "--json"], { busy: false, background: true })
+  }
   function loadLog() {
     controller.run("log", [root.cli, "log", "--json", "-n", String(root.logCount)], { busy: false, background: true })
   }
@@ -792,7 +809,7 @@ Panel {
     var previousSelectedIds = root.selectedIds.slice()
     var previousSelectionAnchor = root.selectionAnchor
     var accepted = controller.run("bulk", cmd, {
-      label: "Bulk change", bulkAction: action, scopeIds: scopeIds,
+      label: R.bulkActionDescription(action), bulkAction: action, scopeIds: scopeIds,
       previousSelectedIds: previousSelectedIds, previousSelectionAnchor: previousSelectionAnchor
     })
     if (!accepted) { root.busyLabel = ""; return false }
@@ -814,8 +831,8 @@ Panel {
     if (["scope-off", "convert-secret", "untrack"].indexOf(action) >= 0) {
       var names = root.selectedIds.slice(0, 12).join("\n  ")
       var more = root.selectedIds.length > 12 ? "\n  +" + (root.selectedIds.length - 12) + " more" : ""
-      root.ask("bulk:" + action, "", "Apply '" + action + "' to " + root.selectedIds.length
-               + " entries?\n\n  " + names + more + "\n\n"
+      root.ask("bulk:" + action, "", R.bulkActionDescription(action) + "\n\nApply to "
+               + root.selectedIds.length + " entries?\n\n  " + names + more + "\n\n"
                + root.selectionSummary.files + " files · " + R.sizeText(root.selectionSummary.bytes), "Apply")
       return
     }
@@ -905,11 +922,17 @@ Panel {
   // one carries no rows, so it cannot confirm anything.
   onRepoStateChanged: {
     if (root.navigationSnapshot && root.transientView === "") root.restoreNavigation()
+    if (root.asked && root.statusError === "" && !root.ready && !root.setupStatusLoaded && !root.setupStatusLoading)
+      root.loadSetupStatus()
     if (root.scopeAwaitingStatus && root.scopePending === 0
         && root.repoState && root.repoState.brief !== true) {
       root.scopeOverrides = ({})
       root.scopeAwaitingStatus = false
     }
+  }
+  onAskedChanged: {
+    if (root.asked && root.statusError === "" && !root.ready
+        && !root.setupStatusLoaded && !root.setupStatusLoading) root.loadSetupStatus()
   }
 
   // ── adding files ──────────────────────────────────────────────────────────
@@ -918,9 +941,15 @@ Panel {
   // anything, and nothing is tracked until a Track button is pressed.
   property var suggestions: []
   property bool suggestLoaded: false
+  property bool suggestLoading: false
+  property string suggestError: ""
   function loadSuggestions() {
-    controller.run("suggest", [root.cli, "suggest", "--json"], { busy: false, background: true })
+    if (root.suggestLoaded || root.suggestLoading) return false
+    root.suggestLoading = true
+    root.suggestError = ""
+    return controller.run("suggest", [root.cli, "suggest", "--json"], { busy: false, background: true })
   }
+  function reloadSuggestions() { root.suggestLoaded = false; root.loadSuggestions() }
   property string addMode: "suggest"
   function setAddMode(m) {
     root.addMode = m
@@ -948,7 +977,7 @@ Panel {
   }
   function doUntrack(id) {
     root.busyLabel = "Untracking " + id + "…"
-    controller.run("track", [root.cli, "untrack", id], { label: "Track" })
+    controller.run("untrack", [root.cli, "untrack", id], { label: "Untrack" })
   }
 
   // ── the safety net, made visible ──────────────────────────────────────────
@@ -957,9 +986,15 @@ Panel {
   // restored and it was wrong" is the exact moment somebody opens this tab.
   property var backups: []
   property bool backupsLoaded: false
+  property bool backupsLoading: false
+  property string backupsError: ""
   function loadBackups() {
-    controller.run("backups", [root.cli, "backups-json"], { busy: false, background: true })
+    if (root.backupsLoaded || root.backupsLoading) return false
+    root.backupsLoading = true
+    root.backupsError = ""
+    return controller.run("backups", [root.cli, "backups-json"], { busy: false, background: true })
   }
+  function reloadBackups() { root.backupsLoaded = false; root.loadBackups() }
   // Newest per id (replicant.js, backupRows): undo takes the newest, so a row
   // per id is a row per button.
   readonly property var backupRows: R.backupRows(root.backups)
@@ -969,15 +1004,22 @@ Panel {
   }
   function doPruneBackups() {
     root.busyLabel = "Removing backups…"
-    controller.run("undo", [root.cli, "backups", "--prune", "--apply"], { label: "Undo" })
+    controller.run("prune-backups", [root.cli, "backups", "--prune", "--apply"], { label: "Remove backups" })
   }
 
   // Copies that left the repo, by the commit that removed them. Git history
   // kept them, and one button undoes one commit's deletions.
   property var deletedList: []
+  property bool deletedLoaded: false
+  property bool deletedLoading: false
+  property string deletedError: ""
   function loadDeleted() {
-    controller.run("deleted", [root.cli, "deleted", "--json"], { busy: false, background: true })
+    if (root.deletedLoaded || root.deletedLoading) return false
+    root.deletedLoading = true
+    root.deletedError = ""
+    return controller.run("deleted", [root.cli, "deleted", "--json"], { busy: false, background: true })
   }
+  function reloadDeleted() { root.deletedLoaded = false; root.loadDeleted() }
   function askRecover(item) {
     var names = (item.files || []).map(function(f) { return R.repoPathLabel(f).label })
     root.ask("recover", item.sha,
@@ -1074,7 +1116,7 @@ Panel {
     else if (a === "install-theme")  { root.busyLabel = "Installing " + arg + "…"; command = [root.cli, "install-theme", arg]; label = "Install" }
     else if (a === "install-plugin") { root.busyLabel = "Installing " + arg + "…"; command = [root.cli, "install-plugin", arg]; label = "Install" }
     else if (a === "untrack")      { root.doUntrack(arg); return }
-    else if (a === "forget")       { root.busyLabel = "Forgetting " + arg + "…"; controller.run("track", [root.cli, "forget", arg], { label: "Track" }); return }
+    else if (a === "forget")       { root.busyLabel = "Forgetting " + arg + "…"; controller.run("forget", [root.cli, "forget", arg], { label: "Forget" }); return }
     else if (a === "undo")          { root.doUndo(arg); return }
     else if (a === "prune-backups") { root.doPruneBackups(); return }
     else if (a === "update")        { root.busyLabel = "Updating Replicant…"; controller.run("update", [root.cli, "update", "--yes", "--restart"], { label: "Update" }); return }
@@ -1142,21 +1184,29 @@ Panel {
     function onCompleted(job, code, stdoutText, stderrText, meta) {
       var text = root.clean(stderrText + "\n" + stdoutText)
       if (job === "setup-status") {
-        try { root.setupStatus = JSON.parse(stdoutText || "{}"); root.setupStatusLoaded = true } catch (e) { root.setupStatusLoaded = false }
+        root.setupStatusLoading = false
+        if (code !== 0) root.setupStatusError = text || "Could not read setup status."
+        else try { root.setupStatus = JSON.parse(stdoutText || "{}"); root.setupStatusLoaded = true; root.setupStatusError = "" } catch (e) { root.setupStatusError = "Replicant returned invalid setup data." }
       } else if (job === "log") {
         try { root.recent = JSON.parse(stdoutText || "[]") } catch (e) { root.recent = [] }
       } else if (job === "shortcuts") {
-        try { root.shortcuts = JSON.parse(stdoutText || "{}"); root.shortcutsLoaded = true } catch (e) { root.shortcutsLoaded = false }
+        root.shortcutsLoading = false
+        if (code !== 0) root.shortcutsError = text || "Could not read keyboard help."
+        else try { root.shortcuts = JSON.parse(stdoutText || "{}"); root.shortcutsLoaded = true; root.shortcutsError = "" } catch (e) { root.shortcutsError = "Replicant returned invalid keyboard data." }
       } else if (job === "suggest") {
-        try { root.suggestions = JSON.parse(stdoutText || "[]") } catch (e) { root.suggestions = [] }
-        root.suggestLoaded = true
+        root.suggestLoading = false
+        if (code !== 0) root.suggestError = text || "Could not read suggestions."
+        else try { root.suggestions = JSON.parse(stdoutText || "[]"); root.suggestLoaded = true; root.suggestError = "" } catch (e) { root.suggestError = "Replicant returned invalid suggestions." }
       } else if (job === "browse") {
         try { root.browseData = JSON.parse(stdoutText || "{}") } catch (e) { root.browseData = ({ error: "could not be read", entries: [] }) }
       } else if (job === "backups") {
-        try { root.backups = JSON.parse(stdoutText || "[]") } catch (e) { root.backups = [] }
-        root.backupsLoaded = true
+        root.backupsLoading = false
+        if (code !== 0) root.backupsError = text || "Could not read backups."
+        else try { root.backups = JSON.parse(stdoutText || "[]"); root.backupsLoaded = true; root.backupsError = "" } catch (e) { root.backupsError = "Replicant returned invalid backups." }
       } else if (job === "deleted") {
-        try { root.deletedList = JSON.parse(stdoutText || "[]") } catch (e) { root.deletedList = [] }
+        root.deletedLoading = false
+        if (code !== 0) root.deletedError = text || "Could not read deleted history."
+        else try { root.deletedList = JSON.parse(stdoutText || "[]"); root.deletedLoaded = true; root.deletedError = "" } catch (e) { root.deletedError = "Replicant returned invalid deleted history." }
       } else if (job === "diff" || job === "preview") {
         root.viewerText = text !== "" ? text : (job === "diff" ? "No differences." : "Nothing would change.")
       } else if (job === "market-check") {
@@ -1221,7 +1271,10 @@ Panel {
         root.lastOutput = code === 0 ? "Copied the path to the clipboard." : "Could not copy the path. Is wl-copy available?"
       } else if (job !== "") {
         root.finish(meta.label || job, code, stdoutText, stderrText, meta.progressResult)
-        if (job === "track") { root.loadSuggestions(); if (root.browseData.dir) root.browseTo(root.browseData.dir) }
+        if (["track", "untrack", "forget"].indexOf(job) >= 0) {
+          root.reloadSuggestions()
+          if (root.browseData.dir) root.browseTo(root.browseData.dir)
+        }
       }
     }
   }
@@ -1244,14 +1297,23 @@ Panel {
   property var anchorItem
   property var hostWidget
   property bool opened: false
+  function loadActiveTabData() {
+    if (root.activeTab === "configs") root.loadSuggestions()
+    if (root.activeTab === "restore") { root.loadBackups(); root.loadDeleted() }
+  }
   function open() {
     root.opened = true; root.refresh()
-    root.loadSetupStatus()
-    if (!root.shortcutsLoaded) root.loadShortcuts()
-    if (!root.suggestLoaded) root.loadSuggestions()
-    root.loadBackups()
-    root.loadDeleted()
+    root.loadActiveTabData()
     if (!root.updateCheckedOnce) root.checkUpdates(false)
+  }
+  function retryStatus() {
+    if (hostWidget && hostWidget.retryStatus) hostWidget.retryStatus()
+    else {
+      root.statusError = ""
+      root.statusErrorTitle = ""
+      root.asked = false
+      root.refresh()
+    }
   }
   function close() {
     root.opened = false
@@ -1293,6 +1355,7 @@ Panel {
     root.keyboardFocusIndex = tabIndex < 0 ? 0 : tabIndex
     root.rememberCurrentScroll()
     root.lastScrollTab = root.activeTab
+    root.loadActiveTabData()
     var y = root.scrollPositions[root.activeTab] || 0
     if (body) body.contentY = Math.max(0, Math.min(y, body.contentHeight - body.height))
     if (!root.restoringNavigation) {
@@ -1345,7 +1408,9 @@ Panel {
       }
       onTextKey: function(t) {
         if (t === "?" && !root.viewerOpen && !confirmDialog.opened && !root.createDialogOpen) {
-          root.keyboardHelpOpen = !root.keyboardHelpOpen; return
+          root.keyboardHelpOpen = !root.keyboardHelpOpen
+          if (root.keyboardHelpOpen) root.loadShortcuts()
+          return
         }
         if (root.keyboardHelpOpen) return
         if (root.viewerOpen || confirmDialog.opened || root.createDialogOpen) return
@@ -1354,7 +1419,7 @@ Panel {
         else if (t === "3") root.activeTab = "settings"
         else if (t === "4") root.activeTab = "restore"
         else if (t === "r") root.refresh()
-        else if (t === "s" && root.ready && !root.busy) root.doSavegame()
+        else if (t === "s" && root.ready && !root.busy) root.doSave()
         // The other half of the same journey, and since 0.7.2 the panel has a
         // state whose answer is Pull rather than Save.
         else if (t === "p" && root.ready && !root.busy) root.doPull()
@@ -1463,10 +1528,33 @@ Panel {
           Column {
             width: parent.width
             spacing: Style.space(8)
+            visible: root.asked && root.statusError !== ""
+            Text {
+              width: parent.width
+              text: root.statusErrorTitle || "Could not read Replicant status"
+              color: root.warnColor; font.family: root.ff; font.pixelSize: Style.font.title; font.bold: true
+              wrapMode: Text.WordWrap
+            }
+            Text {
+              width: parent.width
+              text: root.statusError
+              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+            Button {
+              text: "Retry"; iconText: root.icRefresh; bordered: true
+              foreground: root.fg; accent: Color.accent; fontFamily: root.ff
+              onClicked: root.retryStatus()
+            }
+          }
+
+          Column {
+            width: parent.width
+            spacing: Style.space(8)
             // Only once we have genuinely heard "not initialized" back — not
             // merely because that is the property's default before the first
             // response arrives.
-            visible: root.asked && !root.ready
+            visible: root.asked && root.statusError === "" && !root.ready
 
             Text {
               width: parent.width
@@ -1481,18 +1569,37 @@ Panel {
             Column {
               width: parent.width
               spacing: Style.space(3)
-              visible: root.setupStatusLoaded
+              visible: root.setupStatusLoading || root.setupStatusLoaded || root.setupStatusError !== ""
               Text {
-                text: "GitHub HTTPS: " + root.setupState(root.setupStatus.github, "github")
+                visible: root.setupStatusLoading
+                text: "Checking GitHub and SSH setup…"
+                color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
+              }
+              Text {
+                visible: root.setupStatusError !== ""
+                text: root.setupStatusError
+                color: root.warnColor; font.family: root.ff; font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+              Text {
+                visible: root.setupStatusLoaded
+                text: "GitHub API: " + root.setupState(root.setupStatus.github, "github")
                       + (root.setupStatus.github && root.setupStatus.github.login ? " (" + root.setupStatus.github.login + ")" : "")
                 color: root.githubReady() ? root.okColor : root.warnColor
                 font.family: root.ff; font.pixelSize: Style.font.caption
               }
               Text {
+                visible: root.setupStatusLoaded
                 text: "GitHub SSH: " + root.setupState(root.setupStatus.ssh, "ssh")
                 color: root.sshReady() ? root.okColor : root.warnColor
                 font.family: root.ff; font.pixelSize: Style.font.caption
               }
+            }
+            Button {
+              visible: root.setupStatusError !== ""
+              text: "Retry"; iconText: root.icRefresh; bordered: true
+              foreground: root.fg; accent: Color.accent; fontFamily: root.ff
+              onClicked: { root.setupStatusLoaded = false; root.loadSetupStatus() }
             }
             Row {
               spacing: Style.space(8)
@@ -1602,7 +1709,7 @@ Panel {
             }
           }
           Text {
-            text: "GitHub HTTPS: " + root.setupState(root.setupStatus.github, "github")
+            text: "GitHub API: " + root.setupState(root.setupStatus.github, "github")
                   + "    SSH: " + root.setupState(root.setupStatus.ssh, "ssh")
             color: root.githubReady() ? root.okColor : root.warnColor
             font.family: root.ff; font.pixelSize: Style.font.caption

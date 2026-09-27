@@ -27,8 +27,8 @@ runs the command. Content comparison lives in `entry_differs`
 (`bin/lib/incoming.sh`): files compare with `cmp`, trees with `tree_same`.
 The row badge order is off, missing, incoming, unsaved, default, unpushed,
 saved. Incoming outranks unsaved, so a pull marks rows for Restore, never
-for Save. `backup` copies files only. `savegame` copies, commits, and
-pushes, and it holds incoming entries back.
+for Save. `save --all --auto` copies, commits, and pushes, and it holds
+incoming entries back.
 
 The bar polls `status --json --brief` once a minute and reads the counters
 `unsaved` and `incoming` from `count_changes`. The full payload builds the
@@ -83,8 +83,8 @@ What changed:
   clone refreshes only its own machine file. `.replicant-version` is still
   recorded, so older clients will not prune a v2 repo.
 - Every core writer starts with the gate: backup, track, untrack, forget,
-  scope, sync (through scope), profile-set, recover (after its dry-run
-  check), setting writes, reverts, restores, and undo. `savegame` checks
+  scope, profile-set, recover (after its dry-run check), setting writes,
+  reverts, restores, and undo. `save` checks
   the new `schema-gate` command before it commits. Reads, pull, dry runs,
   create, clone, init, reset, and purge stay ungated by design (each named
   in the module header).
@@ -132,7 +132,7 @@ What changed:
   phase B.
 - `untrack`/`forget` drop vault blobs and index rows (CLI commits
   `vault/index.age` and `vault/blobs`); the pre-commit hook skips `*.age`;
-  `savegame` keeps its fail-fast schema gate.
+  `save` keeps its fail-fast schema gate.
 
 Two traps found by the tests, both fixed:
 
@@ -295,9 +295,9 @@ What changed:
   stale. Full status short-circuits before the cache read and stays
   authoritative: it compares bytes on every call.
 - Invalidation is explicit at every writer: backup, incoming record,
-  profile set, scope and sync, track, untrack, forget, single and bulk
+  profile set, scope, track, untrack, forget, single and bulk
   restore, undo, key init, import and rotate in the core, plus the
-  CLI-side commits (`commit_repo_shape`), savegame, save-file, pull,
+  CLI-side commits (`commit_repo_shape`), save, save-file, pull,
   clone and applied restore. The HEAD, profile, incoming and key
   guards catch anything a writer missed.
 - Timestamp trap pinned by test: same size plus preserved mtime hits
@@ -348,8 +348,8 @@ What changed:
   duplicated, so v1 and v2 save through the same code. `.git` presence
   checks use `-e` now: a linked worktree carries a `.git` file, and
   `ensure_repo_layout` re-ran `git init` inside it before the fix.
-- `save` is the command; `savegame` is a deprecated alias (bare maps
-  to `save --inventory`, with `-m` or `--auto` to `save --all`).
+- `save` is the command. The panel uses `save --all --auto` and a terminal
+  can use `save --inventory` for inventory only.
   `save-file` is `save --id` with a default subject. `set` and
   `revert` save through `save --all -m`. One commit holds config and
   inventory together; the separate inventory-only commit is gone
@@ -359,8 +359,7 @@ What changed:
   no history to protect and no HEAD that could move.
 - `purge` names `cache/` and `transactions/`. The brief cache is
   invalidated after the fast-forward.
-- The CLI's `push_pending` is gone: its only caller was the old
-  `cmd_savegame`, and pushes for saves live in `save_push` now.
+- The CLI's `push_pending` is gone. Pushes for saves live in `save_push` now.
   `cmd_push` keeps its own push path.
 
 Traps found by the tests, all fixed:
@@ -389,8 +388,8 @@ and QML 26. The run took 79 s.
 Transaction recovery is now part of `doctor`. The `tx list`, `tx resume`,
 and `tx discard` commands handle abandoned journals. A committed transaction
 needs an explicit force flag before removal. Pull rejects a dirty active
-worktree and no longer uses stash and pop. `backup` is a read-only alias for
-`changes`, and selective saves use `save --id`.
+worktree and no longer uses stash and pop. `changes` reviews pending work,
+and selective saves use `save --id`.
 
 Section 6 phase A adds `policy set --scope <scope> -- <id...>`. The command
 validates every selected ID and the scope before it writes `.replicant-sync`.
@@ -410,10 +409,10 @@ What changed:
 
 - Full status now publishes schema version 2 with one `entries` array.
   Each entry exposes its source, scope, state, counts, and lock status.
-  The old `configs` and `secrets` arrays remain for compatibility.
-- The panel reads `entries` first and keeps the old arrays as a fallback.
+  The full payload has no deprecated row arrays.
+- The panel reads `entries`.
   Locked secret entries omit their live path.
-- `migrate-v2` builds a clean repository in a staging directory.
+- `migrate-v3` builds a clean repository in a staging directory.
   It creates a post-quantum identity, encrypts secrets, validates the tree,
   pushes one root commit, verifies an independent clone, and activates the
   new repository with the legacy copy retained.

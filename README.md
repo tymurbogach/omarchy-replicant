@@ -25,9 +25,10 @@ omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --yes
 omarchy plugin enable io.github.tymurbogach.omarchy-replicant --section center
 ```
 
-Click the icon in your bar, then **Create private repo**. The panel checks GitHub HTTPS and SSH,
-then lets you edit the private repo name and choose the Git transport. [First-time setup](docs/getting-started.md)
-walks through it.
+Click the icon in your bar, then **Create private repo**. The panel requires GitHub API
+authentication to create the repository. It checks SSH separately as an optional Git transport.
+You can edit the private repo name and choose the transport.
+[First-time setup](docs/getting-started.md) walks through it.
 
 ## Update
 
@@ -82,8 +83,7 @@ omarchy-replicant policy set --scope off -- hypr/input.lua hypr/hyprlock.conf
 
 ### Status and migration
 
-Full JSON status uses one `entries` array and publishes `schema_version: 3`. The old `configs`
-and `secrets` arrays remain for one compatibility release. A v1 or v2 repository is read-only
+Full JSON status uses one `entries` array and publishes `schema_version: 3`. A v1 or v2 repository is read-only
 here and reports that migration is required.
 
 ```bash
@@ -95,7 +95,7 @@ omarchy-replicant migrate-v3 --remote /path/to/empty-private-remote \
 Without `--yes` the command prints the migration summary and stops. With `--yes` you acknowledge
 that every recorded machine is upgraded or offline. Migration creates a new encrypted repository,
 verifies an independent clone, and keeps the old repository under `legacy-repo-<epoch>`. It never
-deletes old local or remote data. (`migrate-v2` is a deprecated alias for one release.)
+deletes old local or remote data.
 
 ### A key for secrets
 

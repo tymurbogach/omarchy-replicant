@@ -75,6 +75,45 @@ off_chip=$(grep -oE '"⊘ " \+ root\.nOff \+ " [^"]+"' "$PANEL" | sed -E 's/.*" 
 check_contains "the row calls it off"                  "off" "$off_row"
 check_contains "…and so does its chip on the Overview" "off" "$off_chip"
 
+section "panel actions say and do the same thing"
+panel_code=$(cat "${QML[@]}")
+check_false "the panel has no copy without saving action" grep -qF 'Copy without saving' <<<"$panel_code"
+check_false "the removed copy action has no handler" grep -qF 'doBackup' "$PANEL"
+check_true "the main Save uses the canonical full transaction" \
+  grep -qF '[root.cli, "save", "--all", "--auto"]' "$PANEL"
+check_true "Untrack has its own result job" \
+  grep -qF 'controller.run("untrack", [root.cli, "untrack", id], { label: "Untrack" })' "$PANEL"
+check_true "Forget has its own result job" \
+  grep -qF 'controller.run("forget", [root.cli, "forget", arg], { label: "Forget" })' "$PANEL"
+check_true "backup removal has its own result job" \
+  grep -qF 'controller.run("prune-backups", [root.cli, "backups", "--prune", "--apply"], { label: "Remove backups" })' "$PANEL"
+check_false "bulk confirmations hide internal action identifiers" \
+  grep -qF '"Apply '\''" + action + "'\'' to "' "$PANEL"
+
+section "status failure is not first-time setup"
+check_true "the panel stores a status error" grep -qF 'property string statusError' "$PANEL"
+check_true "the panel offers a status Retry action" grep -qF 'text: "Retry"' "$PANEL"
+check_true "the header calls failed status unavailable" \
+  grep -qF 'root.statusError !== "" ? "status unavailable"' "$PANEL"
+check_true "the setup screen excludes status failures" \
+  grep -qF 'visible: root.asked && root.statusError === "" && !root.ready' "$PANEL"
+
+section "deferred panel data starts only when its view needs it"
+open_body=$(sed -n '/^[[:space:]]*function open() {/,/^[[:space:]]*}/p' "$PANEL")
+check_false "opening the panel does not load setup status" grep -qF 'loadSetupStatus' <<<"$open_body"
+check_false "opening the panel does not load suggestions" grep -qF 'loadSuggestions' <<<"$open_body"
+check_false "opening the panel does not load restore history" grep -Eq 'loadBackups|loadDeleted' <<<"$open_body"
+check_true "the Configs tab loads suggestions" grep -qF 'root.activeTab === "configs"' "$PANEL"
+check_true "the Restore tab loads backups" grep -qF 'root.activeTab === "restore"' "$PANEL"
+check_true "keyboard help loads shortcuts on demand" grep -qF 'if (root.keyboardHelpOpen) root.loadShortcuts()' "$PANEL"
+check_true "deferred errors offer a retry" grep -qF 'panel.suggestError !== ""' "$ROOT/components/AddFilesCard.qml"
+check_true "restore history has an empty state" grep -qF 'No restore backups exist.' "$ROOT/components/RestoreTab.qml"
+
+section "GitHub API auth and Git transport are separate"
+check_false "the panel does not call API authentication HTTPS" grep -qF 'GitHub HTTPS' <<<"$panel_code"
+check_true "the panel names GitHub API authentication" grep -qF 'GitHub API:' <<<"$panel_code"
+check_true "SSH remains a transport choice" grep -qF 'text: root.sshReady() ? "SSH" : "SSH unavailable"' "$PANEL"
+
 section "installation exposes and preserves the bar position"
 check "new widgets default to the center section" "center" \
   "$(jq -r '.barWidget.defaultSection' "$ROOT/manifest.json")"

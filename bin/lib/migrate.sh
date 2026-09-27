@@ -657,10 +657,3 @@ core_migrate_v3() {
   printf 'migrate-v3: complete. Legacy repository kept at %s\n' "$legacy" >&2
   printf 'migrate-v3: identity backup written to %s\n' "$identity_backup" >&2
 }
-
-# core_migrate_v2: deprecated forwarding alias for migrate-v3, kept for one
-# release. It migrates to version 3, never to version 2.
-core_migrate_v2() {
-  printf 'migrate-v2 is deprecated — it migrates to version 3 now; use migrate-v3\n' >&2
-  core_migrate_v3 "$@"
-}

@@ -15,6 +15,8 @@ BarWidget {
 
   property var repoState: ({ initialized: false })
   property bool asked: false
+  property string statusError: ""
+  property string statusErrorTitle: ""
   property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   function open() { if (panelLoader.item) panelLoader.item.open() }
   function close() { if (panelLoader.item) panelLoader.item.close() }
@@ -58,6 +60,7 @@ BarWidget {
   readonly property int nMissing: repoState.missing || 0
   readonly property string glyph: {
     if (!asked) return R.mdi(0xF0450)                                         // refresh
+    if (root.statusError !== "") return R.mdi(0xF002A)                        // alert
     if (!repoState.initialized) return R.mdi(0xF0415)                         // plus
     if ((repoState.ahead || 0) > 0 && (repoState.behind || 0) > 0) return R.mdi(0xF002A)  // alert
     // Locked first: without the key no other secret state can be evaluated.
@@ -77,6 +80,7 @@ BarWidget {
   }
   readonly property string tooltip: {
     if (!asked) return "Replicant — loading…"
+    if (root.statusError !== "") return "Replicant — status failed\n" + root.statusError + "\nOpen the panel to retry"
     if (!repoState.initialized) return "Replicant — not initialized\nClick to set up"
     var t = "Replicant"
     if (repoState.remote) t += " → " + repoState.remote
@@ -94,6 +98,7 @@ BarWidget {
     return t
   }
   readonly property color bg: {
+    if (root.statusError !== "") return "#e6a23c"
     if (!asked || !repoState.initialized) return Qt.darker(bar ? bar.barForeground : Color.foreground, 1.6)
     if (root.nLocked > 0 || root.nMissing > 0 || root.nIncoming > 0 || (repoState.behind || 0) > 0) return "#e6a23c"
     if ((repoState.ahead || 0) > 0 || root.nUnsaved > 0) return Color.accent
@@ -134,6 +139,18 @@ BarWidget {
     probe.running = true
   }
 
+  function retryStatus() {
+    root.asked = false
+    root.statusError = ""
+    root.statusErrorTitle = ""
+    if (panelLoader.item) {
+      panelLoader.item.asked = false
+      panelLoader.item.statusError = ""
+      panelLoader.item.statusErrorTitle = ""
+    }
+    root.refresh(true)
+  }
+
   Component.onCompleted: root.refresh(true)
 
   Timer {
@@ -150,35 +167,35 @@ BarWidget {
     id: probe
     command: [root.cli, "status", "--json"]
     stdout: StdioCollector {
+      id: probeOutput
       waitForEnd: true
-      onStreamFinished: {
-        try {
-          var parsed = JSON.parse(text || "{}")
-          // A brief answer carries the counters and nothing else. Assigning it
-          // whole would empty the rows the panel is drawing from, so its fields
-          // are merged over what is already known instead.
-          if (parsed.brief === true && root.repoState && root.repoState.initialized) {
-            var merged = {}
-            for (var k in root.repoState) merged[k] = root.repoState[k]
-            for (var j in parsed) merged[j] = parsed[j]
-            parsed = merged
-          }
-          root.repoState = parsed
-          if (panelLoader.item) { panelLoader.item.repoState = parsed; panelLoader.item.asked = true }
-        } catch (e) {
-          root.repoState = ({ initialized: false })
-        }
-        root.asked = true
-        if (panelLoader.item) panelLoader.item.asked = true
-      }
     }
     onExited: function(code) {
-      // A non-zero exit still answers the question "what is the state?" — the
-      // status JSON on stdout is authoritative, and stdout has already been
-      // collected by the time this fires (waitForEnd).
-      if (code !== 0) {
-        root.asked = true
-        if (panelLoader.item) panelLoader.item.asked = true
+      var response = R.statusResponse(probeOutput.text, code)
+      if (response.ok) {
+        var parsed = response.repoState
+        // A brief answer carries the counters and nothing else. Assigning it
+        // whole would empty the rows the panel is drawing from, so its fields
+        // are merged over what is already known instead.
+        if (parsed.brief === true && root.repoState && root.repoState.initialized) {
+          var merged = {}
+          for (var k in root.repoState) merged[k] = root.repoState[k]
+          for (var j in parsed) merged[j] = parsed[j]
+          parsed = merged
+        }
+        root.repoState = parsed
+        root.statusError = ""
+        root.statusErrorTitle = ""
+        if (panelLoader.item) panelLoader.item.repoState = parsed
+      } else {
+        root.statusError = response.error
+        root.statusErrorTitle = response.title
+      }
+      root.asked = true
+      if (panelLoader.item) {
+        panelLoader.item.asked = true
+        panelLoader.item.statusError = root.statusError
+        panelLoader.item.statusErrorTitle = root.statusErrorTitle
       }
       if (root.refreshPending) {
         var f = root.refreshPendingForce
@@ -215,6 +232,8 @@ BarWidget {
       item.hostWidget = root
       item.repoState = root.repoState
       item.asked = root.asked
+      item.statusError = root.statusError
+      item.statusErrorTitle = root.statusErrorTitle
     }
   }
 

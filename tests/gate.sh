@@ -172,9 +172,9 @@ gate_g3() {
   grep -q 'cannot reconstruct a path' "$ROOT/bin/lib/migrate.sh" 2>/dev/null && ok "unknown secret paths refuse loudly" || bad "unknown secret paths are not refused"
   grep -q 'migration-only' "$ROOT/bin/lib/repo.sh" 2>/dev/null && ok "clone still names legacy repos migration-only" || bad "clone lost its migration-only message"
   grep -q 'journal.json' "$ROOT/bin/lib/migrate.sh" 2>/dev/null && ok "migration keeps a recovery journal" || bad "migration has no recovery journal"
-  grep -q 'deprecated' "$ROOT/bin/omarchy-replicant" 2>/dev/null && ok "migrate-v2 is a deprecated alias" || bad "migrate-v2 alias is missing"
+  if "$ROOT/bin/omarchy-replicant" migrate-v2 2>&1 | grep -q 'use migrate-v3'; then ok "migrate-v2 names migrate-v3"; else bad "migrate-v2 does not name migrate-v3"; fi
   if "$HERE/test-migrate-v3.sh" >/dev/null 2>&1; then ok "migration suite passes"; else bad "migration suite fails"; fi
-  if "$HERE/test-migration.sh" >/dev/null 2>&1; then ok "alias suite still passes"; else bad "alias suite fails"; fi
+  if "$HERE/test-migration.sh" >/dev/null 2>&1; then ok "migration transition suite passes"; else bad "migration transition suite fails"; fi
 }
 gate_g4() {
   section "G4 transaction gate"

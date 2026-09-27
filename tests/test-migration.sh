@@ -31,23 +31,22 @@ printf 'changed after commit\n' >> "$HOME/.config/hypr/input.lua"
 printf 'unfinished\n' >> "$REPO_DIR/.replicant-track"
 remote="$TMP/remote-dirty.git"
 git init --bare -q -b main "$remote"
-check_false "dirty source is rejected" core_migrate_v2 --remote "$remote" --identity-backup "$TMP/identity" --yes
+check_false "dirty source is rejected" core_migrate_v3 --remote "$remote" --identity-backup "$TMP/identity" --yes
 check "no legacy rename happened" "0" \
   "$(find "$REPLICANT_HOME" -maxdepth 1 -type d -name 'legacy-repo-*' | wc -l)"
 check_false "the v1 schema is still absent" test -e "$REPO_DIR/.replicant/schema.json"
 printf 'custom\n' > "$HOME/.config/hypr/input.lua"
 git -C "$REPO_DIR" checkout -- .replicant-track
 
-section "the deprecated alias migrates to v3"
+section "migration creates a v3 repository"
 upstream="$TMP/remote-upstream.git"
 git init --bare -q -b main "$upstream"
 git -C "$REPO_DIR" remote add origin "$upstream" 2>/dev/null
 git -C "$REPO_DIR" push -q -u origin main 2>/dev/null
 backup="$TMP/identity.backup"
-alias_out=$(core_migrate_v2 --remote "$remote" --identity-backup "$backup" --yes 2>&1)
+core_migrate_v3 --remote "$remote" --identity-backup "$backup" --yes >/dev/null 2>&1
 migration_rc=$?
 check "migration succeeds against an empty local remote" "0" "$migration_rc"
-check_contains "…warning that v2 is deprecated" "deprecated" "$alias_out"
 check "the active repository is v3" "3" "$(jq -r .dataVersion "$REPO_DIR/.replicant/schema.json" 2>/dev/null)"
 check "…with the v2 secret format" "age-pq-v2" "$(jq -r .secretFormat "$REPO_DIR/.replicant/schema.json" 2>/dev/null)"
 check "the vault index is version 2" "2" "$(vault_index_decrypt 2>/dev/null | jq -r .version 2>/dev/null)"

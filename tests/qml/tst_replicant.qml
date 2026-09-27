@@ -98,12 +98,12 @@ TestCase {
 
   function test_rowsFor_filters_sorts_and_adds_secrets() {
     var st = {
-      configs: [
+      entries: [
         { id: "b", label: "b.conf", src: "/h/b.conf", category: "shell" },
         { id: "a", label: "a.conf", src: "/h/a.conf", category: "shell", scope: "profile" },
-        { id: "x", label: "x.conf", src: "/h/x.conf", category: "other" }
-      ],
-      secrets: [ { id: "env/s", src: "/h/s", sync_state: "saved", synced: false, kind: "env" } ]
+        { id: "x", label: "x.conf", src: "/h/x.conf", category: "other" },
+        { id: "env/s", src: "/h/s", category: "secrets", kind: "secret", scope: "off", sync_state: "saved" }
+      ]
     }
     var rows = R.rowsFor(st, "shell", "")
     compare(rows.length, 2)
@@ -118,7 +118,7 @@ TestCase {
   }
 
   function test_rowsFor_puts_actionable_rows_first() {
-    var st = { configs: [
+    var st = { entries: [
       { id: "saved", label: "a", category: "shell", sync_state: "saved" },
       { id: "changed", label: "z", category: "shell", sync_state: "unsaved" },
       { id: "incoming", label: "b", category: "shell", sync_state: "incoming" }
@@ -133,7 +133,7 @@ TestCase {
         category: "shell", scope: "shared", exists: true, saved: true, sync_state: "saved" },
       { id: "env/key", label: "env/key", kind: "secret", source: "user", category: "secrets",
         scope: "shared", exists: true, saved: true, locked: true, sync_state: "locked" }
-    ], configs: [{ id: "old", category: "shell" }], secrets: [{ id: "old-secret" }] }
+    ] }
     var configs = R.rowsFor(st, "shell", "", "all")
     compare(configs.length, 1)
     compare(configs[0].id, "z.conf")
@@ -166,7 +166,7 @@ TestCase {
   }
 
   function test_resultLine() {
-    compare(R.resultLine("→ savegame\n  ✓ done\nEverything saved and pushed.", true), "Everything saved and pushed.")
+    compare(R.resultLine("→ save\n  ✓ done\nEverything saved and pushed.", true), "Everything saved and pushed.")
     compare(R.resultLine("Save failed (exit 1)\nsome detail\nRun pull, then save again.", false),
             "Save failed (exit 1): Run pull, then save again.")
     compare(R.resultLine("  ✓ reset hypr/input.lua\n", true), "reset hypr/input.lua")
@@ -244,9 +244,9 @@ TestCase {
     verify(!R.rowMatchesFilter({ sync_state: "saved" }, "changed"))
     verify(R.rowMatchesFilter({ sync_state: "off" }, "off"))
     verify(R.rowMatchesFilter({ sync_state: "saved" }, "all"))
-    var st = { configs: [
-      { id: "a", label: "a", src: "/a", category: "c", sync_state: "unsaved" },
-      { id: "b", label: "b", src: "/b", category: "c", sync_state: "saved" } ] }
+    var st = { entries: [
+      { id: "a", label: "a", src: "/a", category: "c", kind: "config", sync_state: "unsaved" },
+      { id: "b", label: "b", src: "/b", category: "c", kind: "config", sync_state: "saved" } ] }
     compare(R.rowsFor(st, "c", "", "changed").length, 1)
     compare(R.rowsFor(st, "c", "", "all").length, 2)
   }
@@ -304,7 +304,7 @@ TestCase {
   }
 
   function test_pluginRows_say_where_the_settings_live() {
-    var st = { configs: [ { id: "plugins/hw.json" } ], plugins: [
+    var st = { entries: [ { id: "plugins/hw.json", kind: "config" } ], plugins: [
       { id: "io.x.hw", name: "HW", version: "2", installed: true, origin: "https://h/hw.git", method: "add", recorded: true, in_bar: true },
       { id: "io.x.bar", name: "Bar", version: "1", installed: true, origin: "https://h/bar", method: "add", recorded: true, in_bar: true },
       { id: "io.x.none", name: "None", version: "1", installed: true, origin: "", method: "", recorded: false, in_bar: false },
@@ -359,6 +359,37 @@ TestCase {
       { id: "b", scope: "off", sync_state: "off", secret: false }
     ]).indexOf("save") < 0)
     verify(R.validBulkActions([{ id: "a", scope: "shared", sync_state: "pending", secret: false }]).indexOf("save") < 0)
+  }
+
+  function test_bulk_actions_use_words_people_see() {
+    compare(R.bulkActionDescription("scope-off"), "Switch off")
+    compare(R.bulkActionDescription("convert-secret"), "Convert to secret")
+    compare(R.bulkActionDescription("untrack"), "Untrack")
+    compare(R.bulkActionDescription("save"), "Save")
+  }
+
+  function test_status_response_fails_closed() {
+    var missing = R.statusResponse("", 127)
+    verify(!missing.ok)
+    compare(missing.title, "Could not read Replicant status")
+    verify(missing.error.indexOf("exit 127") >= 0)
+
+    var invalid = R.statusResponse("not json", 0)
+    verify(!invalid.ok)
+    compare(invalid.title, "Invalid Replicant status")
+
+    var incomplete = R.statusResponse("{}", 0)
+    verify(!incomplete.ok)
+
+    var absent = R.statusResponse('{"initialized":false}', 0)
+    verify(absent.ok)
+    compare(absent.repoState.initialized, false)
+  }
+
+  function test_unknown_state_is_a_warning_not_saved() {
+    compare(R.stateWord("new-state"), "unknown state")
+    compare(R.stateRole("new-state"), "warn")
+    compare(R.stateGlyph("new-state"), "◆")
   }
 
   function test_off_scope_removes_the_accepted_rows_from_selection() {

@@ -47,6 +47,7 @@ function stateRole(st) {
   if (st === "locked") return "warn"
   if (st === "unsaved" || st === "unpushed") return "accent"
   if (st === "saved") return "ok"
+  if (st !== "off" && st !== "missing" && st !== "default" && st !== "pending") return "warn"
   return "dim"
 }
 
@@ -69,6 +70,29 @@ function remoteStateRole(st) {
   return "dim"
 }
 
+// A status failure is not an empty status. The caller must only replace its
+// last known state when the CLI succeeds and returns the status contract.
+function statusResponse(text, code) {
+  if (Number(code) !== 0) {
+    return {
+      ok: false,
+      title: "Could not read Replicant status",
+      error: "The Replicant CLI failed with exit " + Number(code) + ". Check the plugin installation, then retry."
+    }
+  }
+  try {
+    var parsed = JSON.parse(String(text || ""))
+    if (!parsed || (parsed.initialized !== true && parsed.initialized !== false)) throw new Error("missing initialized")
+    return { ok: true, repoState: parsed, title: "", error: "" }
+  } catch (e) {
+    return {
+      ok: false,
+      title: "Invalid Replicant status",
+      error: "The Replicant CLI returned invalid status data. Retry the request."
+    }
+  }
+}
+
 function stateWord(st) {
   // "off", the word the scope button, the legend and the card already use.
   // This said "not synced": two words for one state, two tabs apart.
@@ -84,7 +108,8 @@ function stateWord(st) {
   if (st === "default") return "untouched Omarchy default"
   if (st === "locked") return "locked, needs key"
   if (st === "pending") return "saving the change…"
-  return "saved on GitHub"
+  if (st === "saved") return "saved on GitHub"
+  return "unknown state"
 }
 
 // ── the header ──────────────────────────────────────────────────────────────
@@ -379,6 +404,18 @@ function validBulkActions(rows) {
   return out
 }
 
+function bulkActionDescription(action) {
+  if (action === "save") return "Save"
+  if (action === "track-config") return "Track"
+  if (action === "track-secret") return "Track as secret"
+  if (action === "scope-shared") return "Set scope to Shared"
+  if (action === "scope-profile") return "Set scope to Profile"
+  if (action === "scope-off") return "Switch off"
+  if (action === "convert-secret") return "Convert to secret"
+  if (action === "untrack") return "Untrack"
+  return "Apply change"
+}
+
 function selectionWithoutIds(selectedIds, selectionAnchor, removedIds) {
   var removed = removedIds || []
   var kept = (selectedIds || []).filter(function(id) { return removed.indexOf(id) < 0 })
@@ -409,29 +446,7 @@ function selectionSummary(rows) {
 }
 
 // ── rows ────────────────────────────────────────────────────────────────────
-// Secrets live in their own part of the payload because they carry different
-// facts (mode, kind, the NAMES of the variables and never their values), but
-// the panel shows them in the same list as everything else in their area.
-function secretRows(repoState) {
-  var out = []
-  var list = repoState.secrets || []
-  for (var i = 0; i < list.length; i++) {
-    var s = list[i]
-    out.push({
-      id: s.id, label: s.id, src: s.src, category: "secrets",
-      sync_state: s.sync_state, exists: s.exists, has_default: false, saved: s.saved === true,
-      synced: s.synced, scope: s.synced === false ? "off" : "shared",
-      source: s.source || "manifest", is_dir: false, nfiles: 0,
-      secret: true, kind: s.kind, mode: s.mode,
-      vars: s.vars || [], var_count: s.var_count || 0, size: Number(s.size || 0),
-      locked: s.locked === true, incoming: s.incoming === true, unpushed: s.unpushed === true
-    })
-  }
-  return out
-}
-
-// Entry rows are the version 2 contract. Keep the old split payload as a
-// fallback so a panel can read a status response from one older core release.
+// Entry rows are the version 3 status contract.
 function entryRows(repoState) {
   var out = []
   var list = repoState.entries || []
@@ -453,17 +468,7 @@ function entryRows(repoState) {
 }
 
 function allRows(repoState) {
-  if (repoState.entries !== undefined && repoState.entries !== null) return entryRows(repoState)
-  return (repoState.configs || []).map(function(c) {
-    return {
-      id: c.id, label: c.label, src: c.src, category: c.category,
-      sync_state: c.sync_state, exists: c.exists, has_default: c.has_default,
-      saved: c.saved === true, is_default: c.is_default === true, synced: c.synced,
-      scope: c.scope || "shared", source: c.source || "override", is_dir: c.is_dir === true,
-      nfiles: c.nfiles || 0, size: Number(c.size || 0), secret: false, kind: "", mode: "", vars: [], var_count: 0,
-      locked: c.locked === true, incoming: c.incoming === true, unpushed: c.unpushed === true
-    }
-  }).concat(secretRows(repoState))
+  return entryRows(repoState)
 }
 
 // The rows of one area in one uniform shape, secrets included, filtered by
@@ -516,7 +521,7 @@ function originLabel(origin) {
 // shell.json, which the Desktop & bar area saves. Some plugins have neither.
 function pluginRows(repoState) {
   var rows = ({})
-  var list = repoState.configs || []
+  var list = repoState.entries || []
   for (var i = 0; i < list.length; i++) rows[list[i].id] = true
   return (repoState.plugins || []).map(function(p) {
     var fileId = "plugins/" + String(p.id).split(".").pop() + ".json"

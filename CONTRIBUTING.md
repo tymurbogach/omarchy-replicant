@@ -10,8 +10,9 @@ the system, never by reading a file that this plugin wrote.
 This repo is public, and other Omarchy users install it with `omarchy plugin add`. It holds only
 the plugin's code, never user data. Each user gets a separate private data repo, named
 `<hostname>-replicant` by default (`DEFAULT_REPO_NAME` in `bin/omarchy-replicant`). Never mix the
-two repos. Shipped code names nothing machine-specific or user-specific: personal entries go into
-the user's `.replicant-track`.
+two repos. Shipped code names nothing machine-specific or user-specific: v3 personal entries go
+into `.replicant/entries.json` and the encrypted vault index. Older v1 and v2 entries used
+`.replicant-track` and migrate into those v3 records.
 
 ## Language rule
 
@@ -93,9 +94,10 @@ Run the one command that checks everything:
 ./tests/run-all.sh
 ```
 
-It runs the five suites in parallel, then `bash -n`, shellcheck, qmllint, the QML trap guards, the
-personal-data guard, the secret scan of the repo, and `omarchy-plugin-validate`. It takes about two
-and a half minutes. Each suite prints how many checks it ran, and the last line gives the time.
+It runs every suite listed in `tests/run-all.sh` in parallel, then `bash -n`, shellcheck, qmllint,
+the QML trap guards, the personal-data guard, the secret scan of the repo, and
+`omarchy-plugin-validate`. Each suite prints how many checks it ran, and the last line gives the
+time.
 
 | Suite | What it covers |
 | --- | --- |

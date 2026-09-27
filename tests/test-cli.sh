@@ -12,9 +12,7 @@ CLI="$HERE/../bin/omarchy-replicant"
 CORE_BIN="$HERE/../bin/replicant-core.sh"
 # shellcheck source=tests/lib.sh
 source "$HERE/lib.sh"
-# copy_backup: the copy pass the deprecated CLI backup used to run. The
-# user-facing backup is now a read-only alias for changes; tests that need
-# copies in the repo call the core directly.
+# copy_backup runs the core copy pass. The public CLI exposes save and changes.
 copy_backup() { bash "$CORE_BIN" backup 2>&1; }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
@@ -71,8 +69,7 @@ check_contains "…and says so" "unknown command" "$(run definitely-not-a-comman
 check_false "status on an uninitialised machine still answers" false
 check "status --json before setup is valid JSON" "0" "$(run status --json | jq empty >/dev/null 2>&1; echo $?)"
 check "…and reports not initialized" "false" "$(run status --json | jq -r '.initialized')"
-# It said "run init --savegame", a flag that does nothing. The two real starts
-# are create and clone.
+# The two real starts are create and clone.
 check_contains "…and the plain answer says how to start" "create --push" "$(run status)"
 
 section "--help is a question, never an instruction"
@@ -102,10 +99,11 @@ check "…and none of them touched the disk" \
 # The two that were caught doing it, named so the reason survives a refactor.
 check_contains "unlink --help explains, it does not unlink" "Remove that symlink" "$("$CLI" unlink --help)"
 check_contains "push --help explains, it does not push"     "commits nothing"     "$("$CLI" push --help)"
-# Only the FIRST argument is inspected, so a VALUE that happens to look like the
-# flag is still a value — otherwise `savegame -m -h` would print help instead of
-# committing, and `set` would be unable to write "-h" at all.
+# `--help` remains help after other options. `-h` stays a value, so settings
+# and save messages can use it unchanged.
+check_contains "non-leading --help stops a command" "save [--all]" "$(run save --all --help)"
 check_false "-h in the value position is not a help request" "$CLI" set idle.lock -h
+check_false "-h in a save message is not a help request" "$CLI" save -m -h
 
 section "a core that cannot load stops the command with a message"
 # Each command loaded the core with `2>/dev/null || true`. A syntax error in the
@@ -118,6 +116,9 @@ sed -i '6i if then fi' "$broken/bin/replicant-core.sh"
 rc=0; out=$("$broken/bin/omarchy-replicant" get idle.lock 2>&1) || rc=$?
 check "the command fails" "1" "$rc"
 check_contains "…and names the core it could not load" "could not load" "$out"
+rc=0; out=$("$broken/bin/omarchy-replicant" undo hypr/input.lua --apply 2>&1) || rc=$?
+check "undo also fails when the core cannot load" "1" "$rc"
+check_contains "…and shows the core syntax error" "syntax error" "$out"
 rm -rf "$broken"
 
 section "id -> path resolution"
@@ -216,8 +217,8 @@ section "a save with no remote says where it went"
 # This repo has no remote. savegame skipped the push without a word and ended
 # with "Everything saved and pushed."
 printf 'saved where there is no remote\n' > "$HOME/.config/hypr/input.lua"
-out=$(run savegame --auto)
-check_contains "savegame says there is no remote" "no remote" "$out"
+out=$(run save --all --auto)
+check_contains "save says there is no remote" "no remote" "$out"
 check "…and never claims it pushed" "0" "$(grep -c 'saved and pushed' <<<"$out" || true)"
 check "…while it still commits the change" "0" \
   "$(git -C "$REPO" status --porcelain -- config/ | grep -c . || true)"
@@ -238,19 +239,26 @@ check_false "diff with no id fails" "$CLI" diff nope/nope
 # rule 7. The panel never used it.
 check_contains "diff no longer takes --terminal" "unknown option" "$(run diff hypr/input.lua --terminal)"
 
-section "the per-file sync switch, from the command line"
-check_false "sync needs both arguments" "$CLI" sync hypr/input.lua
-check_false "…and a real id"            "$CLI" sync nope/nope off
-check_false "…and a real state"         "$CLI" sync hypr/input.lua sideways
-run sync hypr/input.lua off >/dev/null 2>&1
+section "removed commands name their replacements"
+check_contains "savegame names save" "use save --all" "$(run savegame)"
+check_contains "backup names changes" "use changes" "$(run backup)"
+check_contains "migrate-v2 names migrate-v3" "use migrate-v3" "$(run migrate-v2)"
+check_contains "sync names scope" "use scope" "$(run sync hypr/input.lua off)"
+check_false "init rejects the removed option" "$CLI" init --savegame
+
+section "scope changes from the command line"
+check_false "scope needs both arguments" "$CLI" scope hypr/input.lua
+check_false "…and a real id"             "$CLI" scope nope/nope off
+check_false "…and a real state"          "$CLI" scope hypr/input.lua sideways
+run scope hypr/input.lua off >/dev/null 2>&1
 check "switching off is recorded in the repo" "1" \
   "$(grep -cx 'hypr/input.lua = off' "$REPO/.replicant-sync" 2>/dev/null || true)"
 check "…and the panel reads it back as off" "off" \
-  "$(run status --json --no-fetch | jq -r '[.configs[] | select(.id=="hypr/input.lua")][0].sync_state')"
+  "$(run status --json --no-fetch | jq -r '[.entries[] | select(.id=="hypr/input.lua")][0].sync_state')"
 # The decision is a fact about the setup, so it travels with the repo.
 check "…committed, not left dangling" "0" \
   "$(git -C "$REPO" status --porcelain -- .replicant-sync | grep -c . || true)"
-run sync hypr/input.lua on >/dev/null 2>&1
+run scope hypr/input.lua shared >/dev/null 2>&1
 check "switching back on clears it" "0" \
   "$(grep -c '^hypr/input.lua' "$REPO/.replicant-sync" 2>/dev/null || true)"
 
@@ -262,11 +270,11 @@ run scope hypr/input.lua profile >/dev/null 2>&1
 check "scoping to a profile is recorded" "1" \
   "$(grep -cx 'hypr/input.lua = profile' "$REPO/.replicant-sync" 2>/dev/null || true)"
 check "…and the panel reads the scope back" "profile" \
-  "$(run status --json --no-fetch | jq -r '[.configs[] | select(.id=="hypr/input.lua")][0].scope')"
+  "$(run status --json --no-fetch | jq -r '[.entries[] | select(.id=="hypr/input.lua")][0].scope')"
 # Scoped to a profile is emphatically NOT switched off: it still syncs, just
 # not with the other profile. The badge has to keep saying so.
 check "…and it is not reported as off" "false" \
-  "$(run status --json --no-fetch | jq -r '[.configs[] | select(.id=="hypr/input.lua")][0].sync_state == "off"')"
+  "$(run status --json --no-fetch | jq -r '[.entries[] | select(.id=="hypr/input.lua")][0].sync_state == "off"')"
 check "…committed, not left dangling" "0" \
   "$(git -C "$REPO" status --porcelain -- .replicant-sync | grep -c . || true)"
 run scope hypr/input.lua shared >/dev/null 2>&1
@@ -311,6 +319,7 @@ section "editing a file, and coming back to the panel"
 # editor is opened in a floating terminal that detaches, so the CLI must NOT
 # claim it waited — the panel reopens on that marker and only that marker, and
 # reopening over a floating terminal would be worse than staying shut.
+mkdir -p "$HOME/.local/state/omarchy/defaults"
 printf 'nano\n' > "$HOME/.local/state/omarchy/defaults/editor"
 # Stub out every way this command can reach a real editor. Without them the
 # fallback branch runs the machine's actual omarchy-launch-editor, and the test
@@ -476,7 +485,7 @@ section "save-file asks the core where a copy goes"
 mkdir -p "$HOME/.config/nvim/lua"
 printf 'require("plugins")\n' > "$HOME/.config/nvim/init.lua"
 printf 'return { "a" }\n'     > "$HOME/.config/nvim/lua/plugins.lua"
-run savegame --auto --no-push >/dev/null 2>&1
+run save --all --auto --no-push >/dev/null 2>&1
 printf 'return { "a", "b" }\n' > "$HOME/.config/nvim/lua/plugins.lua"
 out=$(run save-file nvim/)
 check_true "save-file takes a directory entry" \
@@ -490,7 +499,7 @@ check_false "…and still refuses one that is not on this machine" \
 #    and restored from another.
 printf 'monitor = eDP-1\n' > "$HOME/.config/hypr/monitors.lua"
 run scope hypr/monitors.lua profile >/dev/null 2>&1
-run savegame --auto --no-push >/dev/null 2>&1
+run save --all --auto --no-push >/dev/null 2>&1
 printf 'monitor = eDP-1, changed\n' > "$HOME/.config/hypr/monitors.lua"
 run save-file hypr/monitors.lua >/dev/null 2>&1
 check "…writes nothing into the shared tree" "0" \
@@ -509,7 +518,7 @@ mkdir -p "$HOME/.config/gh"
 printf 'github.com:\n  oauth_token: %sNOTREAL0000000000000000000000000000\n' "$P_GH" \
   > "$HOME/.config/gh/hosts.yml"
 run track "$HOME/.config/gh/hosts.yml" --secret >/dev/null 2>&1
-run savegame --auto --no-push >/dev/null 2>&1
+run save --all --auto --no-push >/dev/null 2>&1
 printf 'github.com:\n  oauth_token: %sNOTREAL1111111111111111111111111111\n' "$P_GH" \
   > "$HOME/.config/gh/hosts.yml"
 run save-file gh/hosts.yml >/dev/null 2>&1
@@ -565,6 +574,8 @@ check "undo can itself be undone" "version three" "$(cat "$HOME/.config/hypr/inp
 
 check_false "undo on an id with no backup says so" "$CLI" undo hypr/monitors.lua --apply
 check_false "undo on an unknown id fails"          "$CLI" undo nope/nothing --apply
+check_false "undo rejects the undocumented --yes alias" "$CLI" undo hypr/input.lua --yes
+check_contains "…and names the supported mutation flag" "use --apply" "$(run undo hypr/input.lua --yes)"
 
 out=$(run backups --prune)
 check_contains "prune shows before it removes" "would remove" "$out"
@@ -589,6 +600,13 @@ printf 'old\n' > "$HOME/.config/nvim.bak.1700000000/init.lua"
 # printed `sudo install` command. That is a trace of this plugin, too.
 mkdir -p "$OMARCHY_REPLICANT_HOME/staged"
 printf '[Login]\n' > "$OMARCHY_REPLICANT_HOME/staged/99-lid.conf"
+# These are recovery data. A normal purge must name and retain every one.
+mkdir -p "$OMARCHY_REPLICANT_HOME/keys" "$OMARCHY_REPLICANT_HOME/migration/interrupted" \
+  "$OMARCHY_REPLICANT_HOME/legacy-repo-1700000000"
+printf 'test identity\n' > "$OMARCHY_REPLICANT_HOME/keys/identity.txt"
+printf 'interrupted migration\n' > "$OMARCHY_REPLICANT_HOME/migration/interrupted/journal.json"
+printf 'legacy repository\n' > "$OMARCHY_REPLICANT_HOME/legacy-repo-1700000000/README"
+printf 'legacy_repo=%s\n' "$OMARCHY_REPLICANT_HOME/legacy-repo-1700000000" > "$OMARCHY_REPLICANT_HOME/migration-warning"
 out=$(run purge)
 check_contains "a directory backup is listed too" ".bak.<epoch> backup" "$out"
 check_contains "…and so is a staged root-owned write" "staged" "$out"
@@ -596,17 +614,26 @@ check "…and the dry run leaves it alone" "1" "$(ls -d "$HOME/.config/nvim.bak.
 out=$(run purge)
 check_contains "lists what it would remove" "would remove" "$out"
 check "purge --dry-run removes nothing"   "1" "$(ls "$PATH_LINK" 2>/dev/null | wc -l)"
-check_contains "keeps the repo unless asked" "keeping your backup repo" "$out"
+check_contains "keeps the repo unless asked" "pass --repo" "$out"
+check_contains "names retained recovery data" "would keep for recovery" "$out"
+check_contains "…including the key" "keys" "$out"
+check_contains "…including the legacy repo" "legacy-repo-1700000000" "$out"
+check_contains "…including the migration journal" "migration" "$out"
 check "…and the repo is still there"      "1" "$(ls -d "$REPO" 2>/dev/null | wc -l)"
 run purge --apply --yes >/dev/null 2>&1
 check "purge --apply removes the symlink" "0" "$(ls "$PATH_LINK" 2>/dev/null | wc -l)"
 check "…and still keeps the repo"         "1" "$(ls -d "$REPO" 2>/dev/null | wc -l)"
 check "…and the lock file is gone"        "0" "$(ls "$OMARCHY_REPLICANT_HOME/.replicant.lock" 2>/dev/null | wc -l)"
 check "…and the staged write is gone"     "0" "$(ls -d "$OMARCHY_REPLICANT_HOME/staged" 2>/dev/null | wc -l)"
+check "…and keeps the key" "1" "$(ls "$OMARCHY_REPLICANT_HOME/keys/identity.txt" 2>/dev/null | wc -l)"
+check "…and keeps the legacy repo" "1" "$(ls -d "$OMARCHY_REPLICANT_HOME/legacy-repo-1700000000" 2>/dev/null | wc -l)"
+check "…and keeps the migration journal" "1" "$(ls "$OMARCHY_REPLICANT_HOME/migration/interrupted/journal.json" 2>/dev/null | wc -l)"
+check_contains "purge --repo names recovery deletion" "recovery data included" "$(run purge --repo)"
 run purge --apply --yes --repo >/dev/null 2>&1
 check "…and the directory backup is really gone, not just listed" "0" \
   "$(ls -d "$HOME/.config/nvim.bak.1700000000" 2>/dev/null | wc -l)"
 check "purge --repo removes the local clone" "0" "$(ls -d "$REPO" 2>/dev/null | wc -l)"
+check "…and removes the recovery data" "0" "$(ls -d "$OMARCHY_REPLICANT_HOME/keys" 2>/dev/null | wc -l)"
 
 section "concurrent writes are serialized, not corrupted"
 # the repo was just purged; rebuild it for this last check
@@ -639,6 +666,13 @@ done
 # While the lock is still held: a dry run must not wait for it.
 check_contains "a dry run takes no lock" "would remove" "$(REPLICANT_LOCK_WAIT=1 run purge)"
 kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+
+section "a broken lock stops the command"
+rm -f "$OMARCHY_REPLICANT_HOME/.replicant.lock"
+mkdir "$OMARCHY_REPLICANT_HOME/.replicant.lock"
+out=$(run save --inventory --no-push)
+check_contains "a lock descriptor error stops the command" "cannot open the Replicant lock file" "$out"
+rmdir "$OMARCHY_REPLICANT_HOME/.replicant.lock"
 
 section "track / untrack commit only their own paths"
 printf 'mine\n' > "$HOME/.config/mine.conf"
@@ -685,11 +719,12 @@ check "…and says so"        "true" "$(printf '%s' "$brief" | jq -r '.brief')"
 for f in initialized branch dirty ahead behind; do
   check "brief still answers $f" "true" "$(printf '%s' "$brief" | jq --arg f "$f" 'has($f)')"
 done
-for f in configs settings categories secrets; do
+for f in entries settings categories; do
   check "brief does not build $f" "false" "$(printf '%s' "$brief" | jq --arg f "$f" 'has($f)')"
 done
 full=$(run status --json 2>/dev/null | tail -n1)
-check "the full payload still has configs" "true" "$(printf '%s' "$full" | jq 'has("configs")')"
+check "the full payload has entries" "true" "$(printf '%s' "$full" | jq 'has("entries")')"
+check "…and has no deprecated collections" "false" "$(printf '%s' "$full" | jq 'has("configs") or has("secrets")')"
 check "…and is not marked brief" "false" "$(printf '%s' "$full" | jq 'has("brief")')"
 
 section "every command is asked a question it cannot answer"
@@ -726,6 +761,7 @@ P_GH="gh""p_"; P_GL="gl""pat-"; P_ANT="sk-""ant-"; P_OAI="sk-""proj-"; P_SK="sk"
 P_OR="sk-""or-v1-"; P_XAI="xa""i-"; P_HF="h""f_"; P_NPM="np""m_"
 P_SLACK="xo""xb-"; P_STRIPE="sk""_live_"; P_AWS="AK""IA"; P_JWT="ey""J"
 P_GOOG="AI""za"; P_PEM="BEG""IN OPENSSH PRIVATE KEY"
+P_AGE="AGE""-SECRET-KEY-1"; P_AGE_PQ="AGE""-SECRET-KEY-PQ-1"
 A32="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 while IFS='|' read -r name value; do
   [[ -n "$name" ]] || continue
@@ -738,6 +774,8 @@ an OpenAI project key|${P_OAI}${A32}AAAAAAAA
 an OpenAI-style key|${P_SK}${A32}AAAA
 an OpenRouter key|${P_OR}0123456789abcdef0123456789abcdef
 an xAI key|${P_XAI}AAAAAAAAAAAAAAAAAAAAAAAA
+an age identity|${P_AGE}ABCDEFGHIJKLMNOPQRSTUVWXYZ234567
+a post-quantum age identity|${P_AGE_PQ}ABCDEFGHIJKLMNOPQRSTUVWXYZ234567
 a Hugging Face token|${P_HF}AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 an npm token|${P_NPM}${A32}AAAAAAAA
 a Slack token|${P_SLACK}123456789012-1234567890123-abcdefghijklmnop
@@ -767,7 +805,7 @@ section "untrack commits the list and the copy together"
 # git add refused the whole list, so an untrack was never committed at all.
 printf 'mine\n' > "$HOME/.config/mine2.conf"
 run track "$HOME/.config/mine2.conf" >/dev/null 2>&1
-run savegame -m "save mine2" --no-push >/dev/null 2>&1
+run save --all -m "save mine2" --no-push >/dev/null 2>&1
 check_true "the copy is saved first" test -f "$REPO/config/mine2.conf"
 run untrack mine2.conf >/dev/null 2>&1
 check "untrack leaves nothing pending" "0" \
@@ -777,7 +815,7 @@ check "…because it made its own commit" "untrack: mine2.conf" "$(git -C "$REPO
 section "forget: a deleted file leaves the repo, and history brings it back"
 mkdir -p "$HOME/.config/foot"
 printf 'font=mono\n' > "$HOME/.config/foot/foot.ini"
-run savegame -m "save foot" --no-push >/dev/null 2>&1
+run save --all -m "save foot" --no-push >/dev/null 2>&1
 check_true "the copy is saved" test -f "$REPO/config/foot/foot.ini"
 check_false "forget refuses a file that is still here" "$CLI" forget foot/foot.ini
 check_contains "…and names the tool for that" "scope foot/foot.ini off" "$(run forget foot/foot.ini)"
@@ -786,7 +824,7 @@ run forget foot/foot.ini >/dev/null 2>&1
 check_false "forget removes the copy" test -e "$REPO/config/foot/foot.ini"
 check "…in a commit of its own" "0" "$(git -C "$REPO" status --porcelain | grep -c 'foot' || true)"
 check "…so the row is gone" "0" \
-  "$(run status --json --no-fetch | jq '[.configs[] | select(.id == "foot/foot.ini")] | length')"
+  "$(run status --json --no-fetch | jq '[.entries[] | select(.id == "foot/foot.ini")] | length')"
 check_false "forget needs an id" "$CLI" forget
 check_false "…that something tracks" "$CLI" forget nope/nope
 fsha=$(git -C "$REPO" log -1 --format=%H)

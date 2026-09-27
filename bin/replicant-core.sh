@@ -10,7 +10,7 @@ PLUGIN_DIR="$(cd -- "$(dirname -- "$REAL_CORE")/.." && pwd)"
 # plural and replicant_machine live in bin/lib/common.sh, shared with the CLI.
 # shellcheck source=bin/lib/common.sh
 source "$PLUGIN_DIR/bin/lib/common.sh" || { echo "replicant-core.sh: bin/lib/common.sh is missing" >&2; exit 1; }
-# User's target repo (separate from the plugin's own code): private, savegame layout
+# User's target repo (separate from the plugin's own code): private save layout
 REPLICANT_HOME="${OMARCHY_REPLICANT_HOME:-$HOME/.local/share/omarchy-replicant}"
 # A save transaction snapshots into a detached worktree: the snapshot half
 # re-runs the copy passes with the repo paths redirected there, so the active
@@ -77,7 +77,6 @@ case "${1:-}" in
   diff)               core_diff "${2:-}" "${3:-auto}" ;;
   log)                core_log "${2:-8}" ;;
   shortcuts)          core_shortcuts ;;
-  sync)               core_sync "${2:-}" "${3:-}" ;;
   revert)             core_revert "${2:-}" "${3:-default}" ;;
   restore-file)       core_restore_file "${2:-}" ;;
   restore)             shift; core_restore_cli "$@" ;;
@@ -109,7 +108,6 @@ case "${1:-}" in
   machine)            printf '%s\n' "$MACHINE" ;;
   schema-gate)        require_writable_schema ;;
   key)                shift; core_key "$@" ;;
-  migrate-v2)         shift; core_migrate_v2 "$@" ;;
   migration-confirm)  core_migration_confirm ;;
   *)                  echo "replicant-core.sh: unknown command '${1:-}'" >&2; exit 2 ;;
 esac

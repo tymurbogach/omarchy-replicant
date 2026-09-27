@@ -66,17 +66,17 @@ check_true "reads keep answering on any schema" core_status --json --brief --no-
 check "a refused write leaves the repo clean" "" \
   "$(git -C "$REPO_DIR" status --porcelain 2>/dev/null)"
 
-section "savegame stops before the commit on a newer format"
+section "save stops before the commit on a newer format"
 # cmd_savegame commits through git directly, so the gate cannot live in a core
 # writer alone: without it the failed backup still stops the save (set -e),
 # but only past the hooksPath write and the first progress line. The explicit
 # gate fails before any of that.
 printf '{"dataVersion":99,"secretFormat":"age-pq-v1"}\n' > "$REPO_DIR/.replicant/schema.json"
 before=$(git -C "$REPO_DIR" rev-parse HEAD)
-out=$("$CLI" savegame --auto --no-push 2>&1); rc=$?
-check "savegame refuses a newer format" "1" "$rc"
+out=$("$CLI" save --all --auto --no-push 2>&1); rc=$?
+check "save refuses a newer format" "1" "$rc"
 check_contains "…naming the newer format" "data format 99" "$out"
-check "…before doing any work" "0" "$(grep -c "savegame: copying" <<<"$out" || true)"
+check "…before doing any work" "0" "$(grep -c "save: copying" <<<"$out" || true)"
 check "…without committing anything" "$before" "$(git -C "$REPO_DIR" rev-parse HEAD)"
 cp "$TMP/schema.keep" "$REPO_DIR/.replicant/schema.json"
 

@@ -141,8 +141,7 @@ build_secrets_json() {
     })'
 }
 
-# build_entries_json: the version 2 wire contract. The compatibility arrays
-# above remain for one release, but new consumers read this single list.
+# build_entries_json: the version 3 wire contract for every tracked row.
 # Secret paths stay private while the vault is locked.
 build_entries_json() {
   invalidate_git_cache
@@ -418,9 +417,7 @@ core_status() {
     return 0
   fi
   if (( json )); then
-    local configs_json secrets_json entries_json settings_json categories_json groups_json machines_json pending_reinstalls_json plugins_json
-    configs_json=$(build_configs_json)
-    secrets_json=$(build_secrets_json)
+    local entries_json settings_json categories_json groups_json machines_json pending_reinstalls_json plugins_json
     entries_json=$(build_entries_json)
     settings_json=$(build_settings_json)
     categories_json=$(build_categories_json)
@@ -486,7 +483,7 @@ core_status() {
       --argjson needs_action "$needs_action" --argjson entries "$entries_json" \
       --argjson counts "$counts_json" --argjson encryption "$encryption_json" \
       --argjson migration "$migration_json" \
-      --arg pending "$pending_groups" --argjson configs "$configs_json" --argjson secrets "$secrets_json" \
+      --arg pending "$pending_groups" \
       --argjson settings "$settings_json" --argjson categories "$categories_json" \
       --argjson setting_groups "$groups_json" --argjson machines "$machines_json" \
       --arg profile "$(current_profile)" --argjson profiles "$profiles_json" \
@@ -499,7 +496,7 @@ core_status() {
         dirty:$dirty, untracked:$untracked, ahead:$ahead, behind:$behind, pending:$pending,
         unsaved:$unsaved, incoming:$incoming, locked:$locked, missing:$missing,
         needs_action:$needs_action, counts:$counts, encryption:$encryption, migration:$migration,
-        entries:$entries, configs:$configs, secrets:$secrets, settings:$settings,
+        entries:$entries, settings:$settings,
         categories:$categories, setting_groups:$setting_groups, machines:$machines,
         pending_reinstalls:$pending_reinstalls, plugins:$plugins}'
   else
@@ -508,7 +505,7 @@ core_status() {
     echo "dirty: $dirty pending:$pending_groups ahead/behind: $ahead/$behind"
     # The two lines someone reading this in a terminal is actually looking for,
     # and the button each one asks for.
-    (( n_unsaved > 0 ))  && echo "$(plural "$n_unsaved" file) changed here and not saved — 'savegame --auto'"
+    (( n_unsaved > 0 ))  && echo "$(plural "$n_unsaved" file) changed here and not saved — 'save --all --auto'"
     (( n_incoming > 0 )) && echo "$(plural "$n_incoming" file) came from another machine — 'restore --apply'"
     (( n_locked > 0 )) && echo "$(plural "$n_locked" secret) locked — 'key import <source>' or 'key status'"
     (( n_missing > 0 )) && echo "$(plural "$n_missing" file) saved in your repo but not on this machine — 'restore --apply' or 'forget <id>'"

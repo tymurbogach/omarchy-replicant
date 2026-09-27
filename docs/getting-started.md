@@ -25,12 +25,14 @@ A **+** appears in the bar. Click it: the panel says that there is no repo yet.
 
 ## 2. Create your repo
 
-Press **Create private repo**. The panel checks both GitHub connection methods and opens a setup dialog:
+Press **Create private repo**. The panel checks GitHub API authentication and SSH transport
+separately. It then opens a setup dialog:
 
-1. **GitHub login.** If HTTPS is not ready, press **Log in to GitHub**. This runs `gh auth login`
-   with the browser flow.
-2. **The repo.** Accept or edit the suggested name, then choose HTTPS or SSH. The plugin creates
-   the private repo, puts your configs, secrets and package inventory into it, and pushes.
+1. **GitHub login.** If API authentication is not ready, press **Log in to GitHub**. This runs
+   `gh auth login` with the browser flow. Repository creation always requires this authentication.
+2. **The repo.** Accept or edit the suggested name, then choose HTTPS or SSH as the Git transport.
+   The GitHub API creates the private repo. The plugin then saves your data and pushes with the
+   selected transport.
 
 Open the panel again. It shows the repo name and every tracked file.
 
@@ -50,7 +52,7 @@ Open the panel again. It shows the repo name and every tracked file.
   Omarchy's default, and ⭳ puts back what your repo has. Neither touches the rest of the file.
 - **Another machine saved something.** The bar icon turns into a download cloud. Press **Pull**.
   Pull says which of your files came down, and marks each one **↓ to restore**, not ● unsaved.
-  Then use **Restore**, or the ⭳ button on that row.
+  Then press **Restore** in the **Restore** tab, or press **Restore** on that incoming row.
 - **You want to see what changed in a file.** Press the compare button on the file in **Configs**.
   The diff opens in the panel.
 
@@ -114,10 +116,6 @@ differ.
 If another machine pushed first, **Save to GitHub** commits on this machine and says that the push
 failed. Press **Pull**, then save again.
 
-> Upgrading from 0.5? The old `.replicant-exclude` becomes `.replicant-sync` on the next save, and
-> every file that you switched off stays off. If you switched off `monitors.lua`, consider the
-> profile scope instead: you get a backup of it again.
->
 > On a version 1 or 2 repository, every writer refuses until you migrate. Run `migrate-v3` from a
 > terminal: without `--yes` it prints the summary and stops, with `--yes` you acknowledge that every
 > recorded machine is upgraded or offline. The old repository stays under `legacy-repo-<epoch>`.
@@ -216,11 +214,14 @@ omarchy-replicant --help
 
 `unlink` takes it off again.
 
-One difference is deliberate. The panel's **Save to GitHub** runs `savegame --auto`: it copies
-everything in, commits it under a subject written from the changed files, and pushes. Plain
-`savegame` in a terminal commits the inventory and then stops. It lists what changed, so that you
-can write one commit for each change, with the reason. Use `-m "why"` for one commit with a reason,
-and `--auto` to save it all. `push` sends the commits that you already have, and touches nothing else.
+One difference is deliberate. The panel's **Save to GitHub** runs `save --all --auto`. It copies
+everything in, commits it under a subject written from the changed files, and pushes. In a terminal,
+use `save --all -m "why"` to give the commit a reason. Use `save --all --auto` to derive the subject
+from the changed paths. `push` sends the commits that you already have, and touches nothing else.
+
+Version 0.14 removes the old `savegame`, `backup`, `migrate-v2`, `sync` and `init --savegame`
+commands. Use `save`, `migrate-v3`, and `scope` instead. Repository creation still requires GitHub
+API authentication. SSH remains a Git transport for push and pull.
 
 ## 10. If a restore was wrong
 

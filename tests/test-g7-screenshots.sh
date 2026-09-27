@@ -39,6 +39,11 @@ compare_fixture() {
     bad "$name has no visual fixture"
     return
   fi
+  if [[ "${UPDATE_GOLDEN:-0}" == 1 ]]; then
+    cp -- "$TMP/$name.png" "$GOLDEN/$name.png"
+    ok "$name fixture updated"
+    return
+  fi
   if compare -metric AE "$GOLDEN/$name.png" "$TMP/$name.png" null: 2>"$metric"; then
     if [[ "$(<"$metric")" == 0* ]]; then ok "$name matches its visual fixture"; else bad "$name differs by $(<"$metric") pixels"; fi
   else
@@ -50,7 +55,7 @@ render overview "$FIXTURES/status.json" overview "" ""
 compare_fixture overview
 
 render loading "$FIXTURES/empty.json" overview "" \
-  'p.asked = false; p.repoState = { initialized: false, configs: [], secrets: [], categories: [], settings: [], setting_groups: [], machines: [] }'
+  'p.asked = false; p.repoState = { initialized: false, entries: [], categories: [], settings: [], setting_groups: [], machines: [] }'
 compare_fixture loading
 
 render empty "$FIXTURES/empty.json" overview "" ""

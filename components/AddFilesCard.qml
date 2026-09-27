@@ -56,6 +56,25 @@ Card {
   // ── suggestions ─────────────────────────────────────────────────────────
   CardNote {
     panel: ac.panel
+    visible: panel.addMode === "suggest" && panel.suggestLoading
+    text: "Loading suggestions…"
+  }
+  CardNote {
+    panel: ac.panel
+    visible: panel.addMode === "suggest" && panel.suggestError !== ""
+    text: panel.suggestError
+  }
+  Row {
+    visible: panel.addMode === "suggest" && panel.suggestError !== ""
+    leftPadding: Style.spacing.rowPaddingX
+    Button {
+      text: "Retry"; iconText: panel.icRefresh; bordered: true
+      foreground: panel.fg; accent: Color.accent; fontFamily: panel.ff
+      onClicked: { panel.suggestLoaded = false; panel.loadSuggestions() }
+    }
+  }
+  CardNote {
+    panel: ac.panel
     visible: panel.addMode === "suggest" && panel.suggestLoaded && ac.items.length === 0
     text: "Nothing to suggest: everything here that looks like config is tracked. Browse your files to add anything else."
   }

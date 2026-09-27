@@ -126,7 +126,7 @@ check_contains "the theme is recorded as a URL, not copied" \
 check "…and no theme file was copied into the repo" "0" \
   "$(find "$DREPO/config" -path '*themes*' 2>/dev/null | wc -l)"
 
-section "savegame, the button the panel actually presses"
+section "save, the button the panel actually presses"
 # Nothing exercised this command. Every suite reached for `backup` and drove
 # git by hand, so the commit step savegame does on its own was never run — and
 # a variable named there that belongs to the core, not the CLI, killed it under
@@ -137,7 +137,7 @@ section "savegame, the button the panel actually presses"
 mkdir -p "$D/.config/omarchy/themes/second"
 git init -q "$D/.config/omarchy/themes/second"
 git -C "$D/.config/omarchy/themes/second" remote add origin https://example.com/omarchy-second-theme
-out=$(on desktop savegame --no-push; echo "rc=$?")
+out=$(on desktop save --inventory --no-push; echo "rc=$?")
 check_contains "it finishes"            "rc=0" "$out"
 check_true "…and does not die on an unbound variable" \
   bash -c '! grep -q "unbound variable" <<<"$0"' "$out"
@@ -152,19 +152,19 @@ check_true "…naming the machine, not the date" \
 # the panel's Last save showed one of those instead of the file the user saved,
 # and two machines on one repo diverged whenever either of them pressed Save.
 idle_head=$(git -C "$DREPO" rev-parse HEAD)
-out=$(on desktop savegame --no-push)
+out=$(on desktop save --inventory --no-push)
 check "saving twice in a row commits once" "$idle_head" "$(git -C "$DREPO" rev-parse HEAD)"
 check_contains "…and says so plainly" "Nothing to save" "$out"
 
 section "pressing Save has to finish the job"
-# The panel's Save button ran bare `savegame`, and bare savegame deliberately
+# The panel's Save button runs `save --all --auto`.
 # leaves config and secrets copied-in-but-UNCOMMITTED so a human can write one
 # commit per change explaining why. The panel has nowhere to type that why, so
 # from the panel the primary button copied files in, pushed the inventory, and
 # left every badge exactly as red as it was. The user pressed Track on a secret,
 # pressed Save, and the secret was still sitting uncommitted afterwards.
 printf 'my own input, edited\n' > "$D/.config/hypr/input.lua"
-out=$(on desktop savegame --auto)
+out=$(on desktop save --all --auto)
 check_true "the edit is committed, not merely copied in" \
   bash -c '! git -C "$1" status --porcelain -- config/ secrets/ | grep -q .' _ "$DREPO"
 check_true "…and it reached the remote"  \
@@ -176,7 +176,7 @@ check_contains "…under a subject naming what changed" "hypr/input.lua" \
 # -m is a subject a person wrote; --auto is only ever the fallback for a caller
 # that cannot ask.
 printf 'my own input, again\n' > "$D/.config/hypr/input.lua"
-on desktop savegame --auto -m "config: raise the repeat rate" >/dev/null 2>&1
+on desktop save --all --auto -m "config: raise the repeat rate" >/dev/null 2>&1
 check "an explicit -m still wins over --auto" "config: raise the repeat rate" \
   "$(git -C "$DREPO" log -1 --pretty=%s)"
 
@@ -198,14 +198,14 @@ check_true "…leaving it for savegame" \
 # A save needs a clean worktree: the backup's copies are regenerable, so the
 # save refuses them instead of committing over them. The refusal names the
 # rule and moves nothing.
-rc=0; out=$(on desktop savegame --auto --no-push) || rc=$?
+rc=0; out=$(on desktop save --all --auto --no-push) || rc=$?
 check "a save on a dirty tree refuses" "1" "$rc"
 check_contains "…naming the clean-worktree rule" "clean worktree" "$out"
 check "…with the commit point unmoved" "$before_head" "$(git -C "$DREPO" rev-parse HEAD)"
 # Discard the regenerable copies and the save goes through from live files.
 git -C "$DREPO" checkout -- . >/dev/null 2>&1
 git -C "$DREPO" clean -fdq >/dev/null 2>&1
-on desktop savegame --auto --no-push >/dev/null 2>&1
+on desktop save --all --auto --no-push >/dev/null 2>&1
 out=$(on desktop push)
 check_contains "…and it does push what is already committed" "commit" "$out"
 check_contains "…saying so out loud" "Pushing" "$out"
@@ -224,21 +224,21 @@ git -C "$TMP/elsewhere" add NOTES.txt
 git -C "$TMP/elsewhere" commit -q -m "elsewhere"
 git -C "$TMP/elsewhere" push -q origin HEAD:main >/dev/null 2>&1
 printf 'my own input, while another machine saved\n' > "$D/.config/hypr/input.lua"
-rc=0; out=$(on desktop savegame --auto) || rc=$?
+rc=0; out=$(on desktop save --all --auto) || rc=$?
 check "a rejected push is a failure" "1" "$rc"
 check_contains "…that says the push failed" "push to GitHub failed" "$out"
 check "…and never claims it pushed" "0" "$(grep -c 'saved and pushed' <<<"$out" || true)"
 # After a pull, the tree is clean and one commit waits. The panel says to press
 # Save, and Save answered "Nothing to save" without pushing that commit.
 on desktop pull >/dev/null 2>&1
-out=$(on desktop savegame --auto)
+out=$(on desktop save --all --auto)
 check_true "a commit that waits is pushed by the next save" \
   bash -c 'git -C "$1" fetch -q origin && git -C "$1" diff --quiet origin/main HEAD' _ "$DREPO"
 check_contains "…which says so" "saved and pushed" "$out"
 
 # Put the desktop back the way the rest of the journey expects to find it.
 printf 'my own input\n' > "$D/.config/hypr/input.lua"
-on desktop savegame --auto >/dev/null 2>&1
+on desktop save --all --auto >/dev/null 2>&1
 
 # ── the laptop, which has never seen any of this ─────────────────────────────
 L="$TMP/laptop/home"
@@ -322,7 +322,7 @@ HOME="$THIRD/home" OMARCHY_REPLICANT_HOME="$THIRD/rep" REPLICANT_MACHINE=lap2 \
 T3="$THIRD/rep/repo"
 git -C "$T3" config user.email t@example.com; git -C "$T3" config user.name Test
 HOME="$THIRD/home" OMARCHY_REPLICANT_HOME="$THIRD/rep" REPLICANT_MACHINE=lap2 \
-  "$CLI" savegame --auto >/dev/null 2>&1
+  "$CLI" save --all --auto >/dev/null 2>&1
 check_true "a machine whose guess is taken gets its own tree" \
   test -f "$T3/profiles/lap2/config/hypr/monitors.lua"
 check "…and the machine that had the name keeps its backup" "$LAPTOP_KEPT" \
@@ -343,7 +343,7 @@ section "which way does the difference point"
 out=$(on desktop pull)
 check_contains "pull says what came down"    "changed on another machine" "$out"
 check_contains "…and names the file"         "nvim/" "$out"
-state_of() { on "$1" status --json --no-fetch | jq -r --arg i "$2" '.configs[]|select(.id==$i)|.sync_state'; }
+state_of() { on "$1" status --json --no-fetch | jq -r --arg i "$2" '.entries[]|select(.id==$i)|.sync_state'; }
 check "the file the laptop changed asks to be RESTORED, not saved" \
   "incoming" "$(state_of desktop nvim/)"
 check_contains "…and the desktop's own advice agrees" "came from another machine" \
@@ -359,7 +359,7 @@ check "a file only THIS machine changed still says unsaved" \
 # press the panel is asking for still took the incoming file with it. The
 # sweeping action holds those back and says which; the deliberate per-file one
 # is the escape hatch.
-out=$(on desktop savegame --auto)
+out=$(on desktop save --all --auto)
 check_contains "saving everything says what it held back" "held back" "$out"
 check_contains "…and names it"                            "nvim/" "$out"
 check_true "the other machine's version is still in the repo" \
@@ -412,13 +412,13 @@ printf '{"id":"com.example.widget","name":"Widget","version":"1.0"}\n' \
 printf '{"size":3}\n' > "$D/.config/omarchy/widget.json"
 printf 'require("hypr.input")\nrequire("hypr.omasettings")\n' > "$D/.config/hypr/hyprland.lua"
 printf 'hl.config({ general = { gaps_in = 2 } })\n' > "$D/.config/hypr/omasettings.lua"
-on desktop savegame --auto --no-push >/dev/null 2>&1
+on desktop save --all --auto --no-push >/dev/null 2>&1
 git -C "$DREPO" push -q origin HEAD:main >/dev/null 2>&1
 check_true "the desktop saves the module its hyprland.lua loads" test -f "$DREPO/config/hypr/omasettings.lua"
 check_true "…and the plugin's settings" test -f "$DREPO/config/plugins/widget.json"
 
 on laptop pull >/dev/null 2>&1
-on laptop savegame --no-push >/dev/null 2>&1
+on laptop save --inventory --no-push >/dev/null 2>&1
 check_true "a save from the laptop, which lacks the plugin, keeps its settings" \
   test -f "$LREPO/config/plugins/widget.json"
 check_true "…and keeps the module" test -f "$LREPO/config/hypr/omasettings.lua"

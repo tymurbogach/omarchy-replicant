@@ -377,12 +377,6 @@ from:     echo "save: the repo has uncommitted changes — a save needs a clean 
 to:     :
 why: a save refuses a dirty worktree before creating anything
 ---
-file: bin/omarchy-replicant
-suite: test-save.sh
-from:   warn "savegame is deprecated — 'save' does this now (same options)"
-to:   :
-why: savegame says it is deprecated
----
 file: bin/lib/repo.sh
 suite: test-save.sh
 from:     echo "pull: the repo has uncommitted changes — pull needs a clean worktree:" >&2
@@ -538,6 +532,78 @@ suite: test-restore-secrets.sh
 from:       echo "      (secret: would be restored at mode 600, contents never shown)" >&2
 to:       :
 why: a restore preview never shows secret contents
+---
+file: replicant.js
+suite: qml-controller.sh
+from:   if (Number(code) !== 0) {
+to:   if (false) {
+why: a failed status command never becomes first-time setup
+---
+file: replicant.js
+suite: qml-controller.sh
+from:     if (!parsed || (parsed.initialized !== true && parsed.initialized !== false)) throw new Error("missing initialized")
+to:     if (false) throw new Error("missing initialized")
+why: status JSON must contain an explicit initialized result
+---
+file: replicant.js
+suite: qml-controller.sh
+from:   if (action === "scope-off") return "Switch off"
+to:   if (action === "scope-off") return action
+why: bulk confirmations show user-facing actions
+---
+file: Panel.qml
+suite: test-usability.sh
+from:   function doSave() { root.busyLabel = "Saving to GitHub…"; controller.run("save", [root.cli, "save", "--all", "--auto"], { label: "Save", cancelable: true }) }
+to:   function doSave() { root.busyLabel = "Saving to GitHub…"; controller.run("save", [root.cli, "savegame", "--auto"], { label: "Save", cancelable: true }) }
+why: the panel Save uses the complete canonical transaction
+---
+file: Panel.qml
+suite: test-usability.sh
+from:             visible: root.asked && root.statusError === "" && !root.ready
+to:             visible: root.asked && !root.ready
+why: a status failure never opens first-time setup
+---
+file: components/OverviewTab.qml
+suite: test-usability.sh
+from:   // Read-only tools and links.
+to:   Button { text: "Copy without saving" }
+why: the panel does not offer a copy outside the transaction
+---
+file: Panel.qml
+suite: test-usability.sh
+from:   readonly property string metaText: root.statusError !== "" ? "status unavailable" : root.ready
+to:   readonly property string metaText: root.ready
+why: the panel header never calls a failed status not set up
+---
+file: bin/omarchy-replicant
+suite: test-cli.sh
+from:     [[ "$arg" == "--help" ]] || continue
+to:     [[ false ]] || continue
+why: help after another option stops the command
+---
+file: bin/omarchy-replicant
+suite: test-cli.sh
+from:   exec 9>"$REPLICANT_HOME/.replicant.lock" || fail "cannot open the Replicant lock file: $REPLICANT_HOME/.replicant.lock"
+to:   exec 9>"$REPLICANT_HOME/.replicant.lock" || return 0
+why: a lock descriptor failure stops the command
+---
+file: bin/omarchy-replicant
+suite: test-cli.sh
+from:       -y|--yes) fail "undo: --yes is not supported; use --apply" ;;
+to:       -y|--yes) DRY=0 ;;
+why: undo accepts only --apply for a mutation
+---
+file: bin/omarchy-replicant
+suite: test-cli.sh
+from: source "$1" || exit $?
+to: source "$1" 2>/dev/null || true
+why: undo exposes core load errors
+---
+file: replicant.js
+suite: qml-controller.sh
+from:   return "unknown state"
+to:   return "saved on GitHub"
+why: an unknown state never renders as saved
 ---
 DATA
 )

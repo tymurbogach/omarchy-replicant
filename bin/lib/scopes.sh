@@ -22,8 +22,8 @@
 # Both lists live in the repo rather than ~/.local/share, because "monitors are
 # machine-specific" is a fact about the setup, not about one machine: decide it
 # once, and every machine sharing the repo honours it.
-REMOVED_SCOPE_FILE="$REPO_DIR/.replicant-sync"
-REMOVED_PROFILE_FILE="$REPO_DIR/.replicant-profiles"
+REMOVED_SCOPE_FILE="$REPO_DIR/entries.json"
+REMOVED_PROFILE_FILE="$REPO_DIR/machines"
 
 # Seeded on a fresh repo. Not hardcoded rules: they are written into a file the
 # user can see, edit, and change from the panel. These are the files that are
@@ -204,7 +204,7 @@ invalidate_scopes_cache() { SCOPES_CACHED=0; SCOPES_CACHE=""; SCOPE_MAP_READY=0;
 
 # load_scope_map: the scope list as an associative array, built in this shell.
 # The first valid line for a path wins, as in scope_for, and the v0.5 off-list
-# counts only while no .replicant-sync exists. On version 3 the entries
+# counts only while no entries.json exists. On version 3 the entries
 # records fill the map, with the shipped defaults behind them, so the
 # fork-free scope_into answers from one snapshot per process.
 load_scope_map() {
@@ -318,7 +318,7 @@ write_scope_file() {
 # off-list. On version 3 this is a no-op: scopes live in .replicant/entries.json
 # and no scope file is ever created.
 #
-# did not, and because read_scopes() sees no .replicant-sync it rebuilt the
+# did not, and because read_scopes() sees no entries.json it rebuilt the
 # list from nothing — silently discarding a v0.5 user's entire off-list the
 # first time they touched any file's scope. Reading has a fallback; writing
 # needs the real thing.
@@ -332,7 +332,7 @@ ensure_scope_file() {
     migrated=$(migrate_legacy_migrate_exclude || true)
     while IFS= read -r line; do [[ -n "$line" ]] && seed+=("$line"); done <<<"$migrated"
     write_scope_file "${seed[@]}"
-    echo "  · migrated .replicant-exclude to .replicant-sync (${#seed[@]} entries kept off)" >&2
+    echo "  · migrated entries.json to entries.json (${#seed[@]} entries kept off)" >&2
   else
     write_scope_file "${DEFAULT_SCOPES[@]/=/ = }"
   fi
@@ -554,7 +554,7 @@ core_profile_transact() {
   local want="${1:-}"
   [[ -n "$want" ]] || { echo "usage: profile <name>" >&2; return 2; }
   local msg="profile: $MACHINE is now '$want'"
-  core_shape_transact "$msg" "profile" profile_report "$want" -- .replicant-profiles .replicant/machines || return 1
+  core_shape_transact "$msg" "profile" profile_report "$want" -- machines .replicant/machines || return 1
   echo "Files scoped to a profile will now be saved and restored from profiles/$want/." >&2
   return 0
 }

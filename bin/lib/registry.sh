@@ -121,7 +121,7 @@ registry_build() {
     live="${r_live[$id]}"
     category=$(category_for_rel "$id")
     # The shared scope map applies each schema's precedence. In version 2 the
-    # mutable .replicant-sync policy must override the initial entries record.
+    # mutable entries.json policy must override the initial entries record.
     scope_into scope "$id"
     blob=""; locked="false"; repo=""
     if [[ "${r_kind[$id]}" == "secret" ]]; then

@@ -100,13 +100,13 @@ migrate_retired_shipped() {
   done
   (( moved )) || return 0
   load_user_manifest
-  echo "  · $(plural "$moved" entry entries) that the plugin no longer ships moved into your .replicant-track" >&2
+  echo "  · $(plural "$moved" entry entries) that the plugin no longer ships moved into your entries.json" >&2
 }
 
 # ─── THE USER'S OWN LIST ────────────────────────────────────────────────────
 # Everything above ships with the plugin. Everything a particular person wants
 # backed up on top of it lives here, in a file inside THEIR repo — the same
-# place, and for the same reason, as .replicant-sync and .replicant-profiles:
+# place, and for the same reason, as entries.json and machines:
 # "back up my audit script" is a decision about the setup, not about one
 # machine, so making it once must be enough for both.
 #
@@ -225,7 +225,7 @@ rebuild_tracked() {
   TRACKED_SECRETS=("${SECRETS_MANIFEST[@]}" ${USER_SECRETS[@]+"${USER_SECRETS[@]}"})
 }
 
-# A repo written before 0.7 has no .replicant-track, but its config/ is full of
+# A repo written before 0.7 has no entries.json, but its config/ is full of
 # upgrade would see those files as untracked and core_backup's prune pass would
 # delete every one of them from the repo.
 load_user_manifest() {

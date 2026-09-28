@@ -38,7 +38,7 @@ core_backup() {
     rscope="${rf[4]}"; rlive="${rf[5]}"; rrepo="${rf[6]}"
     src="$rlive"
     dst="$rrepo"
-    # Switched off in .replicant-sync: not copied from here, and (see the
+    # Switched off in entries.json: not copied from here, and (see the
     # prune pass below) whatever the repo already holds is left alone.
     if [[ "$rscope" == "off" ]]; then
       skipped=$((skipped + 1))

@@ -84,15 +84,16 @@ BorderSurface {
     Row {
       spacing: Style.space(8)
       Button {
-        text: panel.remoteState === "ahead" ? "Retry push" : "Save to GitHub"; iconText: panel.icPush; bordered: true
+        text: panel.remoteState === "remote-missing" ? "Create private repo" : (panel.remoteState === "ahead" ? "Retry push" : "Save to GitHub"); iconText: panel.icPush; bordered: true
         foreground: panel.nDirty > 0 || panel.nAhead > 0 ? Color.accent : panel.fg
         accent: Color.accent; fontFamily: panel.ff
         iconSpinning: panel.saving
         enabled: panel.ready && !panel.busy
         tooltipText: !panel.ready ? "Disabled: configure a repository first."
                     : panel.busy ? "Disabled: another Replicant operation is running."
+                    : panel.remoteState === "remote-missing" ? "Create the missing private GitHub repository and publish the local commits."
                     : panel.remoteState === "ahead" ? "Retry publishing the local commits" : "Copy this machine into the repo, commit and push  (s)"
-        onClicked: panel.remoteState === "ahead" && panel.nDirty === 0 ? panel.doRetryPush() : panel.doSave()
+        onClicked: panel.remoteState === "remote-missing" ? panel.openCreateDialog() : (panel.remoteState === "ahead" && panel.nDirty === 0 ? panel.doRetryPush() : panel.doSave())
       }
       Button {
         text: "Pull"; iconText: panel.icPull; bordered: true

@@ -55,12 +55,8 @@ ensure_repo_layout() {
       mv -- "$flat" "$STATE_DIR/$name" 2>/dev/null || true
     fi
   done
-  # git init if needed. A repo born here is born v3: the schema marks the
   # format every writer after it must understand. The skeleton lands before
   # the scope and track ensures below, so those gates see the marker and a
-  # fresh v3 repo never grows legacy policy files. A repo that already has
-  # history keeps whatever it has: v1 and v2 stay readable until the
-  # repository creation, and a v3 clone only refreshes this machine's own
   # metadata below.
   # -e, not -d: a save transaction works in a linked worktree, whose .git is
   # a file pointing at the main repo. Re-running init there would break it.
@@ -74,7 +70,7 @@ ensure_repo_layout() {
     git -C "$REPO_DIR" config user.name  "${GIT_AUTHOR_NAME:-$(git config --global user.name 2>/dev/null || echo "$who")}"
     git -C "$REPO_DIR" config user.email "${GIT_AUTHOR_EMAIL:-$(git config --global user.email 2>/dev/null || echo "$who@omarchy-replicant")}"
     git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
-    ensure_v3_layout
+    ensure_repository_layout
     # The tracked lists were built at source time, before this repo existed:
     # a fallback read then may have invented entries the canonical stores do
     # not hold. Rebuild them now, so the copy and prune passes below see the
@@ -84,12 +80,10 @@ ensure_repo_layout() {
     invalidate_scopes_cache
   else
     git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
-    require_writable_schema || return 1
+    require_ready_schema || return 1
     machine_metadata_write
   fi
-  ensure_scope_file
   mkdir -p "$REPO_DIR/profiles/$(current_profile)/config" 2>/dev/null || true
-  install -d -m 700 "$SECRETS_DIR" 2>/dev/null || mkdir -p "$SECRETS_DIR"
   # The hook is kept in step with the plugin, like the scanner below. It was
   # written once, so a repo made by an old release kept that hook forever.
   mkdir -p "$GITHOOKS_DIR"
@@ -109,17 +103,14 @@ GI
   fi
 }
 
-# ensure_v3_layout: the v3 skeleton for a repo born here: the schema marker,
 # an empty entry registry, and this machine's metadata. It never overwrites:
-# schema.json and entries.json belong to the migration once written. It never
-# creates legacy policy files: scopes live in entries.json, the profile lives
 # in the machine record, and secrets live in the encrypted vault index.
-ensure_v3_layout() {
+ensure_repository_layout() {
   local rdir="$REPO_DIR/.replicant"
   mkdir -p "$rdir/machines" "$REPO_DIR/vault/blobs"
+  : > "$REPO_DIR/vault/blobs/.keep"
   if [[ ! -f "$rdir/schema.json" ]]; then
-    jq -nc --argjson v "$SCHEMA_VERSION" --arg f "$SCHEMA_FORMAT" \
-      '{dataVersion: $v, secretFormat: $f}' > "$rdir/schema.json"
+    printf '{"format":"replicant"}\n' > "$rdir/schema.json"
   fi
   [[ -f "$rdir/entries.json" ]] || printf '{}\n' > "$rdir/entries.json"
   machine_metadata_write

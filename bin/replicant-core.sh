@@ -106,7 +106,7 @@ case "${1:-}" in
   backups-json)       build_backups_json ;;
   undo)               core_undo "${2:-}" ;;
   machine)            printf '%s\n' "$MACHINE" ;;
-  schema-gate)        require_writable_schema ;;
+  schema-gate)        require_ready_schema ;;
   key)                shift; core_key "$@" ;;
   *)                  echo "replicant-core.sh: unknown command '${1:-}'" >&2; exit 2 ;;
 esac

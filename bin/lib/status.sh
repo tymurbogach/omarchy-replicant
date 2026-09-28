@@ -210,10 +210,8 @@ build_entries_json() {
 }
 
 status_encryption_json() {
-  local state=unconfigured v format="age-pq-v1"
-  v=$(repo_data_version 2>/dev/null || echo 1)
-  if [[ "$v" == 3 ]]; then format="age-pq-v2"; fi
-  if [[ ( "$v" == 2 || "$v" == 3 ) && -f "$REPO_DIR/.replicant/recipient.txt" ]]; then
+  local state=unconfigured format="replicant"
+  if repo_is_ready && [[ -f "$REPO_DIR/.replicant/recipient.txt" ]]; then
     if vault_unlocked; then state=ready; else state=locked; fi
   fi
   jq -nc --arg state "$state" --arg format "$format" '{format:$format,state:$state}'
@@ -341,8 +339,9 @@ core_status() {
   # Best-effort refresh of origin/HEAD so unpushed/ahead/behind are accurate.
   # Never blocks when there is no network, and never runs more often than
   # FETCH_MAX_AGE unless explicitly asked.
+  local fetch_error=""
   if (( force_fetch >= 0 )) && { (( force_fetch == 1 )) || should_fetch; }; then
-    if timeout 3 git -C "$REPO_DIR" fetch --quiet 2>/dev/null; then
+    if fetch_error=$(timeout 3 git -C "$REPO_DIR" fetch --quiet 2>&1); then
       REMOTE_FETCH_OK=1
     else
       REMOTE_FETCH_OK=0
@@ -364,7 +363,7 @@ core_status() {
   fi
   [[ "$ahead" =~ ^[0-9]+$ ]] || ahead=0
   [[ "$behind" =~ ^[0-9]+$ ]] || behind=0
-  REMOTE_STATE=$(remote_state_for "$remote" "$([[ "$REMOTE_FETCH_OK" == 1 ]] && echo true || echo false)" "$ahead" "$behind")
+  REMOTE_STATE=$(remote_state_for "$remote" "$([[ "$REMOTE_FETCH_OK" == 1 ]] && echo true || echo false)" "$ahead" "$behind" "$fetch_error")
   # Content, not git: what is on this machine that the repo has not got, and
   # which of those differences came down from another machine. Both the bar icon
   # and the panel header read these, so they can never disagree. The brief path
@@ -476,7 +475,7 @@ core_status() {
       --argjson setting_groups "$groups_json" --argjson machines "$machines_json" \
       --arg profile "$(current_profile)" --argjson profiles "$profiles_json" \
       --argjson pending_reinstalls "$pending_reinstalls_json" --argjson plugins "$plugins_json" \
-      --argjson schema_version "$SCHEMA_VERSION" \
+      --arg schema_version "$SCHEMA_FORMAT" \
       '{initialized:true, schema_version:$schema_version, branch:$branch, remote:$remote, remote_name:$remote_name, remote_state:$remote_state,
         repo_dir:$repo_dir, machine:$machine, plugin_version:$plugin_version, home:$home,
         profile:$profile, profiles:$profiles,

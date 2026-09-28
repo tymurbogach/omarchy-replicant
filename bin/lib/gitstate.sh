@@ -25,12 +25,13 @@ REMOTE_FETCH_OK=1
 REMOTE_STATE=local-only
 invalidate_git_cache() { GIT_CACHE_READY=0; GIT_DIRTY_SET=""; GIT_UNPUSHED_SET=""; GIT_HAS_UPSTREAM=0; }
 
-# remote_state_for <remote> <fetch-ok> <ahead> <behind> returns the transport
-# state exposed by status v2.
+# remote_state_for <remote> <fetch-ok> <ahead> <behind> <fetch-error> returns the transport
 remote_state_for() {
-  local remote="$1" fetch_ok="$2" ahead="$3" behind="$4"
+  local remote="$1" fetch_ok="$2" ahead="$3" behind="$4" fetch_error="${5:-}"
   if [[ -z "$remote" ]]; then
     printf '%s\n' local-only
+  elif [[ "$fetch_error" == *"Repository not found"* || "$fetch_error" == *"repository '* not found"* ]]; then
+    printf '%s\n' remote-missing
   elif [[ "$fetch_ok" != true ]]; then
     printf '%s\n' offline
   elif (( ahead > 0 && behind > 0 )); then

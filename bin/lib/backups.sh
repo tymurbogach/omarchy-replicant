@@ -96,7 +96,7 @@ backup_before_write() {
 # the previous minute" and reloading Hyprland from under a user who has just
 # realised they made a mistake is not a favour. The caller says what to run.
 core_undo() {
-  require_writable_schema || return 1
+  require_ready_schema || return 1
   local rel="$1" src line b epoch tmp now
   src=$(resolve_manifest_src "$rel") || { echo "unknown id: $rel" >&2; return 1; }
   src="${src%/}"

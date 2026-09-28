@@ -14,7 +14,6 @@
 # The snapshot reuses the existing copy passes with the repo paths redirected:
 # the global snapshot re-runs `backup` with REPLICANT_TX_REPO set, and a
 # selective snapshot runs `snapshot-one` the same way. No copy logic is
-# duplicated here, so v1 and v2 repos save through the same code the backup
 # already exercises.
 
 # The transaction journal, worktree lifecycle, resume and discard live in
@@ -104,7 +103,6 @@ save_push() {
 }
 
 # save_fix_modes: git tracks only the exec bit, so a fast-forward checkout
-# rebuilds every other mode from the umask. The copy passes establish v1
 # secret copies at 600 under a 700 secrets dir, so re-apply both after the
 # fast-forward. Vault blobs keep checkout modes: they were never mode-managed.
 save_fix_modes() {
@@ -130,7 +128,7 @@ snapshot_one() {
   local src regrow kind scope live repo blob
   local -a rf=()
   [[ -n "$rel" ]] || { echo "snapshot: usage: snapshot-one <id>" >&2; return 2; }
-  require_writable_schema || return 1
+  require_ready_schema || return 1
   src=$(resolve_manifest_src "$rel") || { echo "unknown id: $rel" >&2; return 1; }
   registry_build || return 1
   regrow=$(registry_row_for "$rel") || { echo "unknown id: $rel" >&2; return 1; }
@@ -244,7 +242,7 @@ core_save() {
 # SAVE_ADD_PATHS for validation and activation.
 save_stage() {
   [[ -e "$REPO_DIR/.git" ]] || { echo "no repo — clone first" >&2; return 1; }
-  require_writable_schema || return 1
+  require_ready_schema || return 1
   # With no commits yet there is no history to protect and no HEAD that could
   # move mid-save, so the snapshot goes straight into the active repo, the way
   # saves always did. Anything else goes through a transaction worktree.
@@ -286,7 +284,6 @@ save_stage() {
 
   # The snapshot effect happens once. For a selective save the stdout paths
   # are also the commit's file list; stderr keeps talking to the person.
-  # In legacy mode (no commits yet) the snapshot lands in the active repo.
   SAVE_ADD_PATHS=()
   local snap_rc=0
   if [[ "$SAVE_SCOPE" == "id" ]]; then
@@ -445,7 +442,6 @@ save_validate_commit() {
 # save_activate: move the active repository to the candidate and publish it
 # (activation). The commit point: from here the active repository moves.
 # Anything that fails below keeps the transaction directory for recovery
-# instead of removing it. Legacy mode (no commits yet) has nothing to
 # fast-forward: the commit already landed in the active repo. A failed push
 # keeps the local commit with its journal and names the retry.
 save_activate() {
@@ -514,13 +510,12 @@ save_activate() {
 
 # core_init: create the initial savegame commit. The CLI parses the deprecated
 # flags and reports the command result; this function owns repository writes.
-# A missing repo is staged as v3 in a temp dir first: the write gate runs
 # against the staged repo, never before the schema marker exists.
 core_init() {
   if [[ "$(repo_state)" == missing ]]; then
     core_init_staged || return 1
   else
-    require_writable_schema || return 1
+    require_ready_schema || return 1
   fi
   ensure_repo_layout
   core_backup || return 1
@@ -535,7 +530,6 @@ core_init() {
   echo "init done at $REPO_DIR (savegame layout: config/secrets/state)" >&2
 }
 
-# core_init_staged: build a fresh v3 repo in a temp dir beside the final path
 # (same parent, so the rename is atomic), validate it, and move it into place.
 # Every failure removes the staging dir: a failed init leaves no repo behind.
 core_init_staged() {
@@ -576,7 +570,7 @@ _core_init_build() {
   local saved_state_root="$STATE_ROOT" saved_state="$STATE_DIR"
   local saved_templates="$TEMPLATES_DIR" saved_secrets="$SECRETS_DIR"
   local saved_hooks="$GITHOOKS_DIR"
-  local saved_version="$REPO_VERSION_FILE" saved_scope="$SCOPE_FILE"
+  local saved_version="$REMOVED_VERSION_FILE" saved_scope="$REMOVED_SCOPE_FILE"
   if ! bootstrap_fail_at validate; then
     return 1
   fi
@@ -584,21 +578,19 @@ _core_init_build() {
   STATE_ROOT="$stage/state" STATE_DIR="$stage/state/$MACHINE"
   TEMPLATES_DIR="$stage/templates" SECRETS_DIR="$stage/secrets"
   GITHOOKS_DIR="$stage/.githooks"
-  REPO_VERSION_FILE="$stage/.replicant-version"
-  SCOPE_FILE="$stage/.replicant-sync"
+  REMOVED_VERSION_FILE="$stage/.replicant-version"
+  REMOVED_SCOPE_FILE="$stage/.replicant-sync"
   if ! ensure_repo_layout; then
     rc=1
   elif ! _schema_marker_valid; then
     rc=1
-  elif ! v3_no_legacy_files; then
-    rc=1
-  elif ! validate_v3_entries "$stage/.replicant/entries.json"; then
+  elif ! validate_entries "$stage/.replicant/entries.json"; then
     rc=1
   fi
   REPO_DIR="$saved_repo" CONFIG_DIR="$saved_config"
   STATE_ROOT="$saved_state_root" STATE_DIR="$saved_state"
   TEMPLATES_DIR="$saved_templates" SECRETS_DIR="$saved_secrets"
   GITHOOKS_DIR="$saved_hooks"
-  REPO_VERSION_FILE="$saved_version" SCOPE_FILE="$saved_scope"
+  REMOVED_VERSION_FILE="$saved_version" REMOVED_SCOPE_FILE="$saved_scope"
   return "$rc"
 }

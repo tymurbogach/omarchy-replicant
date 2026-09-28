@@ -132,7 +132,6 @@ restore_mode_for() {
 # Skips what the user switched off, what the repo does not have a copy of, and
 # theme.name (a theme is replayed through omarchy-theme-set, not copied).
 # The ids come from the registry, so the plan and the panel rows agree on what
-# exists; the secrets tail below keeps its own loop, since v2 secrets restore
 # through the vault and never through a repo path.
 plan_for_category() {
   local want="$1" row id kind cat scope live repo
@@ -334,7 +333,7 @@ restore_preview() {
 # failure fails the area with no silent skip. Prints the number of entries
 # written, on stdout.
 restore_apply() {
-  require_writable_schema || return 1
+  require_ready_schema || return 1
   briefcache_invalidate
   local area="$1" e src dst mode changed=0 apply errs DRY=0 id failures=0
   shift
@@ -371,7 +370,7 @@ restore_apply() {
 # same .bak.<epoch> every other write makes. The per-file counterpart of
 # `reset`, which goes to Omarchy's default instead.
 core_restore_file() {
-  require_writable_schema || return 1
+  require_ready_schema || return 1
   briefcache_invalidate
   local rel="$1" src repo_path mode
   src=$(resolve_manifest_src "$rel") || { echo "unknown id: $rel" >&2; return 1; }

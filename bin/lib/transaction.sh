@@ -392,8 +392,6 @@ tx_shape_commit() {
   local -a paths=("$@") existing=() staged=()
   local p line
   # Stage only what exists on disk or in the index. A pathspec that matches
-  # nothing makes git add fail, and the legacy stores (.replicant-sync,
-  # .replicant-track) are absent from v3 repositories by design.
   for p in "${paths[@]}"; do
     if [[ -e "$REPO_DIR/${p%/}" ]] || [[ -n "$(git -C "$REPO_DIR" ls-files -- "$p" 2>/dev/null)" ]]; then
       existing+=("$p")
@@ -469,8 +467,6 @@ tx_shape_finish() {
 }
 
 # tx_shape_policy_paths: the policy stores every shape commit stages beside
-# its entry paths: the legacy track, sync and profile files (absent from v3
-# repositories by design, so tx_shape_commit skips them there) plus the v3
 # entries record, the vault index and encrypted blobs. One list so the shape
 # transactions in scopes, track and history cannot drift apart.
 tx_shape_policy_paths() {

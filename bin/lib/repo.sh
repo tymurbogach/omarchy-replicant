@@ -25,7 +25,6 @@ repo_remote_url() { git -C "$REPO_DIR" remote get-url origin 2>/dev/null || true
 # so the CLI never shells out to git itself.
 repo_hooks_path() { git -C "$REPO_DIR" config core.hooksPath 2>/dev/null || true; }
 
-# repo_create <name> [do_push] [transport]: point a fresh v3 repo at a new
 # private GitHub repo. Every remote preflight runs before any local mutation:
 # a rejected or failed remote leaves the local repo exactly as it was. A
 # PUBLIC remote is refused, never flipped: flipping it would be a visibility
@@ -159,7 +158,7 @@ repo_pull() {
     return 0
   fi
   moved=$(bash "$REAL_CORE" incoming "$before" "$after" 2>/dev/null)
-  rm -f -- "$REPLICANT_HOME/cache/state-v2.json" 2>/dev/null || true
+  rm -f -- "$REPLICANT_HOME/cache/state.json" 2>/dev/null || true
   if [[ -z "$moved" ]]; then
     echo "pulled — nothing of yours changed" >&2
     return 0
@@ -172,7 +171,6 @@ repo_pull() {
 
 # repo_clone <git-url>: clone into a temp dir beside the final path (same
 # filesystem, so the rename is atomic), validate the staged clone, and move
-# it into place. A v1 or v2 clone is activated as a migration-only source:
 # it is rejected before activation. Any
 # failure removes the staging dir: a failed clone leaves no partial repo.
 repo_clone() {
@@ -199,7 +197,7 @@ repo_clone() {
     return 1
   fi
   git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
-  rm -f -- "$REPLICANT_HOME/cache/state-v2.json" 2>/dev/null || true
+  rm -f -- "$REPLICANT_HOME/cache/state.json" 2>/dev/null || true
   echo "cloned into $REPO_DIR — run omarchy-replicant restore --dry-run" >&2
 }
 
@@ -207,7 +205,7 @@ repo_clone() {
 # Writes nothing outside the stage. Prints the exact recovery command after
 # every remote failure.
 _repo_clone_build() {
-  local url="$1" stage="$2" v branches
+  local url="$1" stage="$2" branches
   if ! bootstrap_fail_at validate; then
     return 1
   fi
@@ -218,28 +216,20 @@ _repo_clone_build() {
     return 1
   }
   if ! git -C "$stage" rev-parse HEAD >/dev/null 2>&1; then
-    echo "the clone worked but checked out nothing — the remote's default branch has no commits." >&2
     branches=$(git -C "$stage" branch -r --format='%(refname:short)' 2>/dev/null | sed 's|^origin/||' | grep -v '^HEAD' | paste -sd' ' -)
-    [[ -n "$branches" ]] && echo "branches that do have them: $branches" >&2
-    echo "nothing to restore from yet — the temporary clone was removed" >&2
-    return 1
+    if [[ -z "$branches" ]]; then
+      echo "the clone worked but the remote is empty. Use 'omarchy-replicant create --push' on the first machine." >&2
+      return 1
+    fi
+    local branch="${branches%% *}"
+    git -C "$stage" checkout -q -B "$branch" "origin/$branch" || {
+      echo "clone: could not check out remote branch $branch" >&2; return 1; }
   fi
-  v=$(REPO_DIR="$stage" repo_data_version)
-  case "$v" in
-    3)
-      ( REPO_DIR="$stage" _schema_marker_valid ) || {
+  if REPO_DIR="$stage" require_ready_schema; then
+      :
+  else
         printf 'clone: the staged schema marker is invalid — the temporary clone was removed; verify the remote, then retry omarchy-replicant clone %s\n' "$url" >&2
         return 1
-      }
-      ( REPO_DIR="$stage" v3_no_legacy_files ) || return 1
-      ( REPO_DIR="$stage" v3_no_plaintext_secrets ) || return 1
-      validate_v3_entries "$stage/.replicant/entries.json" || {
-        printf 'clone: the staged entries are invalid — the temporary clone was removed; verify the remote, then retry omarchy-replicant clone %s\n' "$url" >&2
-        return 1
-      }
-      return 0 ;;
-    *)
-      printf 'clone: the remote is not a valid v3 repository. Create a v3 repository, then retry omarchy-replicant clone %s\n' "$url" >&2
-      return 1 ;;
-  esac
+  fi
+  return 0
 }

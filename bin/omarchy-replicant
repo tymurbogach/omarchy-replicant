@@ -1254,7 +1254,7 @@ cmd_purge() {
     if (( KEEP_REPO )); then
       echo "── would keep for recovery ──" >&2
       for t in "${recovery[@]}"; do echo "  · ${t/#$HOME/\~}" >&2; done
-      echo >&2; info "pass --repo to remove the repository, keys, legacy repositories, and migration recovery data"
+      echo >&2; info "pass --repo to remove the repository and keys"
     else
       echo "── recovery data included by --repo ──" >&2
       for t in "${recovery[@]}"; do echo "  · ${t/#$HOME/\~}" >&2; done

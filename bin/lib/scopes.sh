@@ -22,8 +22,8 @@
 # Both lists live in the repo rather than ~/.local/share, because "monitors are
 # machine-specific" is a fact about the setup, not about one machine: decide it
 # once, and every machine sharing the repo honours it.
-SCOPE_FILE="$REPO_DIR/.replicant-sync"
-PROFILE_FILE="$REPO_DIR/.replicant-profiles"
+REMOVED_SCOPE_FILE="$REPO_DIR/.replicant-sync"
+REMOVED_PROFILE_FILE="$REPO_DIR/.replicant-profiles"
 
 # Seeded on a fresh repo. Not hardcoded rules: they are written into a file the
 # user can see, edit, and change from the panel. These are the files that are
@@ -144,22 +144,20 @@ profile_report() {
 
 # core_profile_set <name> — assign this machine to a profile, creating it.
 # On version 3 the machine JSON record is the only store: no profile file is
-# written. On older layouts the file backend stays for the migration.
 core_profile_set() {
-  require_writable_schema || return 1
+  require_ready_schema || return 1
   local want="$1" line k v
   local -a keep=()
   [[ "$want" =~ ^[a-z0-9][a-z0-9_-]{0,31}$ ]] || {
     echo "profile: use lowercase letters, digits, '-' or '_' (max 32)" >&2; return 1; }
   ensure_repo_layout
-  if repo_is_v3; then
-    v3_require_valid_entries || return 1
+  if repo_is_ready; then
+    require_valid_entries || return 1
     local dir="$REPO_DIR/.replicant/machines"
     mkdir -p "$dir"
     if [[ -f "$dir/$MACHINE.json" ]]; then
       jq --arg profile "$want" --arg client "$(running_version)" \
-        --argjson schema "$SCHEMA_VERSION" \
-        '.profile = $profile | .clientVersion = $client | .schemaVersion = $schema' \
+        '.profile = $profile | .clientVersion = $client' \
         "$dir/$MACHINE.json" > "$dir/$MACHINE.json.new" || return 1
       mv -f -- "$dir/$MACHINE.json.new" "$dir/$MACHINE.json"
     else
@@ -180,7 +178,7 @@ core_profile_set() {
     echo "# Files scoped to a profile live in profiles/<profile>/config/, so two"
     echo "# machines in different profiles never overwrite each other's copy."
     printf '%s\n' "${keep[@]}"
-  } > "$PROFILE_FILE"
+  } > "$REMOVED_PROFILE_FILE"
   briefcache_invalidate
   echo "$MACHINE is now in the '$want' profile" >&2
 }
@@ -213,7 +211,7 @@ load_scope_map() {
   (( SCOPE_MAP_READY )) && return 0
   SCOPE_MAP_READY=1; SCOPE_OF=()
   local line k v vid vsc
-  if repo_is_v3; then
+  if repo_is_ready; then
     if [[ -f "$REPO_DIR/.replicant/entries.json" ]]; then
       while IFS=$'\t' read -r vid vsc; do
         [[ -n "${vid:-}" ]] || continue
@@ -261,7 +259,7 @@ repo_path_into() {
 read_scopes() {
   if (( ! SCOPES_CACHED )); then
     SCOPES_CACHED=1
-    [[ -f "$SCOPE_FILE" ]] && SCOPES_CACHE=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$SCOPE_FILE" 2>/dev/null || true)
+    [[ -f "$REMOVED_SCOPE_FILE" ]] && SCOPES_CACHE=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$REMOVED_SCOPE_FILE" 2>/dev/null || true)
   fi
   [[ -n "$SCOPES_CACHE" ]] && printf '%s\n' "$SCOPES_CACHE"
   return 0
@@ -271,7 +269,6 @@ read_scopes() {
 # On version 3 the answer comes from the shared scope cache that scope_into
 # reads too: the entries record first, the shipped defaults behind it, shared
 # when neither names the id. One resolution path, never two. On older layouts
-# the scope file wins, then the legacy off-list, then the shared default.
 scope_for() {
   local rel="$1"
   load_scope_map
@@ -302,8 +299,8 @@ repo_path_for() {
 print_lines() { (( $# )) || return 0; printf '%s\n' "$@"; }
 
 write_scope_file() {
-  if repo_is_v3; then
-    echo "scope: refusing to write the legacy scope file in a version 3 repo" >&2
+  if repo_is_ready; then
+    echo "scope: entries are stored in .replicant/entries.json" >&2
     return 1
   fi
   local -a keep=("$@")
@@ -314,23 +311,21 @@ write_scope_file() {
     echo "#   <path> = off       never saved from or restored onto any machine"
     echo "# A path that is not listed is shared. Written by the panel; safe to edit."
     print_lines "${keep[@]}"
-  } > "$SCOPE_FILE"
+  } > "$REMOVED_SCOPE_FILE"
   invalidate_scopes_cache
 }
 
-# Seed the scope list on a fresh legacy repo, and migrate the v0.5 flat
 # off-list. On version 3 this is a no-op: scopes live in .replicant/entries.json
 # and no scope file is ever created.
 #
-# EVERY legacy writer must call this before rewriting the file. core_scope once
 # did not, and because read_scopes() sees no .replicant-sync it rebuilt the
 # list from nothing — silently discarding a v0.5 user's entire off-list the
 # first time they touched any file's scope. Reading has a fallback; writing
 # needs the real thing.
 ensure_scope_file() {
-  repo_is_v3 && return 0
-  [[ -f "$SCOPE_FILE" ]] && return 0
-  mkdir -p "$(dirname "$SCOPE_FILE")" 2>/dev/null || true
+  repo_is_ready && return 0
+  [[ -f "$REMOVED_SCOPE_FILE" ]] && return 0
+  mkdir -p "$(dirname "$REMOVED_SCOPE_FILE")" 2>/dev/null || true
   local -a seed=()
   local migrated
   if [[ -f "$LEGACY_EXCLUDE_FILE" ]]; then
@@ -361,7 +356,7 @@ move_repo_copy() {
 
 # core_scope <rel> <shared|profile|off> — the panel's per-file scope control.
 core_scope() {
-  require_writable_schema || return 1
+  require_ready_schema || return 1
   local rel="$1" want="$2" line k old
   local -a keep=()
   case "$want" in shared|profile|off) ;; *)
@@ -370,10 +365,10 @@ core_scope() {
   ensure_scope_file
   old=$(scope_for "$rel")
   [[ "$old" == "$want" ]] && { echo "$rel is already '$want'" >&2; return 0; }
-  if repo_is_v3; then
-    v3_scope_store "$rel" "$want" || return 1
+  if repo_is_ready; then
+    scope_store "$rel" "$want" || return 1
   else
-    mkdir -p "$(dirname "$SCOPE_FILE")"
+    mkdir -p "$(dirname "$REMOVED_SCOPE_FILE")"
     while IFS= read -r line; do
       k="${line%%=*}"; k="${k//[[:space:]]/}"
       [[ "$k" == "$rel" ]] || keep+=("$line")
@@ -402,11 +397,10 @@ core_scope() {
   briefcache_invalidate
 }
 
-# v3_scope_store <rel> <scope>: record one scope decision in the canonical
-# v3 stores. Secrets update their vault index entry; everything else updates
+# scope_store <rel> <scope>: record one scope decision in the canonical
 # .replicant/entries.json, creating an override record for shipped entries
 # that carry non-default policy. Fails before mutation when validation fails.
-v3_scope_store() {
+scope_store() {
   local rel="$1" want="$2" src kind scope source
   if is_secret_rel "$rel"; then
     vault_identity_ok || return 1
@@ -419,7 +413,7 @@ v3_scope_store() {
     vault_index_write "$idx" || return 1
     return 0
   fi
-  v3_require_valid_entries || return 1
+  require_valid_entries || return 1
   src=$(resolve_manifest_src "$rel") || { echo "unknown id: $rel" >&2; return 1; }
   kind=config; is_dir_entry "$rel" && kind=dir
   scope=$(entries_scope_for "$rel")
@@ -430,7 +424,7 @@ v3_scope_store() {
   else
     source=override
   fi
-  v3_entries_upsert "$rel" "$src" "$kind" "$want" "$source" || return 1
+  entries_upsert "$rel" "$src" "$kind" "$want" "$source" || return 1
   return 0
 }
 
@@ -438,7 +432,7 @@ v3_scope_store() {
 # Validate the complete selection before changing the scope file or moving a
 # repository copy. The CLI commits the resulting shape as one decision.
 core_scope_bulk() {
-  require_writable_schema || return 1
+  require_ready_schema || return 1
   local want="$1" id src old from to
   shift || true
   [[ "$want" == shared || "$want" == profile || "$want" == off ]] || {
@@ -473,9 +467,9 @@ core_scope_bulk() {
   done
 
   ensure_scope_file
-  if repo_is_v3; then
+  if repo_is_ready; then
     for id in "${ids[@]}"; do
-      v3_scope_store "$id" "$want" || return 1
+      scope_store "$id" "$want" || return 1
     done
   else
     while IFS= read -r line; do

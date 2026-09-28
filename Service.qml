@@ -66,6 +66,6 @@ Item {
   IpcHandler {
     target: "omarchy-replicant"
     function status(): string { return JSON.stringify(root.replicantState) }
-    function refresh(): void { root.refresh(true) }
+    function refresh() { root.refresh(true) }
   }
 }

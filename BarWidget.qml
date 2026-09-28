@@ -253,9 +253,9 @@ BarWidget {
   // second was documented, so the one handler now has that name.
   IpcHandler {
     target: "replicant"
-    function open(): void { root.open() }
-    function close(): void { root.close() }
-    function toggle(): void { root.toggle() }
+    function open() { root.open() }
+    function close() { root.close() }
+    function toggle() { root.toggle() }
     function isOpen(): string { return root.opened ? "open" : "closed" }
     // tab overview|configs|settings|restore — opens the panel if it is closed.
     // Answers "no such tab" rather than silently doing nothing, so a keybinding

@@ -23,7 +23,7 @@
 
 # briefcache_file: the cache path. Machine-local on purpose, like incoming.
 briefcache_file() {
-  printf '%s\n' "$REPLICANT_HOME/cache/state-v2.json"
+  printf '%s\n' "$REPLICANT_HOME/cache/state.json"
 }
 
 # briefcache_invalidate: drop the cache. Never fails, so callers under
@@ -119,7 +119,7 @@ briefcache_write() {
   inhash=$(briefcache_incoming_hash)
   kstate=$(briefcache_key_state)
   registry_build 2>/dev/null || return 0
-  tmp=$(mktemp -- "$cachedir/.state-v2.XXXXXX") || return 0
+  tmp=$(mktemp -- "$cachedir/.state.XXXXXX") || return 0
   local entry rel regrow kind live repo blob live_sig repo_sig blob_sig
   local -a rf=()
   {

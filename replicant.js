@@ -55,6 +55,7 @@ function stateRole(st) {
 // remote action is available without changing the per-file compatibility field.
 function remoteStateWord(st) {
   if (st === "local-only") return "No remote"
+  if (st === "remote-missing") return "GitHub repository is missing"
   if (st === "offline") return "Remote offline"
   if (st === "ahead") return "Local commits not pushed"
   if (st === "behind") return "Remote commits pending"
@@ -64,7 +65,7 @@ function remoteStateWord(st) {
 }
 
 function remoteStateRole(st) {
-  if (st === "offline" || st === "behind" || st === "diverged") return "warn"
+  if (st === "offline" || st === "remote-missing" || st === "behind" || st === "diverged") return "warn"
   if (st === "ahead") return "accent"
   if (st === "synced") return "ok"
   return "dim"

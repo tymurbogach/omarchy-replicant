@@ -113,7 +113,7 @@ core_recover() {
   for p in "${files[@]}"; do echo "  + $p" >&2; done
   for line in ${lines[@]+"${lines[@]}"}; do echo "  + tracked again: $line" >&2; done
   if (( dry )); then skip "dry-run: nothing was touched. Repeat with --apply"; return 0; fi
-  require_writable_schema || return 1
+  require_ready_schema || return 1
 
   if (( ${#lines[@]} )); then
     ensure_track_file

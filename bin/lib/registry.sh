@@ -4,9 +4,7 @@
 # functions and data and runs nothing. Other modules read its data.
 #
 # Four sources name entries, and each used to be read where it was needed: the
-# shipped lists (MANIFEST, SECRETS_MANIFEST), the v2 policy file
 # (.replicant/entries.json), the discovered lists (user and auto), and the
-# decrypted secret index (vault/index.age on v2). Four readers meant four
 # answers to "what is tracked", so every loop that means "everything" joins
 # them here instead.
 #
@@ -15,8 +13,6 @@
 #   id, kind, source, category, scope, live path, repository path, blob, locked
 #
 # kind is config, dir or secret. source is manifest, user, auto or override.
-# scope is shared, profile or off. A v2 secret carries its opaque blob id and
-# locked tells whether this machine can read it; a v1 secret carries neither.
 # The restore policy is not a field: a secret restores at mode 600 and every
 # other entry restores as-is, then runs its category's apply step.
 
@@ -31,7 +27,6 @@ row_split() {
 }
 
 # registry_build: fill REGISTRY from every source. Precedence when two sources
-# name one id: a v2 override record wins over the shipped entry, and a user
 # entry wins over an auto-discovered one (load_auto_manifest already refuses
 # paths the user listed, and the guard here keeps that true if it ever slips).
 registry_build() {
@@ -73,11 +68,9 @@ registry_build() {
   # so an absent file here changes nothing. A present but invalid file fails
   # loudly: resolving its ids against the shipped default would point repo
   # paths at the wrong place.
-  local v2=0
-  [[ "$(repo_data_version 2>/dev/null)" == 2 || "$(repo_data_version 2>/dev/null)" == 3 ]] && v2=1
-  if (( v2 )) && [[ -f "$REPO_DIR/.replicant/entries.json" ]]; then
+  if repo_is_ready; then
     local rows id p k s o
-    if ! rows=$(load_v3_entries 2>/dev/null); then
+    if ! rows=$(load_entries 2>/dev/null); then
       printf 'registry: %s is invalid\n' "$REPO_DIR/.replicant/entries.json" >&2
       return 1
     fi
@@ -99,7 +92,7 @@ registry_build() {
   if repo_has_vault; then
     vidx=$(vault_index_decrypt 2>/dev/null || true)
   fi
-  if repo_is_v3 && [[ -n "$vidx" ]]; then
+  if repo_is_ready && [[ -n "$vidx" ]]; then
     local vid vpath vscope vsource
     while IFS=$'\t' read -r vid vpath vscope vsource; do
       [[ -n "${vid:-}" ]] || continue
@@ -138,17 +131,15 @@ registry_build() {
           repo="$blobs/$blob.age"
         fi
         # On version 3 the index is the canonical scope for a saved secret:
-        # v3_scope_store keeps it in sync, so it wins over every other
+        # scope_store keeps it in sync, so it wins over every other
         # resolution path. Older layouts keep the scope file answer: their
         # scope changes never touch the index.
-        if repo_is_v3 && [[ -n "$vidx" ]]; then
+        if repo_is_ready && [[ -n "$vidx" ]]; then
           local idx_scope
           idx_scope=$(jq -r --arg sid "$id" '.secrets[] | select(.id == $sid) | .scope // empty' <<<"$vidx")
           case "$idx_scope" in shared|profile|off) scope="$idx_scope" ;; esac
         fi
         [[ -z "$vidx" ]] && locked="true"
-      else
-        repo="$SECRETS_DIR/$id"
       fi
     else
       if [[ "$scope" == "profile" ]]; then

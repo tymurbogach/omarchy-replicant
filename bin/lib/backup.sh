@@ -8,7 +8,7 @@ core_backup() {
     core_init
     return
   fi
-  require_writable_schema || return 1
+  require_ready_schema || return 1
   briefcache_invalidate
   # Bash scopes dynamically, and the CLI sources this file, so a name assigned
   # here without `local` leaked into the caller: src, rel, entry and twelve more.

@@ -12,7 +12,7 @@
 # one person's Claude hooks, their audit script and their fingerprint-reader
 # unit — which every installer then saw as a screenful of "missing" rows for
 # files they had never heard of, while none of their OWN files were tracked at
-# all. Anything personal now lives in the user's list (see USER_TRACK_FILE
+# all. Anything personal now lives in the user's list (see REMOVED_TRACK_FILE
 # below), inside their own repo, where it travels between their machines
 # without being published to everybody else's.
 #
@@ -89,13 +89,13 @@ RETIRED_SHIPPED=(
 )
 
 migrate_retired_shipped() {
-  [[ -f "$USER_TRACK_FILE" ]] || return 0
+  [[ -f "$REMOVED_TRACK_FILE" ]] || return 0
   local entry src rel moved=0
   for entry in "${RETIRED_SHIPPED[@]}"; do
     src="${entry%%:*}"; rel="${entry##*:}"
     is_user_entry "$rel" && continue
     [[ -e "$(repo_path_for "$rel")" ]] || continue
-    track_line_for "$src" "$rel" config >> "$USER_TRACK_FILE"
+    track_line_for "$src" "$rel" config >> "$REMOVED_TRACK_FILE"
     moved=$((moved + 1))
   done
   (( moved )) || return 0
@@ -132,10 +132,10 @@ migrate_retired_shipped() {
 # This can only protect against versions that know about the file, which means
 # 0.7.0 onwards. There is no way to teach an already-released client to check —
 # the honest answer for a 0.6 machine is to upgrade it, and doctor says so.
-REPO_VERSION_FILE="$REPO_DIR/.replicant-version"
+REMOVED_VERSION_FILE="$REPO_DIR/.replicant-version"
 
 running_version() { jq -r '.version // "0"' "$PLUGIN_DIR/manifest.json" 2>/dev/null || echo 0; }
-repo_written_by() { [[ -f "$REPO_VERSION_FILE" ]] && head -n1 "$REPO_VERSION_FILE" | tr -d '[:space:]' || echo ""; }
+repo_written_by() { [[ -f "$REMOVED_VERSION_FILE" ]] && head -n1 "$REMOVED_VERSION_FILE" | tr -d '[:space:]' || echo ""; }
 
 # version_lt <a> <b> — true when a is strictly older than b.
 version_lt() {
@@ -150,7 +150,7 @@ record_repo_version() {
   running=$(running_version); seen=$(repo_written_by)
   [[ -n "$running" && "$running" != "0" ]] || return 0
   if [[ -z "$seen" ]] || version_lt "$seen" "$running"; then
-    printf '%s\n' "$running" > "$REPO_VERSION_FILE"
+    printf '%s\n' "$running" > "$REMOVED_VERSION_FILE"
   fi
 }
 
@@ -225,28 +225,24 @@ rebuild_tracked() {
   TRACKED_SECRETS=("${SECRETS_MANIFEST[@]}" ${USER_SECRETS[@]+"${USER_SECRETS[@]}"})
 }
 
-# Reading has a fallback; writing needs the real migration (ensure_track_file).
 # A repo written before 0.7 has no .replicant-track, but its config/ is full of
-# files the old core tracked — so until the migration runs we read the same set
-# the migration is going to write. Without this, the first command after an
 # upgrade would see those files as untracked and core_backup's prune pass would
 # delete every one of them from the repo.
 load_user_manifest() {
   USER_MANIFEST=(); USER_SECRETS=()
-  if repo_is_v3; then load_v3_user_manifest || return 1; fi
+  if repo_is_ready; then load_user_entries || return 1; fi
   rebuild_tracked
 }
 
-# load_v3_user_manifest: the user's own entries from the canonical v3
 # records. Config entries come from .replicant/entries.json with source
 # user; secret entries come from the decrypted vault index. A locked vault
 # contributes no secrets: those rows render locked from the index state, not
 # from this list.
-load_v3_user_manifest() {
+load_user_entries() {
   local id p k s o vidx
   if [[ -f "$REPO_DIR/.replicant/entries.json" ]]; then
     local rows
-    rows=$(load_v3_entries 2>/dev/null) || return 1
+    rows=$(load_entries 2>/dev/null) || return 1
     while IFS=$'\t' read -r id p k s o; do
       [[ -n "${id:-}" && "$o" == user ]] || continue
       USER_MANIFEST+=("$p:$id")

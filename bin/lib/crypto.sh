@@ -1,5 +1,4 @@
 # shellcheck shell=bash disable=SC2034
-# crypto.sh: encrypted secrets for v2 repos. Sourced by replicant-core.sh,
 # which sets the paths it uses. It defines functions and data and runs nothing.
 #
 # One shared post-quantum age identity lives at $REPLICANT_HOME/keys/, never
@@ -241,7 +240,7 @@ vault_new_blob_id() {
 # vault_index_version: the index version this repo uses. Version 1 carries
 # {id, scope, blob}; version 2 adds the secret path and source, so custom
 # secrets are discoverable from the encrypted index alone.
-vault_index_version() { if repo_is_v3; then printf '2\n'; else printf '1\n'; fi; }
+vault_index_version() { printf '2\n'; }
 
 # vault_index_validate [index-json]: 0 when the decrypted index is sound for
 # this repo. Every failure names the entry and the rule. Validation reads,
@@ -282,7 +281,7 @@ vault_index_decrypt() {
   local idx
   idx=$(vault_index_file)
   if [[ ! -f "$idx" ]]; then
-    if repo_is_v3; then printf '{"version":2,"secrets":[]}\n'; else printf '{"version":1,"secrets":[]}\n'; fi
+    printf '{"version":2,"secrets":[]}\n'
     return 0
   fi
   local idf plaindir plain
@@ -372,7 +371,7 @@ vault_save_entry() {
   _vault_drop_tree "$encdir"
   local scope
   scope_into scope "$rel"
-  if repo_is_v3; then
+  if repo_is_ready; then
     jq -c --arg id "$rel" --arg path "$src" --arg scope "$scope" \
       --arg source "$source" --arg blob "$blob" \
       '.secrets |= (map(select(.id != $id)) + [{id: $id, path: $path, scope: $scope, source: $source, blob: $blob}])' <<<"$idx"
@@ -394,7 +393,6 @@ vault_empty() {
   return 0
 }
 
-# vault_save_all: the v2 half of the backup's secret pass. Without a usable
 # key nothing secret mutates — except the very first save, which has no vault
 # to protect yet: it saves the config and says to run key init and save
 # again. (Requiring the key there too would deadlock init, which needs a repo
@@ -689,13 +687,11 @@ vault_restore_entry_privileged() {
 # key_init: one shared post-quantum identity for this setup, plus the repo's
 # recipient. Refuses to overwrite an existing identity (rotate is the way to
 # replace one) and refuses repos older than version 3 (their secrets live in
-# plaintext under secrets/ on v1, or in a version 1 index on v2, until the
-# initial v3 repository creation).
 key_init() {
   crypto_require_keygen_pq || return 1
   [[ -e "$REPO_DIR/.git" ]] || { printf 'key: no repo here — run create, clone or init first\n' >&2; return 1; }
-  [[ "$(repo_data_version)" == 3 ]] || {
-    printf 'key: this repo uses the version %s layout — encrypted secrets need a version 3 repo\n' "$(repo_data_version)" >&2
+  require_ready_schema || {
+    printf 'key: this repository is not ready for encrypted secrets\n' >&2
     return 1
   }
   local idf recf

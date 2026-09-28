@@ -56,7 +56,9 @@ report() {
   local header=$1 hits=$2
   [[ -n $hits ]] || return 0
   echo "✗ $header"
-  printf '%s\n' "$hits" | sed 's/^/    /'
+  # Do not print a matched line. Scanner output often reaches the panel, logs,
+  # and support reports, where the credential must never appear.
+  printf '%s\n' "$hits" | sed -E 's/^([^:]+):([0-9]+):.*/    \1:\2: match redacted/'
   fail=1
 }
 

@@ -54,6 +54,8 @@ Panel {
   property string createRepoName: ""
   property string createTransport: "https"
   property bool createDialogOpen: false
+  property string cloneRepoUrl: ""
+  property bool cloneDialogOpen: false
 
   property string lastOutput: ""
   property bool lastOk: true
@@ -724,13 +726,31 @@ Panel {
     root.createDialogOpen = false
     root.closeTransient()
   }
+  function openCloneDialog() {
+    root.openTransient("clone-repo")
+    root.cloneRepoUrl = ""
+    root.cloneDialogOpen = true
+    Qt.callLater(function() { cloneUrlField.forceActiveFocus() })
+  }
+  function closeCloneDialog() {
+    root.cloneDialogOpen = false
+    root.closeTransient()
+  }
+  function cloneRepo() {
+    var url = root.cloneRepoUrl.trim()
+    if (url === "") return
+    root.cloneDialogOpen = false
+    root.transientView = ""
+    root.busyLabel = "Connecting to your private repo…"
+    controller.run("clone", [root.cli, "clone", url], { label: "Connect repo", exclusive: true })
+  }
   function createRepo() {
     var name = root.createRepoName.trim()
     if (!R.repoNameValid(name) || !root.githubReady()) return
     root.createDialogOpen = false
     root.ask("create-repo", name + "|" + root.createTransport,
              "Create the private GitHub repo " + name + " using " + root.createTransport.toUpperCase() + " and push this machine into it?",
-             "Create private repo")
+             "Create")
   }
   function startGithubLogin() { root.setupPollAttempts = 10; root.setupStatusLoaded = false; root.runVisible(root.cli + " login") }
 
@@ -1074,11 +1094,6 @@ Panel {
              + "\n\nOmarchy's plugin update installs and checks it, and the shell restarts to load it. Your data repo is not touched.",
              "Update")
   }
-  function askMigrationCleanup() {
-    root.ask("migration-confirm", "",
-             "Confirm that you rotated relevant credentials, deleted or secured the legacy remote, and removed or secured the legacy local copy.",
-             "Confirm cleanup")
-  }
 
   // ── confirmations ─────────────────────────────────────────────────────────
   // Every destructive action is confirmed here rather than in a terminal, and
@@ -1120,7 +1135,6 @@ Panel {
     else if (a === "undo")          { root.doUndo(arg); return }
     else if (a === "prune-backups") { root.doPruneBackups(); return }
     else if (a === "update")        { root.busyLabel = "Updating Replicant…"; controller.run("update", [root.cli, "update", "--yes", "--restart"], { label: "Update" }); return }
-    else if (a === "migration-confirm") { root.busyLabel = "Recording migration confirmation…"; command = [root.cli, "migration-confirm"]; label = "Migration" }
     else if (a === "create-repo") {
       var createParts = arg.split("|")
       root.busyLabel = "Creating your private repo…"
@@ -1279,12 +1293,12 @@ Panel {
     }
   }
 
-  // Terminal-backed flows: these two genuinely need a terminal, because they
-  // prompt for a GitHub login / a repo URL. Everything else runs headless.
+  // GitHub login needs a terminal. Repository URLs use the panel dialog so a
+  // terminal wrapper cannot lose the field that collects the URL.
   function run(cmd) { if (bar) bar.run(cmd) }
   function runVisible(cmd) { root.run("omarchy-launch-floating-terminal-with-presentation " + root.shellQuote(cmd)) }
   function doCreate() { root.openCreateDialog() }
-  function doClone()  { root.runVisible(root.cli + " clone"); root.close() }
+  function doClone()  { root.openCloneDialog() }
   function openUrl(url) { root.run("xdg-open " + root.shellQuote(url)); root.close() }
   function openRepoFolder() { root.openUrl(root.repoState.repo_dir || "") }
 
@@ -1320,6 +1334,7 @@ Panel {
     root.viewerOpen = false
     root.keyboardHelpOpen = false
     root.createDialogOpen = false
+    root.cloneDialogOpen = false
     confirmDialog.opened = false
     root.confirmAction = ""
     root.confirmArg = ""
@@ -1401,19 +1416,20 @@ Panel {
         else if (root.viewerOpen) root.closeViewer()
         else if (confirmDialog.opened) root.cancelConfirmation()
         else if (root.createDialogOpen) root.closeCreateDialog()
+        else if (root.cloneDialogOpen) root.closeCloneDialog()
         else if (root.openRow !== "") root.openRow = ""
         else if (root.keyboardFocus.kind === "card" && root.isOpen(root.keyboardFocus.id))
           root.toggleCard(root.keyboardFocus.id)
         else root.close()
       }
       onTextKey: function(t) {
-        if (t === "?" && !root.viewerOpen && !confirmDialog.opened && !root.createDialogOpen) {
+        if (t === "?" && !root.viewerOpen && !confirmDialog.opened && !root.createDialogOpen && !root.cloneDialogOpen) {
           root.keyboardHelpOpen = !root.keyboardHelpOpen
           if (root.keyboardHelpOpen) root.loadShortcuts()
           return
         }
         if (root.keyboardHelpOpen) return
-        if (root.viewerOpen || confirmDialog.opened || root.createDialogOpen) return
+        if (root.viewerOpen || confirmDialog.opened || root.createDialogOpen || root.cloneDialogOpen) return
         if (t === "1") root.activeTab = "overview"
         else if (t === "2") root.activeTab = "configs"
         else if (t === "3") root.activeTab = "settings"
@@ -1685,7 +1701,9 @@ Panel {
             foreground: root.fg; accent: Color.accent; font.family: root.ff
             onTextChanged: root.createRepoName = text
             onActiveFocusChanged: root.noteFocus(createNameField, activeFocus)
-            onAccepted: root.createRepo()
+            // Enter moves to the explicit action. It must not create a remote
+            // repository while the person is still editing its name.
+            onAccepted: createRepoButton.forceActiveFocus()
           }
           Text {
             visible: createDialog.createRepoNameFieldInvalid()
@@ -1721,6 +1739,7 @@ Panel {
               onClicked: root.closeCreateDialog()
             }
             Button {
+              id: createRepoButton
               text: "Create private repo"; iconText: root.icPlus; bordered: true
               foreground: Color.accent; accent: Color.accent; fontFamily: root.ff
               enabled: root.githubReady() && !createDialog.createRepoNameFieldInvalid()
@@ -1730,6 +1749,62 @@ Panel {
         }
         function createRepoNameFieldInvalid() {
           return !R.repoNameValid(root.createRepoName)
+        }
+      }
+
+      BorderSurface {
+        id: cloneDialog
+        visible: root.cloneDialogOpen
+        anchors.centerIn: parent
+        width: Math.min(parent.width - Style.space(24), Style.space(520))
+        implicitHeight: cloneColumn.implicitHeight + Style.space(24)
+        z: 55
+        color: Color.popups.background
+        borderSpec: Border.controlSpec("focus", root.fg, Color.accent)
+        radius: Style.cornerRadius
+        Column {
+          id: cloneColumn
+          anchors.fill: parent
+          anchors.margins: Style.space(12)
+          spacing: Style.space(8)
+          Text {
+            text: "Connect your private repo"
+            color: root.fg; font.family: root.ff; font.pixelSize: Style.font.title; font.bold: true
+          }
+          Text {
+            width: parent.width
+            text: "Paste the GitHub URL for the private repo you already created."
+            color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
+          }
+          TextField {
+            id: cloneUrlField
+            width: parent.width
+            placeholderText: "https://github.com/you/your-repo.git"
+            text: root.cloneRepoUrl
+            foreground: root.fg; accent: Color.accent; font.family: root.ff
+            onTextChanged: root.cloneRepoUrl = text
+            onActiveFocusChanged: root.noteFocus(cloneUrlField, activeFocus)
+            onAccepted: cloneRepoButton.forceActiveFocus()
+          }
+          Text {
+            visible: root.cloneRepoUrl.trim() === ""
+            text: "Enter the private repository URL."
+            color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption
+          }
+          Row {
+            spacing: Style.space(8)
+            Button {
+              text: "Cancel"; bordered: true; fontFamily: root.ff; foreground: root.dim
+              onClicked: root.closeCloneDialog()
+            }
+            Button {
+              id: cloneRepoButton
+              text: "Connect"; iconText: root.icBranch; bordered: true
+              foreground: Color.accent; accent: Color.accent; fontFamily: root.ff
+              enabled: root.cloneRepoUrl.trim() !== ""
+              onClicked: root.cloneRepo()
+            }
+          }
         }
       }
 

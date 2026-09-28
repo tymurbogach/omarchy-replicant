@@ -81,21 +81,14 @@ omarchy-replicant scope hypr/input.lua profile
 omarchy-replicant policy set --scope off -- hypr/input.lua hypr/hyprlock.conf
 ```
 
-### Status and migration
+### Status
 
-Full JSON status uses one `entries` array and publishes `schema_version: 3`. A v1 or v2 repository is read-only
-here and reports that migration is required.
+Full JSON status uses one `entries` array and publishes `schema_version: 3`.
+Replicant accepts only a valid v3 repository with an encrypted vault.
 
 ```bash
 omarchy-replicant status --json
-omarchy-replicant migrate-v3 --remote /path/to/empty-private-remote \
-  --identity-backup /path/outside/replicant/identity.txt --yes
 ```
-
-Without `--yes` the command prints the migration summary and stops. With `--yes` you acknowledge
-that every recorded machine is upgraded or offline. Migration creates a new encrypted repository,
-verifies an independent clone, and keeps the old repository under `legacy-repo-<epoch>`. It never
-deletes old local or remote data.
 
 ### A key for secrets
 

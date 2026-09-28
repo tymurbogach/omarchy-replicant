@@ -13,6 +13,7 @@ Item {
   property bool finishing: false
 
   signal exited(int code)
+  signal errorOccurred(var error)
 
   Timer {
     id: progressTimer

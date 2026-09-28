@@ -690,7 +690,7 @@ vault_restore_entry_privileged() {
 # recipient. Refuses to overwrite an existing identity (rotate is the way to
 # replace one) and refuses repos older than version 3 (their secrets live in
 # plaintext under secrets/ on v1, or in a version 1 index on v2, until the
-# migrate-v3 migration).
+# initial v3 repository creation).
 key_init() {
   crypto_require_keygen_pq || return 1
   [[ -e "$REPO_DIR/.git" ]] || { printf 'key: no repo here — run create, clone or init first\n' >&2; return 1; }

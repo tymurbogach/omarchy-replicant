@@ -34,21 +34,6 @@ write_track_file() {
 # no-op: user entries live in .replicant/entries.json and the vault index, and
 # no track file is ever created.
 ensure_track_file() {
-  repo_is_v3 && return 0
-  [[ -f "$USER_TRACK_FILE" ]] && return 0
-  mkdir -p "$(dirname "$USER_TRACK_FILE")" 2>/dev/null || true
-  local -a seed=() entry
-  for entry in "${LEGACY_PERSONAL[@]}"; do
-    migrate_legacy_personal_present "$entry" && seed+=("$(track_line_for "${entry%%:*}" "${entry##*:}" config)")
-  done
-  for entry in "${LEGACY_PERSONAL_SECRETS[@]}"; do
-    [[ -f "${entry%%:*}" || -f "$SECRETS_DIR/${entry##*:}" ]] &&
-      seed+=("$(track_line_for "${entry%%:*}" "${entry##*:}" secret)")
-  done
-  write_track_file ${seed[@]+"${seed[@]}"}
-  (( ${#seed[@]} )) &&
-    echo "  · ${#seed[@]} entry(ies) that used to be hardcoded are now yours, in .replicant-track" >&2
-  load_user_manifest
   return 0
 }
 

@@ -7,14 +7,13 @@
 # scanner, it blocks the commit. It used to exit 0 in that case, and the
 # scanner is the last check between a token and GitHub.
 precommit_hook_text() {
-  cat <<'HOOK'
+  cat <<'HOOK' | sed "s|@PLUGIN_DIR@|$PLUGIN_DIR|g"
 #!/bin/bash
 set -uo pipefail
 REPO=$(git rev-parse --show-toplevel)
 files=$(git diff --cached --name-only --diff-filter=ACM)
 [[ -z $files ]] && exit 0
-SCAN="$REPO/bin/scan-secrets.sh"
-[[ -x "$SCAN" ]] || SCAN="$HOME/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/bin/scan-secrets.sh"
+SCAN="@PLUGIN_DIR@/bin/scan-secrets.sh"
 if [[ ! -x "$SCAN" ]]; then
   echo "COMMIT BLOCKED: the secret scanner is missing. Run 'omarchy-replicant backup' to put it back." >&2
   exit 1
@@ -61,7 +60,7 @@ ensure_repo_layout() {
   # the scope and track ensures below, so those gates see the marker and a
   # fresh v3 repo never grows legacy policy files. A repo that already has
   # history keeps whatever it has: v1 and v2 stay readable until the
-  # migrate-v3 migration, and a v3 clone only refreshes this machine's own
+  # repository creation, and a v3 clone only refreshes this machine's own
   # metadata below.
   # -e, not -d: a save transaction works in a linked worktree, whose .git is
   # a file pointing at the main repo. Re-running init there would break it.
@@ -85,14 +84,10 @@ ensure_repo_layout() {
     invalidate_scopes_cache
   else
     git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
-    if [[ "$(repo_data_version)" == 3 ]]; then machine_metadata_write; fi
+    require_writable_schema || return 1
+    machine_metadata_write
   fi
   ensure_scope_file
-  if ! repo_is_v3; then
-    ensure_track_file
-    migrate_retired_shipped
-  fi
-  record_repo_version
   mkdir -p "$REPO_DIR/profiles/$(current_profile)/config" 2>/dev/null || true
   install -d -m 700 "$SECRETS_DIR" 2>/dev/null || mkdir -p "$SECRETS_DIR"
   # The hook is kept in step with the plugin, like the scanner below. It was
@@ -102,23 +97,6 @@ ensure_repo_layout() {
     precommit_hook_text > "$GITHOOKS_DIR/pre-commit"
   fi
   chmod +x "$GITHOOKS_DIR/pre-commit"
-  # scan-secrets bin — kept in step with the plugin, not just seeded once.
-  #
-  # The repo's pre-commit hook runs THIS copy, so a repo created in June was
-  # still checking for the four credential shapes the plugin knew about then.
-  # Teaching the plugin a new one has to reach the repos that already exist, or
-  # the improvement only ever protects people who install for the first time.
-  # It is plugin-provided infrastructure, not the user's data, and every
-  # version of it is in git — so replacing it is safe and is the point.
-  if [[ -f "$PLUGIN_DIR/bin/scan-secrets.sh" ]]; then
-    if ! cmp -s "$PLUGIN_DIR/bin/scan-secrets.sh" "$REPO_DIR/bin/scan-secrets.sh" 2>/dev/null; then
-      mkdir -p "$REPO_DIR/bin"
-      [[ -f "$REPO_DIR/bin/scan-secrets.sh" ]] &&
-        echo "  · updating the repo's secret scanner to this version's" >&2
-      cp -a "$PLUGIN_DIR/bin/scan-secrets.sh" "$REPO_DIR/bin/scan-secrets.sh"
-    fi
-  fi
-  chmod +x "$REPO_DIR/bin/scan-secrets.sh" 2>/dev/null || true
   # .gitignore — savegame style (state/ is generated, .bak.* ignored, secrets/ tracked)
   if [[ ! -f "$REPO_DIR/.gitignore" ]]; then
     cat >"$REPO_DIR/.gitignore" <<'GI'

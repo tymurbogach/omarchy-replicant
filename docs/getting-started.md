@@ -116,10 +116,6 @@ differ.
 If another machine pushed first, **Save to GitHub** commits on this machine and says that the push
 failed. Press **Pull**, then save again.
 
-> On a version 1 or 2 repository, every writer refuses until you migrate. Run `migrate-v3` from a
-> terminal: without `--yes` it prints the summary and stops, with `--yes` you acknowledge that every
-> recorded machine is upgraded or offline. The old repository stays under `legacy-repo-<epoch>`.
-
 ## 5. Files the plugin does not ship with
 
 The tracked list has two halves. The plugin ships the paths that any Omarchy machine plausibly has.
@@ -220,7 +216,7 @@ use `save --all -m "why"` to give the commit a reason. Use `save --all --auto` t
 from the changed paths. `push` sends the commits that you already have, and touches nothing else.
 
 Version 0.14 removes the old `savegame`, `backup`, `migrate-v2`, `sync` and `init --savegame`
-commands. Use `save`, `migrate-v3`, and `scope` instead. Repository creation still requires GitHub
+commands. Use `save` and `scope` instead. Repository creation still requires GitHub
 API authentication. SSH remains a Git transport for push and pull.
 
 ## 10. If a restore was wrong

@@ -173,7 +173,7 @@ repo_pull() {
 # repo_clone <git-url>: clone into a temp dir beside the final path (same
 # filesystem, so the rename is atomic), validate the staged clone, and move
 # it into place. A v1 or v2 clone is activated as a migration-only source:
-# it stays readable, and every writer refuses it until migrate-v3 runs. Any
+# it is rejected before activation. Any
 # failure removes the staging dir: a failed clone leaves no partial repo.
 repo_clone() {
   local url="$1" parent stage
@@ -226,22 +226,20 @@ _repo_clone_build() {
   fi
   v=$(REPO_DIR="$stage" repo_data_version)
   case "$v" in
-    1|2)
-      printf 'cloned a version %s repository — it is migration-only here (read-only); migrate it to version 3 with migrate-v3, then retry\n' "$v" >&2
-      return 0 ;;
     3)
       ( REPO_DIR="$stage" _schema_marker_valid ) || {
         printf 'clone: the staged schema marker is invalid — the temporary clone was removed; verify the remote, then retry omarchy-replicant clone %s\n' "$url" >&2
         return 1
       }
       ( REPO_DIR="$stage" v3_no_legacy_files ) || return 1
+      ( REPO_DIR="$stage" v3_no_plaintext_secrets ) || return 1
       validate_v3_entries "$stage/.replicant/entries.json" || {
         printf 'clone: the staged entries are invalid — the temporary clone was removed; verify the remote, then retry omarchy-replicant clone %s\n' "$url" >&2
         return 1
       }
       return 0 ;;
     *)
-      printf 'clone: the remote uses data format %s, this client writes up to %s — update the plugin, then retry omarchy-replicant clone %s\n' "$v" "$SCHEMA_VERSION" "$url" >&2
+      printf 'clone: the remote is not a valid v3 repository. Create a v3 repository, then retry omarchy-replicant clone %s\n' "$url" >&2
       return 1 ;;
   esac
 }

@@ -44,8 +44,6 @@ This document describes the data model of the plugin and the rules that the code
 | `save.sh` | Saves as transactions: snapshot, one commit, fast-forward, push |
 | `transaction.sh` | The one journal and lifecycle every mutation shares: worktree transactions, shape commits, resume, atomic installs |
 | `bulk.sh` | Validates and applies multi-entry changes in one transaction |
-| `migrate.sh` | Migrates clean v1 and v2 repositories into a new encrypted v3 repository; owns every legacy policy read |
-| `legacy.sh` | Legacy repository paths, migration compatibility and cleanup policy |
 | `progress.sh` | Structured progress and result events for long CLI operations |
 | `restore.sh` | The restore plan for each area, and how each area is put back |
 | `plugins.sh` | Plugins and themes: origins, inventories, and installs on request |
@@ -124,18 +122,13 @@ The plugin is built for a desktop and a laptop that share one private repo.
   a personal path or name in `bin/`.
 - The user's own entries live in the user's repo: config entries as `user` records in
   `.replicant/entries.json`, secret entries in the encrypted vault index. They live in the repo,
-  because "back up my script" is a decision about the setup. Version 1 and 2 kept them in a
-  legacy `.replicant-track` file; migration carries them into the v3 repository records.
+  because "back up my script" is a decision about the setup.
 - `rebuild_tracked` joins the shipped list, the user's list and the found entries into `TRACKED`
   and `TRACKED_SECRETS`. Every loop that means "everything tracked" reads those two arrays.
-- `load_user_manifest` has a read-only fallback, and `ensure_track_file` does the migration. Without
-  the fallback, the first command after an upgrade would see a 0.6 repo's copies as untracked.
 - A shipped entry that exists neither here nor in the repo draws no row. An entry that the repo
   holds a copy of always shows, because "it was here and now it is not" must not be hidden.
 - `untrack` refuses a shipped entry and says to use `scope <id> off`. Untracking removes the row and
   the repo copy, so a file that the next release tracks again would be lost.
-- `RETIRED_SHIPPED` lists entries that an earlier release shipped. If the repo holds a copy,
-  `migrate_retired_shipped` moves the entry into the user's list once, so the prune pass keeps it.
 
 Entries that are found rather than listed join `TRACKED` like every other entry:
 
@@ -325,8 +318,8 @@ commits arrive knows which one is right, so that moment writes it down.
 
 - `bin/scan-secrets.sh` is the only list of credential shapes. The data repo's pre-commit hook and
   the backup both use it. The backup scans `config/`, this machine's `state/` and this profile's tree.
-- The hook is rewritten whenever it differs from the plugin's version. It fails closed: a missing
-  scanner blocks the commit. The hook lets vault ciphertext (`*.age`) through.
+- The hook uses the scanner from the plugin installation. It fails closed: a missing scanner blocks
+  the commit. The hook lets vault ciphertext (`*.age`) through.
 - A secret is never rendered. `core_diff` says only whether a secret differs, and the JSON carries a
   kind and a mode, never values. It carries only a count, and a locked row carries no count.
   See hard rule 11 in `CONTRIBUTING.md`.
@@ -368,24 +361,14 @@ commits arrive knows which one is right, so that moment writes it down.
   encrypted index. Other entries carry a boolean `saved` and `savedKnown: true`.
 - Full and brief status derive their unsaved, incoming, locked and missing counts from the same entry
   state. Full status excludes implicit entries that are absent on the machine and in the repo.
-- The full payload also carries `counts`, `encryption` and `migration`. The brief payload keeps its small shape.
-- `source` is `user` for a personal entry and `override` for shipped, discovered or migrated
-  override entries. `kind` is `config`, `dir` or `secret`.
+- The full payload also carries `counts` and `encryption`. The brief payload keeps its small shape.
+- `source` is `user` for a personal entry and `override` for shipped or discovered entries.
+  `kind` is `config`, `dir` or `secret`.
 
-## Migration
+## Repository format
 
-- `migrate-v3` moves a clean v1 or v2 repository into a new encrypted v3 repository. It requires a
-  clean and synchronized source repo, an empty private remote, a safe external identity backup path
-  and post-quantum age support. Without `--yes` it prints the migration summary and stops; `--yes`
-  acknowledges that every recorded machine is upgraded or offline.
-- A v1 or v2 clone stays readable for inspection but every writer refuses it until `migrate-v3`
-  runs. The command lists every recorded machine in its summary before accepting `--yes`.
-- The command stages under `$REPLICANT_HOME/migration/<id>/repo`, creates one root commit, pushes it,
-  clones it independently and checks the result before activation. A recovery journal records the
-  migration until activation completes. A failed preflight, encryption step, validation step, push
-  or clone leaves the active source repo and the local identity exactly as they were.
-- The old repository is renamed to `legacy-repo-<epoch>`. The command never deletes it or its remote.
-  `migration-warning` remains until the user confirms credential rotation and legacy cleanup in the panel.
+- Replicant accepts only the v3 format. A missing, malformed, or older schema stops the command
+  before it writes data.
 - The data repository is always private. `create` requests private visibility, verifies it after
   creation, and refuses an existing public remote before any local mutation. It never flips a public
   repository to private automatically.
@@ -436,14 +419,6 @@ profiles by their marker files. Nothing is tracked until a person presses Track.
 - `record_repo_version` only raises the number, so an old client cannot lower it.
 - This protects from 0.7.0 onwards. For a 0.6 machine, the answer is to upgrade it, and `doctor`
   says so.
-
-## A writer migrates first
-
-A fallback that makes a read correct does not make a write correct. A read-modify-write against a
-list that the fallback invented is a delete. So every writer of the legacy `.replicant-sync` calls
-`ensure_scope_file` first, and every writer of the legacy `.replicant-track` calls
-`ensure_track_file` first. On version 3 both are no-ops: policy writes validate
-`.replicant/entries.json` and the vault index before mutation instead.
 
 ## Root-owned files
 

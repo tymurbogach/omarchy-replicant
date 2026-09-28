@@ -219,16 +219,6 @@ status_encryption_json() {
   jq -nc --arg state "$state" --arg format "$format" '{format:$format,state:$state}'
 }
 
-status_migration_json() {
-  local v required=false warning=false data_version=null
-  v=$(repo_data_version 2>/dev/null || echo unknown)
-  [[ "$v" =~ ^[0-9]+$ ]] && data_version="$v"
-  [[ "$v" == 1 || "$v" == 2 ]] && required=true
-  [[ -f "$REPLICANT_HOME/migration-warning" ]] && warning=true
-  jq -nc --argjson data_version "$data_version" --argjson required "$required" --argjson warning "$warning" \
-    '{data_version:$data_version,required:$required,legacy_warning:$warning}'
-}
-
 # core_changes: read-only review of the worktree. The CLI only delegates here
 # and keeps ownership of its user-facing command syntax.
 core_changes() {
@@ -424,7 +414,7 @@ core_status() {
     groups_json=$(build_setting_groups_json)
     pending_reinstalls_json=$(build_pending_reinstalls_json)
     plugins_json=$(build_plugins_json)
-    local counts_json encryption_json migration_json
+    local counts_json encryption_json
     counts_json=$(jq -nc --argjson entries "$entries_json" \
       '{unsaved:([$entries[] | select(.sync_state == "unsaved")]|length),
         incoming:([$entries[] | select(.sync_state == "incoming")]|length),
@@ -436,7 +426,6 @@ core_status() {
     counts_json=$(jq -nc --argjson c "$counts_json" --argjson a "$ahead" --argjson b "$behind" \
       '$c + {ahead:$a,behind:$b}')
     encryption_json=$(status_encryption_json)
-    migration_json=$(status_migration_json)
     # Every machine that has ever saved into this repo, newest first. With one
     # machine it is a footnote; with two it is the answer to "did the desktop
     # actually push?", which is the whole reason the repo exists.
@@ -482,7 +471,6 @@ core_status() {
       --argjson locked "$n_locked" --argjson missing "$n_missing" \
       --argjson needs_action "$needs_action" --argjson entries "$entries_json" \
       --argjson counts "$counts_json" --argjson encryption "$encryption_json" \
-      --argjson migration "$migration_json" \
       --arg pending "$pending_groups" \
       --argjson settings "$settings_json" --argjson categories "$categories_json" \
       --argjson setting_groups "$groups_json" --argjson machines "$machines_json" \
@@ -495,7 +483,7 @@ core_status() {
         last_save:$last_save, last_subject:$last_subject,
         dirty:$dirty, untracked:$untracked, ahead:$ahead, behind:$behind, pending:$pending,
         unsaved:$unsaved, incoming:$incoming, locked:$locked, missing:$missing,
-        needs_action:$needs_action, counts:$counts, encryption:$encryption, migration:$migration,
+        needs_action:$needs_action, counts:$counts, encryption:$encryption,
         entries:$entries, settings:$settings,
         categories:$categories, setting_groups:$setting_groups, machines:$machines,
         pending_reinstalls:$pending_reinstalls, plugins:$plugins}'

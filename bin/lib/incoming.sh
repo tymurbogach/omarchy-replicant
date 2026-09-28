@@ -35,9 +35,14 @@ is_incoming_rel() {
 # Called by `pull`, which is the one moment the direction of a difference is
 # known for certain.
 record_incoming() {
-  mkdir -p "$REPLICANT_HOME" 2>/dev/null || return 0
-  if (( $# == 0 )); then rm -f "$INCOMING_FILE" 2>/dev/null || true
-  else printf '%s\n' "$@" | sort -u > "$INCOMING_FILE"
+  local tmp
+  mkdir -p "$REPLICANT_HOME" || { echo "incoming: cannot create $REPLICANT_HOME" >&2; return 1; }
+  tmp="$REPLICANT_HOME/.incoming.tmp.$$"
+  if (( $# == 0 )); then
+    rm -f -- "$INCOMING_FILE" || { echo "incoming: cannot clear $INCOMING_FILE" >&2; return 1; }
+  else
+    printf '%s\n' "$@" | sort -u > "$tmp" || { rm -f -- "$tmp"; return 1; }
+    mv -f -- "$tmp" "$INCOMING_FILE" || { rm -f -- "$tmp"; echo "incoming: cannot publish $INCOMING_FILE" >&2; return 1; }
   fi
   INCOMING_LOADED=0
   briefcache_invalidate
@@ -137,9 +142,7 @@ core_incoming() {
   done < <(git -C "$REPO_DIR" diff --name-only "$before" "$after" 2>/dev/null)
   if (( ${#rels[@]} == 0 )); then record_incoming; return 0; fi
   local -a uniq=()
-  # shellcheck disable=SC2207
-  uniq=($(printf '%s\n' "${rels[@]}" | sort -u))
-  record_incoming "${uniq[@]}"
+  mapfile -t uniq < <(printf '%s\n' "${rels[@]}" | sort -u)
+  record_incoming "${uniq[@]}" || return 1
   printf '%s\n' "${uniq[@]}"
 }
-

@@ -17,7 +17,7 @@ check_true "backup module is loaded" declare -F core_backup
 check_true "repository module is loaded" declare -F repo_push
 check_true "save module is loaded" declare -F core_save
 check_true "crypto module is loaded" declare -F vault_save_all
-check_true "migration module is loaded" declare -F core_migration_confirm
+check_false "migration module is not loaded" declare -F core_migration_confirm
 check_false "layout does not define inventory generation" bash -c 'grep -q "Regenerating state/ inventory" "$1"' _ "$HERE/../bin/lib/layout.sh"
 check_false "layout does not export backup operation" bash -c 'grep -q "^core_backup()" "$1"' _ "$HERE/../bin/lib/layout.sh"
 check_true "status module serializes status" declare -F core_status

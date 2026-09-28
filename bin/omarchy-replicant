@@ -385,20 +385,6 @@ cmd_clone() {
   repo_clone "$url"
 }
 
-cmd_migrate_v3() {
-  ensure_core
-  load_core
-  core_migrate_v3 "$@" || exit 1
-  bash "$CORE" cache-invalidate
-}
-
-cmd_migration_confirm() {
-  ensure_core
-  load_core
-  core_migration_confirm || exit 1
-  bash "$CORE" cache-invalidate
-}
-
 # The restore and reset implementations live in bin/lib/restore.sh. Keep this
 # get/set — curated per-field settings (SETTINGS registry in replicant-core.sh),
 # distinct from edit/diff/reset which operate on whole tracked files
@@ -1235,12 +1221,6 @@ cmd_purge() {
   [[ -d "$REPLICANT_HOME/transactions" ]] && targets+=("$REPLICANT_HOME/transactions")
   [[ -d "$REPO_DIR" ]] && recovery+=("$REPO_DIR")
   [[ -d "$REPLICANT_HOME/keys" ]] && recovery+=("$REPLICANT_HOME/keys")
-  [[ -d "$REPLICANT_HOME/migration" ]] && recovery+=("$REPLICANT_HOME/migration")
-  [[ -f "$REPLICANT_HOME/migration-warning" ]] && recovery+=("$REPLICANT_HOME/migration-warning")
-  local legacy
-  for legacy in "$REPLICANT_HOME"/legacy-repo-*; do
-    [[ -e "$legacy" ]] && recovery+=("$legacy")
-  done
   if (( ! KEEP_REPO )); then
     [[ -d "$REPLICANT_HOME" ]] && targets+=("$REPLICANT_HOME")
   fi
@@ -1365,8 +1345,6 @@ Third-party code               (no dry run, no backup; fetches the moment you ru
 
 Second machine
   clone <url>                 Point this machine at the repo you already have
-  migrate-v3 --github-name <name> --identity-backup <path> [--remote <url>] [--yes]
-                              Create and activate a clean encrypted v3 repository
 
 The plugin itself
   update-check [--fetch]      Whether a newer Replicant is at its origin    (--json)
@@ -1569,11 +1547,6 @@ Dry-run by default, like everything here that writes.
   it, fetching whatever is at its origin right now. It first says what the
   Omarchy marketplace checked, and whether the origin has moved since.
   --check  say that, and install nothing"
-  [migrate-v3]="migrate-v3 --github-name <name> --identity-backup <absolute-path> [--remote <url>] [--yes]
-  Migrate a clean v1 or v2 repository into a new encrypted v3 repository.
-  Without --yes it prints the migration summary and stops; --yes acknowledges
-  that every recorded machine is upgraded or offline.
-  The legacy repository remains at legacy-repo-<epoch>."
 )
 
 
@@ -1594,7 +1567,6 @@ main() {
   case "$cmd" in
     savegame) fail "savegame was removed in 0.14.0; use save --all" ;;
     backup) fail "backup was removed in 0.14.0; use changes" ;;
-    migrate-v2) fail "migrate-v2 was removed in 0.14.0; use migrate-v3" ;;
     sync) fail "sync was removed in 0.14.0; use scope <id> shared|profile|off" ;;
   esac
   export REPLICANT_PROGRESS_COMMAND="$cmd"
@@ -1620,15 +1592,10 @@ main() {
   fi
   # Internal panel action. Keep it outside the public dispatcher so it does
   # not become a documented CLI command or part of the stable command surface.
-  if [[ "$cmd" == "migration-confirm" ]]; then
-    acquire_repo_lock
-    cmd_migration_confirm "$@"
-    exit $?
-  fi
   # Anything that writes to the repo takes the lock first; read-only commands
   # (status/get/diff/edit) stay lock-free so the panel's polling never blocks.
   case "$cmd" in
-    init|create|save|set|save-file|reset|reset-all|push|pull|clone|restore|scope|policy|bulk|track|untrack|forget|profile|revert|restore-file|install-theme|install-plugin|tx|migrate-v3) acquire_repo_lock ;;
+    init|create|save|set|save-file|reset|reset-all|push|pull|clone|restore|scope|policy|bulk|track|untrack|forget|profile|revert|restore-file|install-theme|install-plugin|tx) acquire_repo_lock ;;
     # These write only when they apply. A dry run takes no lock: taking it
     # creates the lock file, and purge would then list its own lock.
     undo|backups|purge|recover)
@@ -1689,7 +1656,6 @@ main() {
     push) shift; cmd_push "$@";;
     pull) shift; cmd_pull "$@";;
     clone) shift; cmd_clone "$@";;
-    migrate-v3) shift; cmd_migrate_v3 "$@";;
     install-theme) shift; cmd_install_theme "$@";;
     install-plugin) shift; cmd_install_plugin "$@";;
     restore) shift; cmd_restore "$@";;

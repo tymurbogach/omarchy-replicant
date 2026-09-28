@@ -79,12 +79,6 @@ SECRETS_MANIFEST=(
   "$HOME/.config/environment.d/60-secrets.conf:env/60-secrets.conf"
 )
 
-# What the pre-0.7 core tracked lives in legacy.sh, the migration-only
-# module: LEGACY_PERSONAL, LEGACY_PERSONAL_SECRETS and
-# legacy_personal_present. Nothing here is offered to a fresh install.
-# `~/Projects/mise.toml` is deliberately absent — it is a project
-# file, not machine config, and is dropped rather than migrated.
-
 # Entries that an earlier release shipped and this one does not, because they
 # are not what every Omarchy machine has. If the repo holds a copy, the entry
 # moves into the user's own list once. Without that step, the prune pass would
@@ -123,7 +117,6 @@ migrate_retired_shipped() {
 #   ~/.config/nvim/                         a directory (trailing slash)
 #   secret ~/Projects/app/.env                   stored 600, contents never rendered
 #
-USER_TRACK_FILE="$REPO_DIR/.replicant-track"
 
 # ─── WHICH VERSION LAST WROTE THIS REPO ─────────────────────────────────────
 # Two machines share one repo and they are not upgraded on the same day. The
@@ -209,11 +202,6 @@ derive_rel() {
   printf '%s%s\n' "$rel" "$slash"
 }
 
-read_track_lines() {
-  [[ -f "$USER_TRACK_FILE" ]] || return 0
-  sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$USER_TRACK_FILE" 2>/dev/null || true
-}
-
 # parse_track_line <line> -> "kind<TAB>src<TAB>rel", or nothing if unusable.
 parse_track_line() {
   local line="$1" kind=config src rel
@@ -244,25 +232,8 @@ rebuild_tracked() {
 # upgrade would see those files as untracked and core_backup's prune pass would
 # delete every one of them from the repo.
 load_user_manifest() {
-  local line kind src rel
   USER_MANIFEST=(); USER_SECRETS=()
-  if repo_is_v3; then
-    load_v3_user_manifest || return 1
-    rebuild_tracked
-    return 0
-  fi
-  if [[ -f "$USER_TRACK_FILE" ]]; then
-    while IFS= read -r line; do
-      IFS=$'\t' read -r kind src rel < <(parse_track_line "$line")
-      [[ -n "${rel:-}" ]] || continue
-      if [[ "$kind" == secret ]]; then USER_SECRETS+=("$src:$rel"); else USER_MANIFEST+=("$src:$rel"); fi
-    done < <(read_track_lines)
-  else
-    while IFS=$'\t' read -r kind src rel; do
-      [[ -n "${rel:-}" ]] || continue
-      if [[ "$kind" == secret ]]; then USER_SECRETS+=("$src:$rel"); else USER_MANIFEST+=("$src:$rel"); fi
-    done < <(migrate_legacy_user_entries)
-  fi
+  if repo_is_v3; then load_v3_user_manifest || return 1; fi
   rebuild_tracked
 }
 
@@ -290,9 +261,6 @@ load_v3_user_manifest() {
   fi
   return 0
 }
-
-# migrate_legacy_personal_present wraps the check in legacy.sh, the
-# migration-only module. Reads reach it only through migrate.sh.
 
 is_user_entry() {
   local rel="$1" entry

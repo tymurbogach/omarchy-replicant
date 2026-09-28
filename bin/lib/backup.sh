@@ -4,6 +4,10 @@
 # primitives for directory and hook management.
 
 core_backup() {
+  if [[ "$(repo_state)" == missing ]]; then
+    core_init
+    return
+  fi
   require_writable_schema || return 1
   briefcache_invalidate
   # Bash scopes dynamically, and the CLI sources this file, so a name assigned
@@ -172,8 +176,7 @@ core_backup() {
 
   regenerate_inventory
   echo "→ Scanning what was copied (excludes secrets/)" >&2
-  SCAN="$REPO_DIR/bin/scan-secrets.sh"
-  [[ -x "$SCAN" ]] || SCAN="$PLUGIN_DIR/bin/scan-secrets.sh"
+  SCAN="$PLUGIN_DIR/bin/scan-secrets.sh"
   # This profile's tree too. A file kept per profile is copied there, and a
   # token in it went unscanned until the pre-commit hook, if the hook ran.
   local -a scan_dirs=("$CONFIG_DIR" "$STATE_DIR")
@@ -186,7 +189,8 @@ core_backup() {
     fi
     echo "  ✓ clean" >&2
   else
-    echo "  · scan-secrets.sh not found, skipping" >&2
+    echo "  ✗ secret scanner not found, blocking the backup" >&2
+    return 1
   fi
   # Only when `backup` is the whole of what the user asked for. savegame calls
   # this on its way to committing, and the advice landed one line above its own

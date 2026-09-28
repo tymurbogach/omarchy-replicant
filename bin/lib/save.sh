@@ -59,8 +59,7 @@ save_auto_subject() {
 save_scan_tx() {
   local txrepo="$1"
   local scan prof
-  scan="$txrepo/bin/scan-secrets.sh"
-  [[ -x "$scan" ]] || scan="$PLUGIN_DIR/bin/scan-secrets.sh"
+  scan="$PLUGIN_DIR/bin/scan-secrets.sh"
   if [[ ! -x "$scan" ]]; then
     echo "  ✗ secret scanner not found, blocking the save" >&2
     return 1

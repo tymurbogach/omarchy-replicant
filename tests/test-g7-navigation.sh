@@ -13,6 +13,10 @@ has() {
   local label="$1" pattern="$2" file="$3"
   if grep -Eq "$pattern" "$file"; then ok "$label"; else bad "$label"; fi
 }
+has_not() {
+  local label="$1" pattern="$2" file="$3"
+  if grep -Eq "$pattern" "$file"; then bad "$label"; else ok "$label"; fi
+}
 
 printf '\n\033[1mG7 transient view lifecycle\033[0m\n'
 has "transient views capture one navigation snapshot" 'function openTransient\(kind\)' "$PANEL"
@@ -25,6 +29,10 @@ has "Escape cancels and restores a confirmation" 'else if \(confirmDialog\.opene
 has "the confirmation cancel button restores navigation" 'onCanceled: root\.cancelConfirmation\(\)' "$PANEL"
 has "the reader close path restores navigation" 'root\.closeTransient\(\)' "$PANEL"
 has "create dialog cancellation restores navigation" 'function closeCreateDialog\(\)' "$PANEL"
+has "clone dialog cancellation restores navigation" 'function closeCloneDialog\(\)' "$PANEL"
+has "Clone existing opens the URL dialog" 'function doClone\(\)[[:space:]]*\{ root\.openCloneDialog\(\) \}' "$PANEL"
+has "clone submits the pasted URL through the controller" 'controller\.run\("clone", \[root\.cli, "clone", url\]' "$PANEL"
+has_not "clone does not open a terminal without a URL" 'function doClone\(\)[[:space:]]*\{ root\.runVisible' "$PANEL"
 has "refreshes do not consume an open transient snapshot" 'root\.navigationSnapshot && root\.transientView === ""' "$PANEL"
 has "successful tab navigation clears stale snapshots" 'root\.navigationSnapshot = null' "$PANEL"
 

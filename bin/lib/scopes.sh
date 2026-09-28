@@ -24,7 +24,6 @@
 # once, and every machine sharing the repo honours it.
 SCOPE_FILE="$REPO_DIR/.replicant-sync"
 PROFILE_FILE="$REPO_DIR/.replicant-profiles"
-LEGACY_EXCLUDE_FILE="$REPO_DIR/.replicant-exclude"
 
 # Seeded on a fresh repo. Not hardcoded rules: they are written into a file the
 # user can see, edit, and change from the panel. These are the files that are
@@ -100,13 +99,11 @@ ensure_profile_recorded() {
 }
 
 read_profile_map() {
-  if repo_is_v3; then return 0; fi
-  migrate_legacy_read_profile_map
+  return 0
 }
 
 profile_for_machine() {
-  if repo_is_v3; then machine_profile "$1"; return; fi
-  migrate_legacy_profile_for_machine "$@"
+  machine_profile "$1"
 }
 
 # Resolved once per process: every scope lookup needs it. On version 3 the
@@ -114,15 +111,11 @@ profile_for_machine() {
 # then the recorded profile, then the chassis guess.
 current_profile() {
   if [[ -n "${REPLICANT_PROFILE:-}" ]]; then printf '%s\n' "$REPLICANT_PROFILE"; return; fi
-  if repo_is_v3; then
-    local recorded
-    recorded=$(machine_profile "$MACHINE" 2>/dev/null || true)
-    [[ -n "$recorded" ]] || recorded=$(guess_profile)
-    printf '%s\n' "$recorded"
-    return
-  fi
-  profile_for_machine "$MACHINE" && return
-  guess_profile
+  local recorded
+  recorded=$(machine_profile "$MACHINE" 2>/dev/null || true)
+  [[ -n "$recorded" ]] || recorded=$(guess_profile)
+  printf '%s\n' "$recorded"
+  return
 }
 
 # profile_report prints the profile view. The CLI delegates this read-only
@@ -235,40 +228,10 @@ load_scope_map() {
     done
     return 0
   fi
-
-  # Version 2 records the initial scope in entries.json, but its scope command
-  # writes later policy decisions to .replicant-sync. Load the immutable
-  # record first, then let the policy file override it. Reversing this order
-  # makes a successful Off command appear to do nothing and also loses that
-  # decision during migration to version 3.
-  if [[ "$(repo_data_version)" == 2 && -f "$REPO_DIR/.replicant/entries.json" ]]; then
-    while IFS=$'\t' read -r vid vsc; do
-      [[ -n "${vid:-}" ]] || continue
-      case "$vsc" in shared|profile|off) SCOPE_OF[$vid]="$vsc" ;; esac
-    done < <(jq -r 'to_entries | sort_by(.key)[] | [.key, (.value.scope // "")] | @tsv' \
-      "$REPO_DIR/.replicant/entries.json" 2>/dev/null || true)
-  fi
   for line in "${DEFAULT_SCOPES[@]}"; do
     k="${line%%=*}"; v="${line##*=}"
     [[ -n "${SCOPE_OF[$k]:-}" ]] || SCOPE_OF[$k]="$v"
   done
-  read_scopes >/dev/null
-  local -A policy_seen=()
-  while IFS= read -r line; do
-    k="${line%%=*}"; v="${line#*=}"
-    k="${k//[[:space:]]/}"; v="${v//[[:space:]]/}"
-    case "$v" in
-      shared|profile|off)
-        [[ -n "${policy_seen[$k]:-}" ]] || { SCOPE_OF[$k]="$v"; policy_seen[$k]=1; }
-        ;;
-    esac
-  done < <(read_scopes)
-  if [[ ! -f "$SCOPE_FILE" && -f "$LEGACY_EXCLUDE_FILE" ]]; then
-    while IFS= read -r line; do
-      line="${line//[[:space:]]/}"
-      [[ -n "$line" ]] && SCOPE_OF[$line]=off
-    done < <(migrate_legacy_exclude_map)
-  fi
   return 0
 }
 

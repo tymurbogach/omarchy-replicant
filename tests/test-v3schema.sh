@@ -78,6 +78,10 @@ check_false "a control character in a path" validate_v3_entries "$TMP/f.json"
 printf '{"a": {"path": "/x", "kind": "config", "scope": "shared", "source": "user"}, "a": {"path": "/y", "kind": "config", "scope": "shared", "source": "user"}}' > "$TMP/f.json"
 check_false "a duplicate id" validate_v3_entries "$TMP/f.json"
 check_contains "…naming the id" "duplicate id a" "$(validate_v3_entries "$TMP/f.json" 2>&1 || true)"
+printf '{"../escape": {"path": "%s/.config/hypr/input.lua", "kind": "config", "scope": "shared", "source": "user"}}' "$HOME" > "$TMP/f.json"
+check_false "a parent segment in an id is rejected" validate_v3_entries "$TMP/f.json"
+printf '{"bad//id": {"path": "%s/.config/hypr/input.lua", "kind": "config", "scope": "shared", "source": "user"}}' "$HOME" > "$TMP/f.json"
+check_false "a double slash in an id is rejected" validate_v3_entries "$TMP/f.json"
 
 section "a custom secret round trip stays in the vault"
 check_true "key init works on v3" key_init
@@ -126,5 +130,12 @@ printf 'scope-me.conf = off\n' > "$REPO_DIR/.replicant-sync"
 check_false "writes refuse a contaminated repo" core_track "$HOME/.config/scope-me.conf"
 check_contains "…naming the legacy file" ".replicant-sync" "$(core_track "$HOME/.config/scope-me.conf" 2>&1 || true)"
 rm -f "$REPO_DIR/.replicant-sync"
+
+section "plaintext secrets contaminate a v3 repository"
+mkdir -p "$REPO_DIR/secrets"
+printf 'TOKEN=not-for-git\n' > "$REPO_DIR/secrets/plaintext.env"
+check_false "writes refuse a plaintext secret" require_writable_schema
+check_contains "…naming the plaintext secret" "plaintext secret" "$(require_writable_schema 2>&1 || true)"
+rm -f "$REPO_DIR/secrets/plaintext.env"
 
 summary

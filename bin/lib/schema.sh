@@ -2,16 +2,9 @@
 # schema.sh: the v3 data repository schema. Sourced by replicant-core.sh, which
 # sets the paths it uses. It defines functions and data and runs nothing.
 #
-# Version 1 is the absence of .replicant/schema.json: the .replicant-track,
-# .replicant-sync, .replicant-profiles and .replicant-version files beside
-# config/, secrets/ and state/. Version 2 adds .replicant/schema.json,
-# .replicant/entries.json and one machines/<id>.json per machine, with secret
-# metadata in the version 1 vault index. Versions 1 and 2 stay readable for
-# inspection and migration, but only version 3 accepts writes. Version 3 keeps
-# the same layout, renames nothing on disk, and tightens the records: the
-# schema marker carries dataVersion 3 with secretFormat age-pq-v2, non-secret
-# mutable policy lives only in .replicant/entries.json, and secret metadata
-# lives only inside the version 2 encrypted vault index.
+# Replicant supports one repository format. A repository without a valid v3
+# schema is not interpreted, because guessing its shape can expose secrets or
+# delete data during a later save.
 #
 # The one rule: a writer never mutates a repo whose format it cannot read.
 # require_writable_schema is the first line of every core function that
@@ -22,8 +15,6 @@
 # reset and reset-all are not gated: they apply Omarchy defaults, never repo
 # content. purge is the escape hatch and stays ungated on purpose.
 #
-# Legacy readers for versions 1 and 2 live in legacy.sh, the migration-only
-# module. Nothing in the write path imports them.
 
 # SCHEMA_VERSION is the highest dataVersion this client writes.
 # SCHEMA_FORMAT is declared in schema.json alongside it.
@@ -37,7 +28,7 @@ SCHEMA_FORMAT="age-pq-v2"
 # never a guess: a string "3" is malformed, not version 3.
 repo_data_version() {
   local file="$REPO_DIR/.replicant/schema.json" v
-  [[ -f "$file" ]] || { printf '1\n'; return 0; }
+  [[ -f "$file" ]] || { printf 'unknown\n'; return 0; }
   v=$(jq -r '.dataVersion | if type == "number" then tostring else empty end' "$file" 2>/dev/null || true)
   [[ "$v" =~ ^[0-9]+$ ]] || { printf 'unknown\n'; return 0; }
   printf '%s\n' "$v"
@@ -64,9 +55,8 @@ repo_exists() { [[ -e "$REPO_DIR/.git" ]]; }
 # the canonical resolution paths. A repo without a marker is version 1.
 repo_is_v3() { [[ "$(repo_data_version)" == 3 ]]; }
 
-# repo_has_vault: 0 when secrets live encrypted in vault/blobs with an index,
-# on version 2 and 3 alike. Version 1 keeps plaintext under secrets/.
-repo_has_vault() { [[ "$(repo_data_version)" == 2 || "$(repo_data_version)" == 3 ]]; }
+# repo_has_vault: secrets exist only in the encrypted v3 vault.
+repo_has_vault() { [[ "$(repo_data_version)" == 3 ]]; }
 
 # V3_ENTRIES_OK caches one validation per process: every writer in one CLI
 # invocation shares it, and a fresh process revalidates.
@@ -101,6 +91,16 @@ v3_no_legacy_files() {
     fi
   done
   return 0
+}
+
+v3_no_plaintext_secrets() {
+  local plain
+  [[ -d "$SECRETS_DIR" ]] || return 0
+  plain=$(find "$SECRETS_DIR" -type f -print -quit 2>/dev/null || true)
+  [[ -z "$plain" ]] || {
+    printf 'replicant: plaintext secret file found at %s; v3 uses vault/ only\n' "$plain" >&2
+    return 1
+  }
 }
 
 # _schema_top_keys <file>: the top-level keys of a JSON object, one per line,
@@ -156,9 +156,7 @@ _schema_duplicate_keys() {
   return 0
 }
 
-# require_writable_schema: 0 when this client may mutate a v3 repo. Versions 1
-# and 2 remain readable, but every writer stops before touching their
-# worktrees: migrate-v3 (phase G3) is the way forward.
+# require_writable_schema: 0 only for a valid v3 repository.
 require_writable_schema() {
   local v file="$REPO_DIR/.replicant/schema.json"
   # Duplicate keys collapse to last-wins under jq, so a duplicated file would
@@ -169,18 +167,13 @@ require_writable_schema() {
   fi
   v=$(repo_data_version)
   case "$v" in
-    1|2)
-      # Parity suites exercise the legacy readers with this hatch. Normal CLI
-      # callers never set it. The dedicated guard tests unset it.
-      if [[ "${REPLICANT_TEST_ALLOW_LEGACY_WRITES:-}" == 1 ]]; then return 0; fi
-      printf 'replicant: this repo uses the version %s layout, which is read-only here — migrate it to version 3, then retry\n' "$v" >&2
-      return 1 ;;
     3)
       _schema_marker_valid || return 1
       v3_no_legacy_files || return 1
+      v3_no_plaintext_secrets || return 1
       return 0 ;;
     unknown)
-      printf 'replicant: the repo schema at .replicant/schema.json is unreadable — restore it from git history, or start over with a fresh repo\n' >&2
+      printf 'replicant: this repository is not a valid v3 repository — create or clone a v3 repository, then retry\n' >&2
       return 1 ;;
     *)
       printf 'replicant: this repo uses data format %s, this client writes up to %s — update the plugin, then retry\n' "$v" "$SCHEMA_VERSION" >&2
@@ -203,7 +196,7 @@ _v3_struct_tsv() {
     need(type == "object"; "entries: not a JSON object")
     | to_entries | sort_by(.key) | .[]
     | .key as $id | .value as $e
-    | need($id | test("^[A-Za-z0-9._/\\-]+$"); "entries: bad id \($id)")
+    | need($id | test("^[A-Za-z0-9._/\\-]+$") and (test("(^|/)\\.\\.(/|$)") | not) and (test("//") | not); "entries: bad id \($id)")
     | need(($e | type) == "object"; "entries \($id): not an object")
     | [$e.path, $e.kind, $e.scope, $e.source]
     | need(map(type) == ["string","string","string","string"]; "entries \($id): path, kind, scope and source must be strings")

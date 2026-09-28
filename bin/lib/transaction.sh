@@ -258,8 +258,8 @@ tx_require_clean() {
   if [[ -n "$dirt" ]]; then
     echo "$context: the repo has uncommitted changes — it needs a clean worktree:" >&2
     printf '%s\n' "$dirt" | head -n 20 | sed 's/^/    /' >&2
-    echo "Review them with 'changes' or 'git -C $REPO_DIR diff'. Copies the backup" >&2
-    echo "made are regenerable: a worktree transaction writes them again from your live files." >&2
+    echo "Review them with 'changes' or 'git -C $REPO_DIR diff'." >&2
+    echo "The repo copies are regenerable. Review them, then retry the operation." >&2
     return 1
   fi
   return 0

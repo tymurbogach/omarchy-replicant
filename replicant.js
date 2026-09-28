@@ -157,7 +157,7 @@ function headline(f) {
              detail: "Restore puts " + (f.incoming === 1 ? "it" : "them") + " here. Save would overwrite that work.", tone: "warn" }
   if (f.dirty > 0)
     return { title: plural(f.dirty, "file") + " not saved yet",
-             detail: "Save to GitHub copies, commits and pushes them.", tone: "accent" }
+             detail: "Save copies, commits and pushes them.", tone: "accent" }
   if (f.ahead > 0)
     return { title: plural(f.ahead, "commit") + " not pushed yet",
              detail: "Save to GitHub pushes them.", tone: "accent" }

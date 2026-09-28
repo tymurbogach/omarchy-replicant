@@ -259,8 +259,8 @@ save_stage() {
     if [[ -n "$dirt" ]]; then
       echo "save: the repo has uncommitted changes — a save needs a clean worktree:" >&2
       printf '%s\n' "$dirt" | head -n 20 | sed 's/^/    /' >&2
-      echo "Review them with 'changes' or 'git -C $REPO_DIR diff'. Copies the backup" >&2
-      echo "made are regenerable: 'save' writes them again from your live files." >&2
+      echo "Review them with 'changes' or 'git -C $REPO_DIR diff'." >&2
+      echo "The repo copies are regenerable. Review them, then retry Save." >&2
       return 1
     fi
     SAVE_UUID=$(tx_uuid)

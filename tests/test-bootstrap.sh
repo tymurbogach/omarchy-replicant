@@ -65,11 +65,11 @@ no_staging_left() {
   [[ -z "$left" ]]
 }
 
-section "missing and v1 repositories are distinguished"
+section "missing and schema-less repositories are distinguished"
 check "a directory without git is missing" "missing" "$(repo_state)"
 git init -q -b main "$REPO_DIR" 2>/dev/null
-check "a git repo without a schema marker is v1" "v1" "$(repo_state)"
-check "…and its data version still reads 1" "1" "$(repo_data_version)"
+check "a git repo without a schema marker is rejected" "unknown" "$(repo_state)"
+check "…and its data version is unknown" "unknown" "$(repo_data_version)"
 rm -rf -- "$REPO_DIR"
 
 section "init without existing state builds v3 atomically"
@@ -77,7 +77,9 @@ export OMARCHY_REPLICANT_HOME="$TMP/replicant"
 # shellcheck source=/dev/null
 source "$CORE" 2>/dev/null
 set +e +u
-check_true "init succeeds on a missing repo" core_init
+unset USER_TRACK_FILE
+rc=0; ( set -u; core_init ) || rc=$?
+check "init succeeds on a missing repo" "0" "$rc"
 check "the schema marker says version 3" "3" \
   "$(jq -r .dataVersion "$REPO_DIR/.replicant/schema.json" 2>/dev/null)"
 check "…and names the v2 secret format" "age-pq-v2" \
@@ -182,22 +184,6 @@ check "…with the same head" \
   "$(git -C "$v3src" rev-parse HEAD 2>/dev/null)" \
   "$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)"
 check_true "…and no staging directory left behind" no_staging_left
-
-section "clone identifies legacy repositories as migration-only"
-legacy_src="$TMP/legacy-src"
-git init -q -b main "$legacy_src" 2>/dev/null
-git -C "$legacy_src" config user.name Tests 2>/dev/null
-git -C "$legacy_src" config user.email tests@example.com 2>/dev/null
-printf 'legacy\n' > "$legacy_src/file.txt"
-git -C "$legacy_src" add -A 2>/dev/null
-git -C "$legacy_src" commit -qm legacy 2>/dev/null
-rm -rf -- "$REPO_DIR"
-out=$(repo_clone "$legacy_src" 2>&1); rc=$?
-check "clone of a v1 repo succeeds" "0" "$rc"
-check_contains "…calling it migration-only" "migrat" "$out"
-check "…marking it read-only" "v1" "$(repo_state)"
-check_false "…with no legacy writes allowed" \
-  env -u REPLICANT_TEST_ALLOW_LEGACY_WRITES bash -c 'source "$0" 2>/dev/null; core_backup' "$CORE"
 
 section "failed clone leaves no partial repository"
 rm -rf -- "$REPO_DIR"

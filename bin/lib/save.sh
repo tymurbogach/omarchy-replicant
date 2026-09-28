@@ -575,7 +575,7 @@ _core_init_build() {
   local saved_repo="$REPO_DIR" saved_config="$CONFIG_DIR"
   local saved_state_root="$STATE_ROOT" saved_state="$STATE_DIR"
   local saved_templates="$TEMPLATES_DIR" saved_secrets="$SECRETS_DIR"
-  local saved_hooks="$GITHOOKS_DIR" saved_track="$USER_TRACK_FILE"
+  local saved_hooks="$GITHOOKS_DIR"
   local saved_version="$REPO_VERSION_FILE" saved_scope="$SCOPE_FILE"
   if ! bootstrap_fail_at validate; then
     return 1
@@ -584,7 +584,6 @@ _core_init_build() {
   STATE_ROOT="$stage/state" STATE_DIR="$stage/state/$MACHINE"
   TEMPLATES_DIR="$stage/templates" SECRETS_DIR="$stage/secrets"
   GITHOOKS_DIR="$stage/.githooks"
-  USER_TRACK_FILE="$stage/.replicant-track"
   REPO_VERSION_FILE="$stage/.replicant-version"
   SCOPE_FILE="$stage/.replicant-sync"
   if ! ensure_repo_layout; then
@@ -599,7 +598,7 @@ _core_init_build() {
   REPO_DIR="$saved_repo" CONFIG_DIR="$saved_config"
   STATE_ROOT="$saved_state_root" STATE_DIR="$saved_state"
   TEMPLATES_DIR="$saved_templates" SECRETS_DIR="$saved_secrets"
-  GITHOOKS_DIR="$saved_hooks" USER_TRACK_FILE="$saved_track"
+  GITHOOKS_DIR="$saved_hooks"
   REPO_VERSION_FILE="$saved_version" SCOPE_FILE="$saved_scope"
   return "$rc"
 }

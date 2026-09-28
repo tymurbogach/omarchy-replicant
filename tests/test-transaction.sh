@@ -212,6 +212,8 @@ if command -v age >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1 \
   printf 'FIRST=tx-fixture-alpha\n' > "$HOME/.config/tx-secret.conf"
   run track "$HOME/.config/tx-secret.conf" --secret >/dev/null 2>&1
   run save --all --auto --no-push >/dev/null 2>&1
+  check_true "tracking a secret commits its encrypted blob" \
+    bash -c 'git -C "$1" ls-tree -r --name-only HEAD | grep -q "^vault/blobs/"' _ "$REPO"
   check_true "the first export lands" "$CLI" key export "$TMP/tx-key-backup.txt"
   check "…at mode 600" "600" "$(stat -c '%a' "$TMP/tx-key-backup.txt" 2>/dev/null)"
   check_false "a second export without --force refuses" "$CLI" key export "$TMP/tx-key-backup.txt"

@@ -169,11 +169,5 @@ Item {
       onRead: function(data) { controller.handleStderrChunk(data) }
     }
     onExited: function(code) { controller.settleCurrent(code) }
-    onErrorOccurred: function(error) {
-      // A process that cannot start has no exited signal. Settle it as failed
-      // so the queue keeps moving and the panel can roll back optimistic UI.
-      controller.stderrBuffer += "Process error: " + String(error) + "\n"
-      controller.settleCurrent(1)
-    }
   }
 }

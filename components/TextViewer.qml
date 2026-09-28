@@ -81,23 +81,28 @@ Rectangle {
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.bottom: parent.bottom
-    contentWidth: Math.max(width, body.implicitWidth)
+    contentWidth: width
     contentHeight: body.implicitHeight
     clip: true
     boundsBehavior: Flickable.StopAtBounds
 
     Column {
       id: body
+      width: scroll.width
       Repeater {
         model: panel.viewerText.split("\n")
         delegate: Text {
           required property string modelData
           readonly property string role: R.lineRole(modelData, panel.viewerKind)
           text: modelData === "" ? " " : modelData
+          width: body.width
           font.family: panel.mono
           font.pixelSize: Style.font.caption
           font.bold: role === "head"
           textFormat: Text.PlainText
+          // Command output can contain long paths and URLs without a natural
+          // break. Wrap it inside the reader rather than clipping its cause.
+          wrapMode: panel.viewerKind === "output" ? Text.WrapAnywhere : Text.NoWrap
           color: role === "add" || role === "ok" ? panel.okColor
                : role === "del" || role === "bad" ? Color.urgent
                : role === "hunk" || role === "accent" ? Color.accent

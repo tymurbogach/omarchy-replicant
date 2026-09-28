@@ -35,6 +35,12 @@ check_false "Enter in the repository name does not create a repository" \
 check_true "the confirmation label fits its fixed button" \
   grep -q '"Create")' "$PANEL"
 
+section "command output stays inside its reader"
+VIEWER="$ROOT/components/TextViewer.qml"
+check_true "output uses the reader width" grep -qF 'width: body.width' "$VIEWER"
+check_true "long output lines wrap instead of clipping" \
+  grep -qF 'Text.WrapAnywhere : Text.NoWrap' "$VIEWER"
+
 section "every key the panel answers is named where a person can find it"
 # The keys work whether or not anybody knows them. `a` (straight to "Add more
 # files") was handled and written down nowhere, so for everyone it did not exist.

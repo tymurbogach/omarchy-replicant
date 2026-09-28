@@ -1056,7 +1056,7 @@ cmd_doctor() {
   (( missing > 0 )) && printf '    (%d not on this machine — normal on a fresh install)\n' "$missing"
   local n_user n_sugg
   n_user=$(( ${#USER_MANIFEST[@]} + ${#USER_SECRETS[@]} ))
-  chk_ok "$n_user of them are yours, in .replicant/entries.json or the vault — the rest ship with the plugin"
+  chk_ok "$n_user of them are yours, in .replicant-track — the rest ship with the plugin"
   n_sugg=$(core_suggest 2>/dev/null | grep -c . || true)
   (( n_sugg > 0 )) && chk_warn "$(plural "$n_sugg" "more file") here are not tracked — see 'omarchy-replicant suggest'"
 

@@ -36,7 +36,7 @@ ensure_track_file() {
   return 0
 }
 
-# One line of entries.json, written the way a human would: the derived name
+# One line of .replicant-track, written the way a human would: the derived name
 # is left implicit, so the file only ever states what it has to.
 track_line_for() {
   local src="$1" rel="$2" kind="${3:-config}" pretty="${1/#$HOME/\~}" line

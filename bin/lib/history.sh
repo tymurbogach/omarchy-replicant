@@ -81,7 +81,7 @@ core_deleted() {
 
 # core_recover <sha> <dry>: undo the deletions of one commit. The copies come
 # back into the repo from the commit before it, the lines that commit removed
-# from entries.json come back too, and each entry is then restored onto this
+# from .replicant-track come back too, and each entry is then restored onto this
 # machine with a .bak.<epoch> of whatever it replaces. The caller commits.
 # RECOVERED holds the repo paths that came back, for that commit.
 RECOVERED=()
@@ -98,7 +98,16 @@ core_recover() {
   done < <(deleted_rows)
   (( ${#files[@]} )) || { echo "recover: ${sha:0:7} deleted nothing that is still missing" >&2; return 1; }
 
+  # The lines of .replicant-track that the commit removed. An untrack removes
+  # the line and the copy in one commit, and the copy is useless without it:
+  # the next save would prune it again.
   local -a lines=()
+  local line
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && lines+=("$line")
+  done < <(comm -23 \
+             <(git -C "$REPO_DIR" show "$sha^:.replicant-track" 2>/dev/null | sed -e 's/#.*//' -e '/^[[:space:]]*$/d' | sort -u) \
+             <(git -C "$REPO_DIR" show "$sha:.replicant-track" 2>/dev/null | sed -e 's/#.*//' -e '/^[[:space:]]*$/d' | sort -u))
 
   echo "From ${sha:0:7} ($(git -C "$REPO_DIR" log -1 --format=%s "$sha" 2>/dev/null)):" >&2
   for p in "${files[@]}"; do echo "  + $p" >&2; done

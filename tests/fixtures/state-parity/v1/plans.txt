@@ -1,0 +1,8 @@
+@TMP@/replicant/repo/config/hypr/autostart.lua|@TMP@/home/.config/hypr/autostart.lua|644
+@TMP@/replicant/repo/config/hypr/hyprland.lua|@TMP@/home/.config/hypr/hyprland.lua|644
+@TMP@/replicant/repo/config/hypr/hyprlock.conf|@TMP@/home/.config/hypr/hyprlock.conf|644
+@TMP@/replicant/repo/config/hypr/input.lua|@TMP@/home/.config/hypr/input.lua|644
+@TMP@/replicant/repo/config/nvim/|@TMP@/home/.config/nvim/|644
+@TMP@/replicant/repo/profiles/desktop/config/hypr/monitors.lua|@TMP@/home/.config/hypr/monitors.lua|644
+@TMP@/replicant/repo/secrets/env/60-secrets.conf|@TMP@/home/.config/environment.d/60-secrets.conf|600
+@TMP@/replicant/repo/secrets/env/60-secrets.conf|@TMP@/home/.config/environment.d/60-secrets.conf|600

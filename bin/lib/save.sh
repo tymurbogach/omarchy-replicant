@@ -579,7 +579,7 @@ _core_init_build() {
   TEMPLATES_DIR="$stage/templates" SECRETS_DIR="$stage/secrets"
   GITHOOKS_DIR="$stage/.githooks"
   REMOVED_VERSION_FILE="$stage/.replicant-version"
-  REMOVED_SCOPE_FILE="$stage/entries.json"
+  REMOVED_SCOPE_FILE="$stage/.replicant-sync"
   if ! ensure_repo_layout; then
     rc=1
   elif ! _schema_marker_valid; then

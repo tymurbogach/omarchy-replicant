@@ -809,6 +809,11 @@ Panel {
     root.busyLabel = "Copying path…"
     controller.run("copy-path", ["sh", "-c", "printf '%s' \"$1\" | wl-copy", "replicant-copy", String(path)], { label: "Copy path" })
   }
+  function copyViewerText() {
+    if (root.viewerText === "") return
+    controller.run("copy-output", ["sh", "-c", "printf '%s' \"$1\" | wl-copy", "replicant-copy", root.viewerText],
+                   { label: "Copy output", busy: false })
+  }
   function executeBulk(action) {
     if (root.selectedIds.length === 0 || root.bulkActions.indexOf(action) < 0) return
     var cmd = [root.cli, "bulk", action]

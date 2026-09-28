@@ -40,6 +40,9 @@ VIEWER="$ROOT/components/TextViewer.qml"
 check_true "output uses the reader width" grep -qF 'width: body.width' "$VIEWER"
 check_true "long output lines wrap instead of clipping" \
   grep -qF 'Text.WrapAnywhere : Text.NoWrap' "$VIEWER"
+check_true "output has a copy action" grep -qF 'panel.copyViewerText()' "$VIEWER"
+check_true "the copy action passes the full output to wl-copy" \
+  grep -qF 'root.viewerText' "$PANEL"
 
 section "every key the panel answers is named where a person can find it"
 # The keys work whether or not anybody knows them. `a` (straight to "Add more

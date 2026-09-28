@@ -45,7 +45,7 @@ Rectangle {
     }
     Row {
       id: nav
-      anchors.right: closeBtn.left
+      anchors.right: copyBtn.left
       anchors.verticalCenter: parent.verticalCenter
       spacing: Style.space(2)
       visible: panel.viewerKind === "diff"
@@ -61,6 +61,16 @@ Rectangle {
         tooltipText: "Next changed entry"
         onClicked: panel.moveDiff(1)
       }
+    }
+    Button {
+      id: copyBtn
+      anchors.right: closeBtn.left
+      anchors.verticalCenter: parent.verticalCenter
+      visible: panel.viewerKind === "output" && panel.viewerText !== ""
+      text: "Copy"; bordered: false
+      foreground: panel.fg; fontFamily: panel.ff; fontSize: Style.font.caption
+      tooltipText: "Copy all command output"
+      onClicked: panel.copyViewerText()
     }
     Button {
       id: closeBtn

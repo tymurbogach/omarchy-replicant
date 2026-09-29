@@ -103,6 +103,7 @@ case "${1:-}" in
   update-check)       shift; core_update_check "$@" ;;
   incoming)           core_incoming "${2:-}" "${3:-}" ;;
   backups)            list_backups "${2:-}" ;;
+  backups-orphan)     list_orphan_backups ;;
   backups-json)       build_backups_json ;;
   undo)               core_undo "${2:-}" ;;
   machine)            printf '%s\n' "$MACHINE" ;;

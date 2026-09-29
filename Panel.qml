@@ -873,9 +873,11 @@ Panel {
     if (["scope-off", "convert-secret", "untrack"].indexOf(action) >= 0) {
       var names = root.selectedIds.slice(0, 12).join("\n  ")
       var more = root.selectedIds.length > 12 ? "\n  +" + (root.selectedIds.length - 12) + " more" : ""
+      var secretNote = root.selectionSummary.secrets > 0
+          ? " · " + R.plural(root.selectionSummary.secrets, "secret") + " (size undisclosed)" : ""
       root.ask("bulk:" + action, "", R.bulkActionDescription(action) + "\n\nApply to "
                + root.selectedIds.length + " entries?\n\n  " + names + more + "\n\n"
-               + root.selectionSummary.files + " files · " + R.sizeText(root.selectionSummary.bytes), "Apply")
+               + root.selectionSummary.files + " files · " + R.sizeText(root.selectionSummary.bytes) + secretNote, "Apply")
       return
     }
     root.executeBulk(action)
@@ -1121,7 +1123,7 @@ Panel {
     root.ask("update", "",
              "Update Replicant from " + u.current + " to " + u.latest + "?\n\n" + lines.join("\n")
              + ((u.commits || []).length > 10 ? "\n  +" + (u.commits.length - 10) + " more" : "")
-             + "\n\nOmarchy's plugin update installs and checks it, and the shell restarts to load it. Your data repo is not touched.",
+              + "\n\nOmarchy's plugin update installs and checks it, clears the shell's QML cache, and restarts the shell to load it. Your data repo is not touched.",
              "Update")
   }
 

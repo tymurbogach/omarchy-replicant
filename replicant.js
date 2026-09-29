@@ -476,14 +476,17 @@ function selectionFromJob(meta, excludedIds) {
   return selectionWithoutIds(selection.selectedIds, selection.selectionAnchor, excludedIds || [])
 }
 
+// What a multi-selection holds. Secret rows count as files but never as
+// bytes: the dialog names how much moves, while a secret's size stays
+// undisclosed the way its content does.
 function selectionSummary(rows) {
-  var list = rows || [], files = 0, bytes = 0
+  var list = rows || [], files = 0, bytes = 0, secrets = 0
   for (var i = 0; i < list.length; i++) {
-    if (list[i].secret === true) continue
+    if (list[i].secret === true) { secrets += 1; files += 1; continue }
     files += Number(list[i].nfiles || (list[i].is_dir ? 0 : 1))
     bytes += Number(list[i].size || 0)
   }
-  return { selected: list.length, files: files, bytes: bytes }
+  return { selected: list.length, files: files, bytes: bytes, secrets: secrets }
 }
 
 // ── rows ────────────────────────────────────────────────────────────────────

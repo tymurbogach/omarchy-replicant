@@ -670,7 +670,7 @@ cmd_update() {
     rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/quickshell/qmlcache"
     # Its own session: the shell that runs this command is the one that stops.
     setsid -f omarchy restart shell </dev/null >/dev/null 2>&1 || warn "could not restart the shell: run omarchy restart shell"
-    info "the shell restarts to load it"
+    info "cleared ${XDG_CACHE_HOME:-$HOME/.cache}/quickshell/qmlcache; the shell restarts to load it"
   else
     info "restart the shell to load it: omarchy restart shell"
   fi
@@ -1235,17 +1235,28 @@ cmd_purge() {
   fi
 
   # .bak.<epoch> copies this plugin left behind next to the configs it edited
-  local -a backups=()
+  local -a backups=() orphans=()
   local _rel _src b _epoch _state
   load_core
   # Through list_backups, not a second glob of its own. The trailing-slash bug
   # hard rule 8 exists for lived here first (globbing "$src".bak.* on a tracked
   # directory looks INSIDE the directory and finds nothing), and having two
   # copies of that glob is how purge and `backups` would come to disagree about
-  # what is on the machine.
+  # what is on the machine. Orphans (backups beside files nothing tracks
+  # anymore) come from list_orphan_backups and join the same list, deduplicated.
   while IFS=$'\t' read -r _rel _src b _epoch _state; do
     [[ -n "$b" ]] && backups+=("$b")
   done < <(bash "$CORE" backups)
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && orphans+=("$b")
+  done < <(bash "$CORE" backups-orphan)
+  if (( ${#orphans[@]} > 0 )); then
+    local -A seen=()
+    for b in "${backups[@]}"; do seen["$b"]=1; done
+    for b in "${orphans[@]}"; do
+      [[ -n "${seen[$b]:-}" ]] || { backups+=("$b"); seen["$b"]=1; }
+    done
+  fi
 
   if (( ${#targets[@]} == 0 && ${#backups[@]} == 0 )); then
     ok "nothing to purge — this machine is already clean"
@@ -1258,7 +1269,13 @@ cmd_purge() {
   echo "── would remove ──" >&2
   local t
   for t in "${targets[@]}"; do echo "  · ${t/#$HOME/\~}" >&2; done
-  (( ${#backups[@]} > 0 )) && echo "  · $(plural "${#backups[@]}" ".bak.<epoch> backup") next to your configs" >&2
+  if (( ${#backups[@]} > 0 )); then
+    if (( ${#orphans[@]} > 0 )); then
+      echo "  · $(plural "${#backups[@]}" ".bak.<epoch> backup") next to your configs ($(plural "${#orphans[@]}" "orphaned backup"))" >&2
+    else
+      echo "  · $(plural "${#backups[@]}" ".bak.<epoch> backup") next to your configs" >&2
+    fi
+  fi
   if (( ${#recovery[@]} > 0 )); then
     if (( KEEP_REPO )); then
       echo "── would keep for recovery ──" >&2
@@ -1502,7 +1519,9 @@ Dry-run by default, like everything here that writes.
   --restart restarts the shell afterwards, so that the new code loads."
   [suggest]="suggest [--json]
   Config on this machine that nothing is backing up yet, credentials first.
-  It only proposes; nothing is tracked until you say so."
+  It only proposes; nothing is tracked until you say so. It looks through
+  ~/.config down two levels, ~/.local/bin and the Omarchy hooks — deeper
+  files need the panel's file browser or track <path>."
   [profile]="profile [name]
   Show or set which profile this machine is in. Files scoped 'profile' are kept
   per profile, so a desktop and a laptop stop overwriting each other."
@@ -1519,7 +1538,8 @@ Dry-run by default, like everything here that writes.
   Remove that symlink again. Nothing else is touched."
   [purge]="purge [--apply] [--repo]
   Remove everything omarchy-replicant put on this machine outside its own
-  folder, including the .bak.<epoch> copies it left behind.
+  folder, including the .bak.<epoch> copies it left behind — even beside
+  files nothing tracks anymore.
   --apply  actually delete (a dry run by default)
   --repo   also delete the local clone of your backup repo
   Your GitHub repo is never touched."
@@ -1604,11 +1624,11 @@ main() {
   # them. Matching whole tokens, not substrings: an id that merely contains
   # "--apply" must not take the lock.
   wants_apply() {
-    local a seen=1
-    for a in "$@"; do
-      case "$a" in --apply) seen=0 ;; --dry-run) seen=1 ;; esac
+    local wa wa_write=1
+    for wa in "$@"; do
+      case "$wa" in --apply) wa_write=0 ;; --dry-run) wa_write=1 ;; esac
     done
-    return "$seen"
+    return "$wa_write"
   }
   case "$cmd" in
     init|create|save|set|save-file|reset|reset-all|push|pull|clone|restore|scope|policy|bulk|track|untrack|forget|profile|revert|restore-file|install-theme|install-plugin|tx) acquire_repo_lock ;;

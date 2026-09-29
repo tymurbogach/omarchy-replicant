@@ -39,6 +39,44 @@ list_backups() {
   done | sort -t$'\t' -k4,4nr
 }
 
+# list_orphan_backups — .bak.<epoch> copies beside files nothing tracks
+# anymore (untracked since, or tracked under an id this machine never named).
+# list_backups only walks tracked sources, so these sat forever: a backup you
+# cannot find is not a backup, and purge claiming "nothing to purge" while
+# eleven of them sit next to your configs is the same mess as before.
+#
+# The sweep stays inside the roots this plugin ever writes under, pruning
+# caches and vendored trees. Ownership is decided against the tracked
+# sources, so a backup with an entry never lists twice. Prints backup paths,
+# newest first by name scan order, one per line.
+list_orphan_backups() {
+  local entry src cand owned
+  local -a srcs=() roots=()
+  local e
+  for e in "${TRACKED[@]}" "${TRACKED_SECRETS[@]}"; do
+    src="${e%%:*}"; src="${src%/}"
+    srcs+=("$src")
+  done
+  [[ -d "$HOME" ]] && roots+=("$HOME")
+  for e in /etc/systemd/logind.conf.d /etc/systemd/sleep.conf.d; do
+    [[ -d "$e" ]] && roots+=("$e")
+  done
+  (( ${#roots[@]} )) || return 0
+  while IFS= read -r cand; do
+    [[ -n "$cand" ]] || continue
+    owned=0
+    for src in ${srcs[@]+"${srcs[@]}"}; do
+      [[ "$cand" == "$src".bak.* ]] && { owned=1; break; }
+    done
+    (( owned )) && continue
+    printf '%s\n' "$cand"
+  done < <(find "${roots[@]}" -maxdepth 4 \
+    \( -path '*/.git' -o -path '*/node_modules' -o -path '*/__pycache__' \
+       -o -path '*/.cache' -o -path '*/Cache' \) -prune \
+    -o -name '*.bak.[0-9]*' -print 2>/dev/null | sort -u)
+  return 0
+}
+
 # build_backups_json — what the panel renders. One entry per backup, carrying
 # the id it belongs to so the panel can put an Undo next to the right name.
 build_backups_json() {

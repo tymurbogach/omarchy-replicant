@@ -153,9 +153,25 @@ section "a card's subtitle fits its card"
 # passed while the panel showed "…backing up yet  (…": the "(a)" was in the
 # file and not on the screen. Measured on a capture: 57 characters fit, 58 did
 # not. Bound subtitles are the categories', which test-core.sh measures.
+section "a card's subtitle fits its card"
+# A card header elides its subtitle, and the end goes first. The key check above
+# passed while the panel showed "…backing up yet  (…": the "(a)" was in the
+# file and not on the screen. Measured on a capture: 57 characters fit, 58 did
+# not. Bound subtitles are the categories', which test-core.sh measures.
 while IFS= read -r sub; do
   [[ -n "$sub" ]] || continue
   check_true "fits in 57: ${sub:0:30}…" test "${#sub}" -le 57
 done < <(grep -ohE 'subtitle: "[^"]*"' "${QML[@]}" | sed -E 's/subtitle: "(.*)"/\1/')
+
+section "category icons survive as single glyphs"
+# The category icons are pasted supplementary-plane glyphs (4-byte UTF-8). A
+# stray re-encoding truncates them into different symbols with no error, the
+# way Panel.qml's code-point comment describes. Pin the encoding and the shape.
+check_true "categories.sh is valid UTF-8" iconv -f UTF-8 -t UTF-8 "$ROOT/bin/lib/categories.sh"
+while IFS='|' read -r id icon rest; do
+  [[ -n "$id" ]] || continue
+  check "icon of $id is one glyph" "1" "${#icon}"
+  check_false "icon of $id is not a replacement mark" test "$icon" = "?"
+done < <(sed -n '/^CATEGORIES=(/,/^)/p' "$ROOT/bin/lib/categories.sh" | grep -oE '"[a-z]+\|[^|]+\|' | tr -d '"')
 
 summary

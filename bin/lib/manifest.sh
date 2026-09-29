@@ -151,7 +151,7 @@ is_dir_entry() { [[ "$1" == */ ]]; }
 # a tracked ~/.config/foo/bar.conf sits next to the shipped ones rather than in
 # a parallel scheme: ~/.config/X -> X, ~/.local/bin/X -> bin/X, ~/.X -> home/X.
 derive_rel() {
-  local p="$1" rel slash=""
+  local p="$1" rel slash="" misc_parent=""
   [[ "$p" == */ ]] && { slash="/"; p="${p%/}"; }
   case "$p" in
     "$HOME/.config/"*)     rel="${p#"$HOME"/.config/}" ;;
@@ -165,7 +165,12 @@ derive_rel() {
       [[ "$rel" == */* ]] || rel="home/$rel" ;;
     "$HOME/"*)             rel="home/${p#"$HOME"/}" ;;
     /etc/*)                rel="etc/${p##*/}" ;;
-    *)                     rel="misc/${p##*/}" ;;
+    # Outside every known root the parent directory joins the id: two tools
+    # with the same filename in different places derived to one `misc/<name>`
+    # and the second track was rejected as a duplicate of the first.
+    *)                     misc_parent="${p%/*}"; misc_parent="${misc_parent##*/}"
+                           if [[ -n "$misc_parent" ]]; then rel="misc/$misc_parent/${p##*/}"
+                           else rel="misc/${p##*/}"; fi ;;
   esac
   printf '%s%s\n' "$rel" "$slash"
 }

@@ -426,7 +426,8 @@ TestCase {
       { id: "s", secret: true, size: 999999 }
     ])
     compare(summary.selected, 2)
-    compare(summary.files, 1)
+    compare(summary.files, 2)
+    compare(summary.secrets, 1)
     compare(summary.bytes, 12)
   }
 

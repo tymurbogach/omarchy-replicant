@@ -76,7 +76,7 @@ Card {
   CardNote {
     panel: ac.panel
     visible: panel.addMode === "suggest" && panel.suggestLoaded && ac.items.length === 0
-    text: "Nothing to suggest: everything here that looks like config is tracked. Browse your files to add anything else."
+    text: "Nothing to suggest: everything here that looks like config is tracked. Suggestions cover ~/.config down two levels, ~/.local/bin and the Omarchy hooks — deeper files need Browse your files."
   }
   Repeater {
     model: ac.open && panel.addMode === "suggest" ? ac.items : []

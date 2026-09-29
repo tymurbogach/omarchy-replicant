@@ -243,5 +243,15 @@ Ejecutar por bloques. Un bloque es una sesion pequena y verificable.
   identico, qmllint todo ok, validate ok. Bump a 0.16.2.
 
 ### Bloque 4 - Bajo
-- [ ] `selectionSummary`, iconos, `derive_rel`, `suggest`, `update`, `purge`.
-- [ ] Verificar: suite tocada y captura si hay UI.
+- [x] `selectionSummary` cuenta secretos como ficheros (nunca como bytes) +
+  nota en el dialogo bulk. Test QML ajustado.
+- [x] Iconos de categorias pinnados en `test-usability.sh` (UTF-8 + 1 glifo,
+  23 checks nuevos). 122/122.
+- [x] `derive_rel` misc con directorio padre (`misc/foo/bar.conf`).
+- [x] Limite de `suggest` documentado (panel + `suggest --help`).
+- [x] `update` nombra la qmlcache que borra (CLI + panel).
+- [x] `purge` barre `.bak` huerfanos (`backups-orphan`, dedup, conteo).
+  Verificado funcional (1 huerfano listado, 0 falsos).
+- [x] Verificar: qml 67/67, usability 122/122, bootstrap 50/50,
+  transaction 73/73, shellcheck limpio, qmllint todo ok, validate ok.
+  Bump a 0.16.4.

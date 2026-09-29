@@ -814,11 +814,13 @@ Panel {
   function copyPath(path, secret) {
     if (secret === true || String(path || "") === "") return
     root.busyLabel = "Copying path…"
-    controller.run("copy-path", ["sh", "-c", "printf '%s' \"$1\" | wl-copy", "replicant-copy", String(path)], { label: "Copy path" })
+    // No shell: wl-copy takes the text as an argument, so a path with
+    // $(...), backticks or quotes is copied literally and never interpreted.
+    controller.run("copy-path", ["wl-copy", "--", String(path)], { label: "Copy path" })
   }
   function copyViewerText() {
     if (root.viewerText === "") return
-    controller.run("copy-output", ["sh", "-c", "printf '%s' \"$1\" | wl-copy", "replicant-copy", root.viewerText],
+    controller.run("copy-output", ["wl-copy", "--", root.viewerText],
                    { label: "Copy output", busy: false })
   }
   function executeBulk(action) {

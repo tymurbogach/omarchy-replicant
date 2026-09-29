@@ -120,14 +120,14 @@ briefcache_write() {
   kstate=$(briefcache_key_state)
   registry_build 2>/dev/null || return 0
   tmp=$(mktemp -- "$cachedir/.state.XXXXXX") || return 0
-  local entry rel regrow kind live repo blob live_sig repo_sig blob_sig
+  local regrow rel kind live repo blob live_sig repo_sig blob_sig
   local -a rf=()
   {
-    for entry in "${TRACKED[@]}" "${TRACKED_SECRETS[@]}"; do
-      rel="${entry##*:}"
-      regrow=$(registry_row_for "$rel" 2>/dev/null) || continue
+    # One row set with the full payload: every registry row is fingerprinted,
+    # so a change in any row the panel draws invalidates the cached counts.
+    for regrow in ${REGISTRY[@]+"${REGISTRY[@]}"}; do
       mapfile -t rf < <(row_split "$regrow" 9)
-      kind="${rf[1]}"; live="${rf[5]}"; repo="${rf[6]}"; blob="${rf[7]}"
+      rel="${rf[0]}"; kind="${rf[1]}"; live="${rf[5]}"; repo="${rf[6]}"; blob="${rf[7]}"
       if [[ "$kind" == "dir" ]]; then
         live_sig=$(briefcache_tree_sig "$live")
       else
@@ -214,9 +214,9 @@ briefcache_read() {
     [[ "$blob" == "$cblob" ]] || return 1
     [[ "$blob_sig" == "$cblobsig" ]] || return 1
   done < <(jq -r '.entries[] | [.id, .live_sig, .repo_sig, .blob, .blob_sig] | join("\u001f")' -- "$cache" 2>/dev/null) || return 1
-  local entry rel
-  for entry in "${TRACKED[@]}" "${TRACKED_SECRETS[@]}"; do
-    rel="${entry##*:}"
+  local regrow rel
+  for regrow in ${REGISTRY[@]+"${REGISTRY[@]}"}; do
+    rel="${regrow%%$'\t'*}"
     [[ -n "${seen[$rel]:-}" ]] || return 1
   done
   local u i l m na

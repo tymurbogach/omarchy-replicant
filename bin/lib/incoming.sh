@@ -27,6 +27,7 @@ read_incoming() {
 # stop claiming anything. That is the same self-healing rule the unsaved badge
 # follows, and it is why no pass has to remember to clear this flag.
 is_incoming_rel() {
+  [[ -n "${1:-}" ]] || return 1
   read_incoming
   [[ -n "${INCOMING[$1]:-}" ]]
 }
@@ -74,19 +75,20 @@ record_incoming() {
 # Older callers that read only two fields keep working: the first field stays
 # the unsaved count.
 count_changes() {
-  local entry rel n_unsaved=0 n_incoming=0 n_locked=0 n_missing=0
-  local regrow live same member locked scope repo k v
+  local n_unsaved=0 n_incoming=0 n_locked=0 n_missing=0
+  local regrow live same member locked scope repo source gitdirty k v
   local -a rf=()
   # Built once in this shell, so the loops below need no fork for each row.
   registry_build
   # Content only, like entry_differs always was: the git half (copied in, not
   # committed) already reaches the bar as `dirty` in the brief payload, and
   # adding it here would count one file twice.
-  for entry in "${TRACKED[@]}" "${TRACKED_SECRETS[@]}"; do
-    rel="${entry##*:}"
-    regrow=$(registry_row_for "$rel") || continue
+  # Iterated over REGISTRY, not TRACKED: the full payload counts the same rows,
+  # so the bar and the panel answer from one row set. A per-entry resolve here
+  # also scanned the registry once per row (quadratic); this is one pass.
+  for regrow in ${REGISTRY[@]+"${REGISTRY[@]}"}; do
     mapfile -t rf < <(row_split "$regrow" 9)
-    scope="${rf[4]}"
+    source="${rf[2]}"; scope="${rf[4]}"
     [[ "$scope" == "off" ]] && continue
     live=false; same=false; member=false; locked=false; repo=false; gitdirty=false
     while IFS='=' read -r k v; do
@@ -98,9 +100,15 @@ count_changes() {
     done < <(state_facts "$regrow")
     if [[ "$locked" == true ]]; then n_locked=$(( n_locked + 1 )); continue; fi
     if [[ "$live" == false ]]; then
-      # Only when the repo holds a copy: a shipped entry neither here nor in
-      # the repo draws no row, and the bar stays quiet about it too.
-      [[ "$repo" == true ]] && n_missing=$(( n_missing + 1 ))
+      # Same inclusion rule as the full payload: a shipped or found entry
+      # neither here nor in the repo draws no row, and the bar stays quiet
+      # about it too. An explicit user or override row always draws one, so a
+      # tracked file gone from this machine counts as missing even before its
+      # first save, exactly as the panel shows it.
+      if [[ "$source" == manifest || "$source" == auto ]] && [[ "$repo" == false ]]; then
+        continue
+      fi
+      n_missing=$(( n_missing + 1 ))
       continue
     fi
     # Unsaved is either half, exactly as the badge precedence is: content that

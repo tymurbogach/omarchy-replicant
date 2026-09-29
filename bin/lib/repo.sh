@@ -12,10 +12,12 @@ bootstrap_fail_at() {
   return 1
 }
 
-# Repository-shape writes (scope, policy, track, keys) commit through the
-# transaction engine in bin/lib/transaction.sh: journal first, one commit of
-# exactly the staged paths, push after activation. Nothing here commits
-# directly, so no git failure can pass silently.
+# Repository-shape writes (scope, policy, track, keys, create) commit through
+# the transaction engine in bin/lib/transaction.sh: journal first, one commit
+# of exactly the staged paths, push after activation. Nothing here commits
+# directly, so no git failure can pass silently. A create whose push fails
+# keeps its local commit with the journal: `tx resume` retries the push and
+# `doctor` names it, instead of leaving a commit no tool knows about.
 
 # repo_remote_url: the origin URL, or nothing. Read-only helper so the CLI
 # never shells out to git itself.
@@ -31,7 +33,8 @@ repo_hooks_path() { git -C "$REPO_DIR" config core.hooksPath 2>/dev/null || true
 # change the user never asked for. Origin is set last, after the local repo
 # validates, so a failed create never leaves a re-pointed origin behind.
 repo_create() {
-  local name="$1" do_push="${2:-0}" transport="${3:-https}" gh_user current_url url vis
+  local name="$1" do_push="${2:-0}" transport="${3:-https}" gh_user url vis
+  local fresh=0 txdir="" candidate="" subject=""
   [[ "$name" =~ ^[A-Za-z0-9._-]+$ && ${#name} -le 100 && "$name" != "." && "$name" != ".." ]] || { echo "invalid name: $name" >&2; return 1; }
   [[ "$transport" == https || "$transport" == ssh ]] || { echo "invalid transport: $transport" >&2; return 1; }
   gh_user=$(gh api user --jq .login 2>/dev/null || gh auth status 2>&1 | grep -oP 'account \K\w+' | head -n1)
@@ -64,10 +67,53 @@ repo_create() {
     url="https://github.com/$gh_user/$name.git"
   fi
   if [[ "$(repo_state)" == missing ]]; then
-    core_init || return 1
-  else
-    core_backup || return 1
+    # Staged and atomic on its own: a failed init leaves no repo behind, and
+    # the journal below opens only once the repo exists to commit in.
+    core_init_staged || return 1
+    fresh=1
   fi
+  local subject="replicant: create $name $(date -Is)"
+  tx_shape_begin "create" "$subject" || return 1
+  local txdir="$TX_DIR" candidate
+  if ! _repo_create_relay "$fresh" "$url"; then
+    tx_abort "$txdir"
+    return 1
+  fi
+  candidate=$(tx_shape_commit "$subject" "$txdir" -- .) || return 1
+  if [[ -z "$candidate" ]]; then
+    # Nothing to commit: an existing repo that was already committed. A
+    # requested push still pushes whatever is ahead (or nothing, quietly).
+    if (( do_push )); then
+      _repo_create_push "$url" "$txdir" || return 1
+    else
+      tx_abort "$txdir"
+      echo "remote $url; run omarchy-replicant save --auto to push" >&2
+    fi
+    return 0
+  fi
+  if (( do_push )); then
+    _repo_create_push "$url" "$txdir" || return 1
+  else
+    tx_meta_field "$txdir" push "held" \
+      || echo "create: warning: the push state did not reach the journal" >&2
+    tx_remove "$txdir"
+    briefcache_invalidate 2>/dev/null || true
+    progress_result local-only "Saved on this machine, not pushed" "omarchy-replicant push"
+    echo "remote $url; run omarchy-replicant save --auto to push" >&2
+  fi
+}
+
+# _repo_create_relay <fresh: 0|1> <url>: the worktree half of a create. Copies
+# the live state in (fresh repos get their layout first, the way core_init did)
+# and points origin at the new remote. Commits nothing: tx_shape_commit owns
+# the single commit. Fails before any commit, so the caller drops the
+# pre-commit journal and the worktree stays reviewable.
+_repo_create_relay() {
+  local fresh="$1" url="$2" current_url
+  if (( fresh )); then
+    ensure_repo_layout || return 1
+  fi
+  core_backup || return 1
   current_url=$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null || true)
   if [[ -n "$current_url" && "$current_url" != "$url" ]]; then
     echo "repository already points at $current_url — re-point it by hand (git -C $REPO_DIR remote set-url origin $url), then retry; nothing was changed" >&2
@@ -76,23 +122,41 @@ repo_create() {
     git -C "$REPO_DIR" remote add origin "$url" || return 1
   fi
   git -C "$REPO_DIR" branch -M main 2>/dev/null || true
-  git -C "$REPO_DIR" add -A
-  if ! git -C "$REPO_DIR" diff --cached --quiet; then
-    git -C "$REPO_DIR" commit -m "replicant: create $name $(date -Is)" || return 1
+  return 0
+}
+
+# _repo_create_push <url> <txdir>: the first push, with upstream tracking. A
+# held or failed push keeps the local commit with its journal (retry: `tx
+# resume <uuid>` or `push`), the way every shape transaction does. Prints the
+# same recovery lines the direct push always printed.
+_repo_create_push() {
+  local url="$1" txdir="$2"
+  if ! bootstrap_fail_at push; then
+    tx_meta_field "$txdir" push "failed" \
+      || echo "create: warning: the push state did not reach the journal" >&2
+    echo "push to $url held by injected failure — the local commit is kept; retry 'git -C $REPO_DIR push -u origin main'" >&2
+    echo "The transaction is kept — resume it with 'tx resume' (see 'tx list')." >&2
+    briefcache_invalidate 2>/dev/null || true
+    progress_result local-only "Saved locally, but the push failed" "omarchy-replicant push"
+    return 1
   fi
-  if (( do_push )); then
-    if ! bootstrap_fail_at push; then
-      echo "push to $url held by injected failure — the local commit is kept; retry 'git -C $REPO_DIR push -u origin main'" >&2
-      return 1
-    fi
-    git -C "$REPO_DIR" push -u origin main 2>&1 || git -C "$REPO_DIR" push -u origin HEAD 2>&1 || {
-      echo "push to $url failed — the local commit is kept; run 'omarchy-replicant pull', then retry 'git -C $REPO_DIR push -u origin main'" >&2
-      return 1
-    }
+  progress_stage publish false "Publishing"
+  if git -C "$REPO_DIR" push -u origin main 2>&1 || git -C "$REPO_DIR" push -u origin HEAD 2>&1; then
+    tx_meta_field "$txdir" push "ok" \
+      || echo "create: warning: the push state did not reach the journal" >&2
+    tx_remove "$txdir"
+    briefcache_invalidate 2>/dev/null || true
+    progress_result success "Created and pushed" ""
     echo "pushed to $url (private)" >&2
-  else
-    echo "remote $url; run omarchy-replicant save --auto to push" >&2
+    return 0
   fi
+  tx_meta_field "$txdir" push "failed" \
+    || echo "create: warning: the push state did not reach the journal" >&2
+  echo "push to $url failed — the local commit is kept; run 'omarchy-replicant pull', then retry 'git -C $REPO_DIR push -u origin main'" >&2
+  echo "The transaction is kept — resume it with 'tx resume' (see 'tx list')." >&2
+  briefcache_invalidate 2>/dev/null || true
+  progress_result local-only "Saved locally, but the push failed" "omarchy-replicant push"
+  return 1
 }
 
 repo_push() {

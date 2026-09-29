@@ -63,6 +63,25 @@ guess_profile() {
 # then falls back to its hostname — unique by construction. It only ever ASSIGNS
 # and never reassigns, so an existing machine keeps the profile it already has
 # and nothing moves in a repo that is already working.
+# normalize_profile_name <raw> — a hostname (or any string) mapped into the
+# profile alphabet: lowercase letters, digits, '-' and '_', max 32, starting
+# with a letter or digit. The hostname fallback in ensure_profile_recorded used
+# to be assigned raw, so a machine called "My.Host" failed core_profile_set
+# validation and stayed unrecorded, silently sharing the guessed profile.
+normalize_profile_name() {
+  local n="$1"
+  n=$(tr '[:upper:]' '[:lower:]' <<<"$n")
+  n=$(LC_ALL=C tr -c 'a-z0-9_-' '-' <<<"$n")
+  n=$(tr -s '-' <<<"$n")
+  n="${n#-}"
+  n="${n%-}"
+  n="${n:0:32}"
+  n="${n%-}"
+  while [[ -n "$n" && "$n" =~ ^[^a-z0-9] ]]; do n="${n:1}"; done
+  [[ -z "$n" ]] && n="machine"
+  printf '%s\n' "$n"
+}
+
 ensure_profile_recorded() {
   [[ -e "$REPO_DIR/.git" ]] || return 0
   [[ -n "${REPLICANT_PROFILE:-}" ]] && return 0
@@ -91,7 +110,18 @@ ensure_profile_recorded() {
     done
   fi
 
-  (( taken )) && want="$MACHINE"
+  # The fallback is the hostname, unique by construction — normalized into
+  # the profile alphabet, and suffixed while another machine holds the name
+  # (two hostnames can normalize to one profile: "Host-A" and "host.a").
+  if (( taken )); then
+    want=$(normalize_profile_name "$MACHINE")
+    local base="${want:0:29}" used i=2
+    used=$(read_profile_map | sed -e 's/.*=//' -e 's/[[:space:]]//g')
+    while grep -qxF "$want" <<<"$used"; do
+      want="${base}-${i}"
+      (( i++ )) || true
+    done
+  fi
   core_profile_set "$want" >/dev/null 2>&1 || true
   return 0
 }

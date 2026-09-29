@@ -13,7 +13,7 @@ install_file() {
   local short_path=${dst/#$HOME/\~}
   if [[ ! -f $src ]]; then
     skip "$short_path — source missing in the repo ($src)"
-    return
+    return 1
   fi
   # A config symlinked into a dotfiles repo is still that config, so the write
   # goes through the link. `install` onto the name itself replaces the link with
@@ -27,11 +27,14 @@ install_file() {
   if [[ -f $target ]] && cmp -s "$src" "$target"; then
     run chmod "$mode" "$target"
     ok "$short_path (already matches, mode $mode)"
-    return
+    return 0
   fi
   if [[ -e $dst ]]; then
-    run cp -a -- "$target" "$dst.bak.$(date +%s)"
-    skip "$short_path — previous version saved as .bak.<epoch>"
+    local bak="$dst.bak.$(date +%s)" epoch
+    epoch="${bak##*.bak.}"
+    while [[ -e "$bak" ]]; do epoch=$((epoch + 1)); bak="$dst.bak.$epoch"; done
+    run cp -a -- "$target" "$bak"
+    skip "$short_path — previous version saved as .bak.$epoch"
   fi
   run install -D -m "$mode" "$src" "$target"
   ok "$short_path ($mode)"
@@ -140,16 +143,19 @@ copy_tree_into_repo() {
 install_tree() {
   local src="${1%/}" dst="${2%/}" mode="$3" f
   local short_path=${dst/#$HOME/\~}
-  if [[ ! -d $src ]]; then skip "$short_path/ — not in the repo"; return; fi
+  if [[ ! -d $src ]]; then skip "$short_path/ — not in the repo"; return 1; fi
   if [[ -d $dst ]] && tree_same "$src" "$dst"; then
     ok "$short_path/ (already matches, $(tree_count "$src") files)"
-    return
+    return 0
   fi
   # Resolved first: `cp -a` of a symlinked directory copies the link, and a
   # backup that points at the tree about to be overwritten keeps nothing.
   if [[ -e $dst ]]; then
-    run cp -a -- "$(readlink -f -- "$dst")" "$dst.bak.$(date +%s)"
-    skip "$short_path/ — previous version saved as .bak.<epoch>"
+    local bak="$dst.bak.$(date +%s)" epoch
+    epoch="${bak##*.bak.}"
+    while [[ -e "$bak" ]]; do epoch=$((epoch + 1)); bak="$dst.bak.$epoch"; done
+    run cp -a -- "$(readlink -f -- "$dst")" "$bak"
+    skip "$short_path/ — previous version saved as .bak.$epoch"
   fi
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue

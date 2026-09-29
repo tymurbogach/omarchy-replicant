@@ -576,6 +576,8 @@ check_false "undo on an id with no backup says so" "$CLI" undo hypr/monitors.lua
 check_false "undo on an unknown id fails"          "$CLI" undo nope/nothing --apply
 check_false "undo rejects the undocumented --yes alias" "$CLI" undo hypr/input.lua --yes
 check_contains "…and names the supported mutation flag" "use --apply" "$(run undo hypr/input.lua --yes)"
+check_false "undo rejects an unknown option" "$CLI" undo hypr/input.lua --froce
+check_contains "…and names the option" "unknown option" "$(run undo hypr/input.lua --froce)"
 
 out=$(run backups --prune)
 check_contains "prune shows before it removes" "would remove" "$out"
@@ -842,13 +844,16 @@ check "…in one commit" "0" "$(git -C "$REPO" status --porcelain | grep -c 'foo
 check "…so deleted no longer lists it" "0" \
   "$(run deleted --json | jq --arg s "$fsha" '[.[] | select(.sha == $s)] | length')"
 check_false "recover refuses what is not a commit" "$CLI" recover not-a-commit --apply
-# An untrack removes the line and the copy in one commit. Bringing back only
+# An untrack removes the row and the copy in one commit. Bringing back only
 # the copy would last until the next save pruned it again.
 usha=$(git -C "$REPO" log --format='%H %s' | awk '$2 == "untrack:" && $3 == "mine2.conf" { print $1; exit }')
 rm -f "$HOME/.config/mine2.conf"
 run recover "$usha" --apply >/dev/null 2>&1
-check_contains "recovering an untrack tracks the file again" "mine2.conf" "$(cat "$REPO/.replicant-track")"
+check_contains "recovering an untrack tracks the file again" "mine2.conf" "$(cat "$REPO/.replicant/entries.json" 2>/dev/null; cat "$REPO/.replicant-track" 2>/dev/null)"
 check "…and puts it back on the machine" "mine" "$(cat "$HOME/.config/mine2.conf" 2>/dev/null)"
+# The recovered row survives the next save: the prune pass must keep it.
+run save --all --auto --no-push >/dev/null 2>&1 || true
+check_contains "…and the next save keeps the recovered row" "mine2.conf" "$(cat "$REPO/.replicant/entries.json" 2>/dev/null; cat "$REPO/.replicant-track" 2>/dev/null)"
 
 section "the file picker lists one directory and writes nothing"
 printf 'x\n' > "$HOME/.config/api-token.txt"

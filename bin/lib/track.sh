@@ -53,11 +53,16 @@ core_track() {
   for arg in "$@"; do
     case "$arg" in
       --secret) kind=secret ;;
-      -*) ;;
-      *) if [[ -z "$path" ]]; then path="$arg"; else rel="$arg"; fi ;;
+      -*) echo "track: unknown option: $arg" >&2; return 1 ;;
+      *) if [[ -z "$path" ]]; then path="$arg"; elif [[ -z "$rel" ]]; then rel="$arg"; else echo "track: too many arguments: $arg" >&2; return 1; fi ;;
     esac
   done
   [[ -n "$path" ]] || { echo "track: usage: track <path> [name-in-repo] [--secret]" >&2; return 1; }
+  # Fail closed like bulk track: reject data-dir paths, .git, unreadable,
+  # binary and oversized trees before any manifest work.
+  if declare -F bulk_validate_track_path >/dev/null 2>&1; then
+    bulk_validate_track_path "$path" "$kind" || return 1
+  fi
   case "$path" in "~/"*) path="$HOME/${path#\~/}" ;; esac
   [[ "$path" == /* ]] || path="$PWD/$path"
   # A trailing slash is how the user says "directory", but so is the file

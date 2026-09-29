@@ -48,6 +48,10 @@ Item {
     width: parent.width
     height: Style.space(48)
     radius: Style.cornerRadius
+    Accessible.role: Accessible.ListItem
+    Accessible.name: frow.config.label + ". " + R.stateWord(frow.syncState)
+    Accessible.description: frow.expanded ? "Expanded. Activate to collapse." : "Collapsed. Activate to expand details."
+    Accessible.onPressAction: panel.toggleRow(frow.config.id)
     color: frow.keyboardFocused || frow.keyboardActionFocused
         ? Style.focusFillFor(panel.fg, Color.accent)
       : frow.expanded ? Style.selectedFillFor(panel.fg, Color.accent)

@@ -147,7 +147,8 @@ the 0.14 CLI removals and GitHub API requirement, and derived the suite count fr
 
 ### Public interfaces
 
-- `save --all --auto` becomes the only panel save command.
+- `save --all --auto` becomes the main panel save command. `save-file <id>`,
+  `bulk save`, `set` and `revert` remain for single entries and settings.
 - The five deprecated CLI surfaces are removed in 0.14.0.
 - Full `status --json` keeps `entries` as its only row collection. The repository data schema
   remains v3.

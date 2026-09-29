@@ -8,6 +8,9 @@
 
 ## Current
 
+- Version 0.15.0 makes recovery work on v3 repositories, makes the CLI fail
+  closed for undo and track options, and makes the panel honest about pending
+  scope, locked rows, keyboard reach and result history.
 - Complete live installation and placement verification for the usability patch.
 - Record the remaining shell restart and interaction evidence in `TASKS.md`.
 - Complete deferred panel loading for version 0.14.0. Security cleanup and documentation alignment

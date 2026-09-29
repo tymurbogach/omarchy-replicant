@@ -18,5 +18,5 @@ a complete Replicant repository. If it is empty, return to the first machine
 and use Create.
 
 Run `omarchy-replicant key init` before you save secrets. Run
-`omarchy-replicant save --auto` to save configuration. Review a restore with
+`omarchy-replicant save --all --auto` to save configuration. Review a restore with
 `omarchy-replicant restore --dry-run` before you apply it.

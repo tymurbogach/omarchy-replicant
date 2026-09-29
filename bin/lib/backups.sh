@@ -64,9 +64,11 @@ BACKUPS_KEPT=${REPLICANT_BACKUPS_KEPT:-3}
 # that restore.
 SETTING_BACKUPS_FILE="$REPLICANT_HOME/setting-backups"
 backup_before_write() {
-  local file="$1" b old kept
+  local file="$1" b old kept epoch
   [[ -f "$file" ]] || return 0
   b="$file.bak.$(date +%s)"
+  epoch="${b##*.bak.}"
+  while [[ -e "$b" ]]; do epoch=$((epoch + 1)); b="$file.bak.$epoch"; done
   cp -a "$file" "$b" || return 1
   mkdir -p "$REPLICANT_HOME" 2>/dev/null || return 0
   printf '%s\n' "$b" >> "$SETTING_BACKUPS_FILE"

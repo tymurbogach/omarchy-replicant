@@ -351,6 +351,7 @@ gate_g7() {
 gate_g8() {
   section "G8 release gate"
   "$HERE/coverage-check.sh" >/dev/null 2>&1 && ok "coverage manifest is complete" || bad "coverage manifest is incomplete"
+  "$HERE/check-version-bump.sh" >/dev/null 2>&1 && ok "plugin version bump is valid" || bad "plugin version bump is missing or invalid"
   [[ "$(jq -r .version "$ROOT/manifest.json" 2>/dev/null)" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && ok "plugin manifest carries a release version" || bad "plugin manifest has no release version"
   if [[ -z "$(git -C "$ROOT" status --porcelain | grep -E '\.log$|\.tmp$|baseline\.txt$' || true)" ]]; then
     ok "no stray test artifacts in the working tree"

@@ -23,6 +23,9 @@ bash "$ROOT/bin/scan-secrets.sh" "$ROOT/bin" "$ROOT/tests" "$ROOT"/*.qml "$ROOT/
 section "static: coverage manifest"
 bash "$HERE/coverage-check.sh"
 
+section "static: version bump"
+bash "$HERE/check-version-bump.sh"
+
 section "suites without a phase gate"
 for suite in test-cli test-core test-journey test-modules test-interruptions test-usability; do
   echo "--- $suite ---"

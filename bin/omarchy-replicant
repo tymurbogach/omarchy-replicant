@@ -2,6 +2,7 @@
 # omarchy-replicant: back up, restore and replicate an Omarchy 4 setup through
 # a private GitHub repo that holds config, secrets and state. The panel under
 # the bar icon drives this CLI and reads its state from `status --json`.
+# shellcheck disable=SC2088 # "~" below is literal text and patterns, never an expansion
 set -euo pipefail
 
 REAL_BIN="$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
@@ -154,10 +155,12 @@ cmd_setup_status() {
 
   if command -v gh >/dev/null 2>&1; then
     installed=true
-    gh_status=$(gh auth status >/dev/null 2>&1; echo $?)
-    if gh_login=$(gh api user --jq .login 2>/dev/null) && [[ -n "$gh_login" ]]; then
+    # Bounded like every other network call here: setup status gates the
+    # panel's first screen, and `gh` sets no timeout itself.
+    gh_status=$(timeout 10 gh auth status >/dev/null 2>&1; echo $?)
+    if gh_login=$(timeout 10 gh api user --jq .login 2>/dev/null) && [[ -n "$gh_login" ]]; then
       authenticated=true; reachable=true; login="$gh_login"
-    elif gh api rate_limit >/dev/null 2>&1; then
+    elif timeout 10 gh api rate_limit >/dev/null 2>&1; then
       reachable=true
     elif (( gh_status == 0 )); then
       authenticated=true
@@ -962,8 +965,10 @@ cmd_doctor() {
   fi
 
   echo "GitHub"
-  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-    chk_ok "logged in as $(gh api user --jq .login 2>/dev/null || echo '?')"
+  # Every network call below has a timeout: doctor runs in the panel's
+  # foreground, and a hung DNS must not freeze it. `gh` sets no timeout itself.
+  if command -v gh >/dev/null 2>&1 && timeout 10 gh auth status >/dev/null 2>&1; then
+    chk_ok "logged in as $(timeout 10 gh api user --jq .login 2>/dev/null || echo '?')"
   else
     chk_warn "not logged in — run: omarchy-replicant login"
   fi
@@ -1001,7 +1006,7 @@ cmd_doctor() {
       chk_ok "remote $url"
       local slug vis
       slug=$(printf '%s' "$url" | sed -E 's#(https://github.com/|git@github.com:)##; s/\.git$//')
-      vis=$(gh repo view "$slug" --json visibility --jq .visibility 2>/dev/null || echo "")
+      vis=$(timeout 10 gh repo view "$slug" --json visibility --jq .visibility 2>/dev/null || echo "")
       case "$vis" in
         PRIVATE) chk_ok "remote is PRIVATE" ;;
         PUBLIC)  chk_bad "remote is PUBLIC and this repo holds secrets — gh repo edit $slug --visibility private" ;;

@@ -16,10 +16,10 @@ import Quickshell.Io
 // two `status` runs per cycle for a value nothing was reading.
 //
 // `status` returns a CACHED answer, not a new one on every call. Refreshing per
-// call would put a second-long `status` process behind every poll of a script's
+// call would put a full `status` process behind every poll of a script's
 // loop. At load the cache holds the brief answer (`--brief`: the counters and
 // no rows), because the bar builds the full payload at the same moment, and two
-// full runs at every shell start cost about 1.4 s of CPU each. `refresh` builds
+// full runs at every shell start cost most of a second of CPU each. `refresh` builds
 // the full answer. A script that needs rows calls `refresh` and then `status`,
 // or runs the CLI.
 Item {

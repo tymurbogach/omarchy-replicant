@@ -113,10 +113,9 @@ BarWidget {
   // actually matters.
   //
   // The tick also asks for --brief. This icon reads six numbers; the full
-  // payload builds fifty file rows, twenty-four settings and every category,
-  // which took 1.4 s of CPU once a minute to answer them. Brief takes 0.18 s —
-  // it grew from 0.04 s when it started counting unsaved files, which is fifty
-  // cmps and the reason the icon is now telling the truth.
+  // payload builds every file row, setting and category, which is most of a
+  // second of CPU once a minute to answer six numbers. Brief answers the same
+  // six from content counts and a metadata cache, in a fraction of that.
   // Whenever the panel is open — or a write just finished — the full payload is
   // built, because that is when anybody is actually looking at the rows.
   // A request that arrives while a probe is in flight used to be dropped. Open

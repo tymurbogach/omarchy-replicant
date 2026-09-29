@@ -64,9 +64,9 @@ record_incoming() {
 # 0.6.1 and the bar was not.
 #
 # It answers with content only. The git half ("copied in, not committed") is
-# already in the brief payload as `dirty`, and the icon ORs the two. Fifty cmps
-# take a few milliseconds; building the full row payload for the same answer
-# took 1.4 s of CPU once a minute.
+# already in the brief payload as `dirty`, and the icon ORs the two. The
+# content pass is dozens of comparisons instead of a full row payload, which
+# is what used to make the once-a-minute poll the plugin's main idle cost.
 #
 # Locked is the third number: a version 2 secret whose vault cannot be read on
 # this machine. It is counted apart from unsaved so the bar can ask for the key

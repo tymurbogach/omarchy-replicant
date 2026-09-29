@@ -134,4 +134,20 @@ TestCase {
   function test_locked_row_uses_key_word() {
     compare(R.stateWord("locked"), "locked, needs key")
   }
+
+  function test_stale_background_takes_one_turn_instead_of_starving() {
+    var old = { job: "log", command: ["cli", "log"], meta: { background: true }, queuedAt: 0 }
+    var fresh = { job: "scope", command: ["cli", "scope"], meta: {} }
+    var queue = R.queueEnqueue([old], fresh, 60000).queue
+    compare(queue.length, 2)
+    compare(R.queueNextIndex(queue, 60000), 1)
+  }
+
+  function test_fresh_background_waits_behind_interactive() {
+    var background = { job: "log", command: ["cli", "log"], meta: { background: true }, queuedAt: 59000 }
+    var interactive = { job: "scope", command: ["cli", "scope"], meta: {} }
+    var queue = R.queueEnqueue([background], interactive, 60000).queue
+    compare(R.queueNextIndex(queue, 60000), 0)
+    compare(R.queueNextIndex([], 60000), -1)
+  }
 }

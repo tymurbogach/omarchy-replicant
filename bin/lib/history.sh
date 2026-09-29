@@ -89,7 +89,7 @@ RECOVERED=()
 # <sha> removed. An untrack removes the row and the copy in one commit, and
 # the copy is useless without it: the next save would prune it again.
 recover_entries() {
-  local sha="$1" parent child removed id obj current tmp
+  local sha="$1" parent child removed id obj current tmp new_current
   parent=$(git -C "$REPO_DIR" show "$sha^:.replicant/entries.json" 2>/dev/null || printf '{}\n')
   child=$(git -C "$REPO_DIR" show "$sha:.replicant/entries.json" 2>/dev/null || printf '{}\n')
   removed=$(jq -r --argjson p "$parent" --argjson c "$child" -n '
@@ -104,7 +104,16 @@ recover_entries() {
     if jq -e --arg id "$id" 'has($id)' <<<"$current" >/dev/null 2>&1; then continue; fi
     obj=$(jq -c --arg id "$id" '.[$id]' <<<"$parent" 2>/dev/null || true)
     [[ -n "$obj" && "$obj" != "null" ]] || continue
-    current=$(jq -c --arg id "$id" --argjson o "$obj" '.[$id] = $o' <<<"$current" 2>/dev/null || { echo "$current"; continue; })
+    # No `continue` inside the substitution below: it would exit only the
+    # subshell and silently keep a half-merged registry. A merge failure fails
+    # the recovery instead of quietly dropping the entry.
+    new_current=$(jq -c --arg id "$id" --argjson o "$obj" '.[$id] = $o' <<<"$current" 2>/dev/null || true)
+    if [[ -z "$new_current" ]]; then
+      rm -f -- "$tmp"
+      echo "recover: could not merge $id" >&2
+      return 1
+    fi
+    current="$new_current"
     echo "  + tracked again: $id" >&2
     changed=1
   done <<<"$removed"
@@ -145,7 +154,7 @@ recover_vault() {
   [[ -n "$removed" ]] || return 0
   current=$(vault_index_decrypt 2>/dev/null || true)
   [[ -n "$current" ]] || { echo "recover: vault is locked — secrets stay in the repo only" >&2; return 0; }
-  local id obj blob changed=0
+  local id obj blob changed=0 new_current
   while IFS= read -r id; do
     [[ -n "$id" ]] || continue
     if jq -e --arg id "$id" '.secrets[] | select(.id == $id)' <<<"$current" >/dev/null 2>&1; then continue; fi
@@ -161,7 +170,15 @@ recover_vault() {
         }
       fi
     fi
-    current=$(jq -c --argjson o "$obj" '.secrets += [$o]' <<<"$current" 2>/dev/null || { echo "$current"; continue; })
+    # Same fail-closed merge as recover_entries: no `continue` inside the
+    # substitution, which would exit only the subshell and silently drop the
+    # secret from the merged index.
+    new_current=$(jq -c --argjson o "$obj" '.secrets += [$o]' <<<"$current" 2>/dev/null || true)
+    if [[ -z "$new_current" ]]; then
+      echo "recover: could not merge secret $id" >&2
+      return 1
+    fi
+    current="$new_current"
     echo "  + secret tracked again: $id" >&2
     changed=1
   done <<<"$removed"

@@ -23,6 +23,7 @@ core_track() {
   if declare -F bulk_validate_track_path >/dev/null 2>&1; then
     bulk_validate_track_path "$path" "$kind" || return 1
   fi
+  # shellcheck disable=SC2088 # literal "~/" is the typed prefix, not an expansion
   case "$path" in "~/"*) path="$HOME/${path#\~/}" ;; esac
   [[ "$path" == /* ]] || path="$PWD/$path"
   # A trailing slash is how the user says "directory", but so is the file

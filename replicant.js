@@ -693,9 +693,17 @@ function queueSameCommand(a, b) {
   return String(JSON.stringify(a.command || [])) === String(JSON.stringify(b.command || []))
 }
 
-function queueEnqueue(queue, job) {
+// A background refresh that keeps losing its turn never runs: interactive
+// jobs always insert before it, so a steady stream of them starves it without
+// bound. Background jobs are all read-only (status, log, suggestions), so a
+// stale one may safely take one turn after waiting this long.
+var MAX_BACKGROUND_WAIT_MS = 15000
+
+function queueEnqueue(queue, job, now) {
   var list = (queue || []).slice()
-  var next = { job: job.job, command: (job.command || []).slice(), meta: job.meta || ({}) }
+  var t = now === undefined ? Date.now() : now
+  var next = { job: job.job, command: (job.command || []).slice(), meta: job.meta || ({}),
+               queuedAt: job.queuedAt !== undefined ? job.queuedAt : t }
   if (queueIsBackground(next)) {
     for (var i = 0; i < list.length; i++) {
       if (list[i].job === next.job && queueSameCommand(list[i], next)) return { queue: list, result: "coalesced" }
@@ -709,6 +717,18 @@ function queueEnqueue(queue, job) {
   }
   list.splice(at, 0, next)
   return { queue: list, result: "queued" }
+}
+
+// Which queued job runs next. Normally the head: interactive jobs already
+// precede background ones from queueEnqueue. A background job waiting past
+// the bound takes one turn instead of starving, then the head resumes.
+function queueNextIndex(queue, now) {
+  var list = queue || [], t = now === undefined ? Date.now() : now
+  if (list.length === 0) return -1
+  for (var i = 0; i < list.length; i++) {
+    if (queueIsBackground(list[i]) && (t - (list[i].queuedAt !== undefined ? list[i].queuedAt : t)) >= MAX_BACKGROUND_WAIT_MS) return i
+  }
+  return 0
 }
 
 // Parse one stderr line of the --progress-json stream. Returns the event

@@ -72,7 +72,8 @@ repo_create() {
     core_init_staged || return 1
     fresh=1
   fi
-  local subject="replicant: create $name $(date -Is)"
+  local subject
+  subject="replicant: create $name $(date -Is)"
   tx_shape_begin "create" "$subject" || return 1
   local txdir="$TX_DIR" candidate
   if ! _repo_create_relay "$fresh" "$url"; then

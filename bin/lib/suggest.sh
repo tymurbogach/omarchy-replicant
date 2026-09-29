@@ -103,6 +103,7 @@ suggest_kind() {
 # project's .env, a script outside ~/.local/bin, a file under /etc.
 core_browse() {
   local dir="${1:-$HOME}" real parent name type size path tracked kind
+  # shellcheck disable=SC2088 # literal "~" is the typed path, not an expansion
   case "$dir" in "~") dir="$HOME" ;; "~/"*) dir="$HOME/${dir#\~/}" ;; esac
   browse_error() { jq -nc --arg dir "$dir" --arg error "$1" --arg home "$HOME" '{dir:$dir, home:$home, error:$error, entries:[]}'; }
   real=$(realpath -e -- "$dir" 2>/dev/null) || { browse_error "does not exist"; return 1; }

@@ -183,3 +183,65 @@ the 0.14 CLI removals and GitHub API requirement, and derived the suite count fr
 - The public copy operation without a commit does not return.
 - Normal `purge` keeps all data needed to recover the repository or secrets.
 - The documented brief-cache limitation remains.
+
+## Examen exhaustivo 2026-09-29
+
+Origen: revision de codigo, logica y docs. Sin cambios aun.
+Ejecutar por bloques. Un bloque es una sesion pequena y verificable.
+
+### Bloque 0 - Registrar
+- [x] Anadir esta seccion a `TASKS.md`.
+- [x] Verificar: `git diff -- TASKS.md` solo tocaba esta seccion al registrar.
+
+### Bloque 1 - Critico
+- [x] `Panel.qml:814-823`: copiar directo con `wl-copy --`, sin `sh -c`.
+- [x] `tests/run-all.sh`: corre static + suites sin gate + gates G0-G8 + bench + validate + qmllint.
+- [x] `bin/lib/incoming.sh`, `briefcache.sh`: bar y cache leen `REGISTRY`.
+- [x] `bin/lib/scopes.sh`: `normalize_profile_name` para el fallback por hostname.
+- [x] `bin/lib/repo.sh`: `create` con journal (`tx_shape_begin/commit`), push con `-u`, journal kept al fallar.
+- [x] Verificar: bootstrap 50/50, transaction 73/73, usability 99/99, format ok, qmllint ok.
+  Nota 2026-09-29: `test-state` (36/89), `test-save` (32/75) y `test-cli` (44/317)
+  fallan IDENTICO en main limpio (suites con fixtures v1/v2 retirados). No es
+  regresion. `run-all.sh` queda en rojo hasta sanear esas suites (Bloque 3).
+
+### Bloque 2 - Alto
+- [x] Journal en `purge`: `key-rotation.json` en recovery (se conserva sin
+  `--repo`, se elimina con `--repo` dentro de `REPLICANT_HOME`).
+- [x] Regla `secret+profile` unica en `scope_store` (bulk ya la tenia).
+  Verificado: `scope <secret> profile` falla, `off` funciona.
+- [x] `move_repo_copy` aparta el destino y restaura si `mv` falla.
+  Verificado: roundtrip shared->profile->shared intacto, 0 restos.
+- [x] Lock por `wants_apply` (token exacto, gana el ultimo).
+  Verificado: `purge/backups --dry-run` no crean lock.
+- [x] Teclado: `R.keyboardActionFor` (missing/incoming->restore,
+  locked->mensaje de clave, resto->save) + test QML nuevo.
+- [x] Bulk con locked: aviso en `BulkFooter` (bloquear sigue, ahora explica).
+- [x] `SPEC.md` ampliado al formato que valida el codigo + bump a 0.16.1.
+- [x] Tags locales v0.14.0, v0.15.1, v0.16.0 (NO pusheados).
+- [x] Verificar: qmllint todo ok, `plugin validate` ok, qml 65/65,
+  bootstrap 50/50, transaction 73/73, usability 99/99, crypto sin
+  regresion (1 fallo previo identico), core sin regresion (104 previos,
+  difieren solo version+hash).
+
+### Bloque 3 - Medio
+- [x] `status`: memo de `tree_files` (+invalidacion en copia), memo de
+  `vault_blob_same` por fingerprint, y full JSON deriva numeros de `entries`
+  (una evaluacion por fila). Medido: 8.5s -> 6.5s en fixture de 200 ficheros;
+  `bench --check` pasa (0.07/0.25, 0.08/0.10). `settings` (1.8s) queda follow-up.
+- [x] Cola con envejecimiento: `queuedAt` + `queueNextIndex` (15s) en
+  `dispatchNext`; backgrounds son solo lectura. Tests QML nuevos. 67/67.
+- [x] Scanner en un paso: un `grep -r` combinado + atribucion; path conserva
+  aviso de binarios (antes duplicado x25). Fuga real cerrada: `--stdin`
+  imprimia la credencial sin redactar. 17/17 shapes, sin falsos positivos.
+- [x] Timeouts (10s) en `gh` de doctor/setup-status y `omarchy menu keybindings`.
+- [x] Tiempos rancios a cualitativo (BarWidget, Service, incoming). Conteos
+  README verificados correctos (43+3=46, 11 areas, 24 settings).
+- [x] Shellcheck limpio: SC2106 fail-closed en recover, SC2155 split,
+  SC2088 suprimido con motivo (literal "~").
+- [x] Verificar: bench ok, bootstrap 50/50, transaction 73/73, usability
+  99/99, leaks 18/18, interruptions 12/12, qml 67/67, crypto 1 previo
+  identico, qmllint todo ok, validate ok. Bump a 0.16.2.
+
+### Bloque 4 - Bajo
+- [ ] `selectionSummary`, iconos, `derive_rel`, `suggest`, `update`, `purge`.
+- [ ] Verificar: suite tocada y captura si hay UI.

@@ -159,8 +159,12 @@ Item {
       controller.stage = "idle"
       return false
     }
-    var next = controller.queue[0]
-    controller.queue = controller.queue.slice(1)
+    // Normally the head; a background refresh waiting past its bound takes
+    // one turn instead of starving behind interactive jobs (replicant.js).
+    var at = R.queueNextIndex(controller.queue)
+    if (at < 0) at = 0
+    var next = controller.queue[at]
+    controller.queue = controller.queue.slice(0, at).concat(controller.queue.slice(at + 1))
     controller.start(next.job, next.command, next.meta)
     return true
   }

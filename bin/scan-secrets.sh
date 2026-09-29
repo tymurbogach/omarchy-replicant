@@ -57,9 +57,39 @@ report() {
   [[ -n $hits ]] || return 0
   echo "✗ $header"
   # Do not print a matched line. Scanner output often reaches the panel, logs,
-  # and support reports, where the credential must never appear.
-  printf '%s\n' "$hits" | sed -E 's/^([^:]+):([0-9]+):.*/    \1:\2: match redacted/'
+  # and support reports, where the credential must never appear. Two shapes:
+  # path scans print `file:line:content`, stdin scans print `line:content` —
+  # the second shape used to fall through unredacted and leak the credential.
+  printf '%s\n' "$hits" | sed -E -e 's/^([^:]+):([0-9]+):.*/    \1:\2: match redacted/' \
+    -e 's/^([0-9]+):.*/    \1: match redacted/'
   fail=1
+}
+
+# One pass over the input for every pattern, then attribution per pattern.
+# Twenty-five tree walks per save became one: the walk, not the matching, was
+# the cost. A line matching two patterns reports under both, exactly as the
+# per-pattern loops did. Lines no pattern claims (binary "matches" notices)
+# report once under their own header instead of once per pattern.
+combined=""
+for entry in "${PATTERNS[@]}"; do
+  if [[ -z "$combined" ]]; then combined="(${entry%:*})"; else combined="$combined|(${entry%:*})"; fi
+done
+
+classify_and_report() {
+  local label="$1" hits="$2" entry h rest
+  [[ -n "$hits" ]] || return 0
+  for entry in "${PATTERNS[@]}"; do
+    h=$(grep -E "${entry%:*}" <<<"$hits" || true)
+    [[ -n "$h" ]] || continue
+    if [[ -n "$label" ]]; then report "$label — ${entry##*:}" "$h"; else report "${entry##*:}" "$h"; fi
+  done
+  rest="$hits"
+  for entry in "${PATTERNS[@]}"; do
+    rest=$(grep -vE "${entry%:*}" <<<"$rest" || true)
+  done
+  [[ -z "$rest" ]] && return 0
+  if [[ -n "$label" ]]; then report "$label — binary content matched" "$rest"
+  else report "binary content matched" "$rest"; fi
 }
 
 if [[ ${1:-} == --stdin ]]; then
@@ -73,18 +103,14 @@ if [[ ${1:-} == --stdin ]]; then
   tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT
   cat > "$tmp"
 
-  for entry in "${PATTERNS[@]}"; do
-    hits=$(grep -InE "${entry%:*}" "$tmp" | grep -vE "$PLACEHOLDER") || true
-    report "$label — ${entry##*:}" "$hits"
-  done
+  hits=$(grep -InE "$combined" "$tmp" | grep -vE "$PLACEHOLDER") || true
+  classify_and_report "$label" "$hits"
 else
   (( $# )) || { echo "usage: $0 PATH... | $0 --stdin PATH" >&2; exit 2; }
 
-  for entry in "${PATTERNS[@]}"; do
-    hits=$(grep -rInE --exclude-dir=.git --exclude-dir=secrets "${entry%:*}" "$@" 2>/dev/null \
-      | grep -vE "$PLACEHOLDER") || true
-    report "${entry##*:}" "$hits"
-  done
+  hits=$(grep -rInE --exclude-dir=.git --exclude-dir=secrets "$combined" "$@" 2>/dev/null \
+    | grep -vE "$PLACEHOLDER") || true
+  classify_and_report "" "$hits"
 fi
 
 exit $fail

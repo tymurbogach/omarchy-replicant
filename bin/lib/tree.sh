@@ -30,7 +30,8 @@ install_file() {
     return 0
   fi
   if [[ -e $dst ]]; then
-    local bak="$dst.bak.$(date +%s)" epoch
+    local bak epoch
+    bak="$dst.bak.$(date +%s)"
     epoch="${bak##*.bak.}"
     while [[ -e "$bak" ]]; do epoch=$((epoch + 1)); bak="$dst.bak.$epoch"; done
     run cp -a -- "$target" "$bak"
@@ -67,13 +68,37 @@ tree_find() {
   find -H "$root" \( "${prune[@]}" -false \) -prune -o -type f -print 2>/dev/null
 }
 
-# tree_files <root> — paths inside the tree, relative to it, sorted.
+# tree_files <root> — paths inside the tree, relative to it, sorted. Memoized
+# per process: one full status lists every directory tree several times
+# (count, same, size), and each listing is a find plus a sort. Writers run in
+# their own commands, and copy_tree_into_repo invalidates what it touches, so
+# readers in one process never see a stale tree.
+declare -gA TREE_FILES_CACHE=()
+tree_files_invalidate() {
+  if (( $# == 0 )); then TREE_FILES_CACHE=(); return 0; fi
+  local root
+  for root in "$@"; do
+    root="${root%/}"
+    unset "TREE_FILES_CACHE[$root]"
+  done
+  return 0
+}
 tree_files() {
-  local root="${1%/}"
-  tree_find "$root" | sed "s|^$root/||" | sort
+  local root="${1%/}" listing
+  if [[ -n "${TREE_FILES_CACHE[$root]+x}" ]]; then
+    printf '%s' "${TREE_FILES_CACHE[$root]}"
+    return 0
+  fi
+  # The trailing `printf x` keeps exact bytes: command substitution strips
+  # trailing newlines, and `${listing%x}` restores them, so a cached listing
+  # is byte-identical to a fresh one (including the empty tree).
+  listing="$(tree_find "$root" | sed "s|^$root/||" | sort; printf x)"
+  listing="${listing%x}"
+  TREE_FILES_CACHE[$root]="$listing"
+  printf '%s' "$listing"
 }
 
-tree_count() { tree_find "${1%/}" | wc -l | tr -d ' '; }
+tree_count() { tree_files "${1%/}" | wc -l | tr -d ' '; }
 
 # Do the two trees hold the same files with the same contents?
 tree_same() {
@@ -136,6 +161,7 @@ copy_tree_into_repo() {
     grep -qxF "$f" <<<"$keep" || rm -f -- "$dst/$f"
   done < <(tree_files "$dst")
   find "$dst" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+  tree_files_invalidate "$src" "$dst"
 }
 
 # install_tree <repo-dir> <dst-dir> <mode> — the restore side, with the same
@@ -151,7 +177,8 @@ install_tree() {
   # Resolved first: `cp -a` of a symlinked directory copies the link, and a
   # backup that points at the tree about to be overwritten keeps nothing.
   if [[ -e $dst ]]; then
-    local bak="$dst.bak.$(date +%s)" epoch
+    local bak epoch
+    bak="$dst.bak.$(date +%s)"
     epoch="${bak##*.bak.}"
     while [[ -e "$bak" ]]; do epoch=$((epoch + 1)); bak="$dst.bak.$epoch"; done
     run cp -a -- "$(readlink -f -- "$dst")" "$bak"

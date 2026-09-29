@@ -478,9 +478,22 @@ vault_index_write() {
 # decrypted blob, 1 when it differs or the blob does not decrypt. No index
 # involved: status rows call this after resolving the blob themselves, so one
 # status run decrypts the index once.
+#
+# Memoized per process on both files' identity and mtime: one full status
+# evaluates every secret at least twice (the bar counts and the row payload),
+# and each evaluation is a temp dir plus an age decrypt. A changed file has a
+# different fingerprint and re-decrypts; concurrent writers mid-run were
+# already racy everywhere else in the same pass.
+declare -gA VAULT_SAME_CACHE=()
 vault_blob_same() {
-  local blobfile="$1" src="$2" plaindir plain idf
+  local blobfile="$1" src="$2" plaindir plain idf key live_sig blob_sig rc=1
   [[ -f "$blobfile" && -f "$src" ]] || return 1
+  live_sig=$(stat -c '%d:%i %s %Y' -- "$src" 2>/dev/null || echo "live-missing")
+  blob_sig=$(stat -c '%d:%i %s %Y' -- "$blobfile" 2>/dev/null || echo "blob-missing")
+  key="$blobfile"$'\t'"$src"$'\t'"$live_sig"$'\t'"$blob_sig"
+  if [[ -n "${VAULT_SAME_CACHE[$key]+x}" ]]; then
+    [[ "${VAULT_SAME_CACHE[$key]}" == 0 ]] && return 0 || return 1
+  fi
   plaindir=$(mktemp -d) || return 1
   plain="$plaindir/plain"
   _vault_note_temp "$plaindir"
@@ -488,14 +501,15 @@ vault_blob_same() {
   idf=$(vault_identity_file)
   if ! age -d -i "$idf" -o "$plain" "$blobfile" 2>/dev/null; then
     _vault_drop_tree "$plaindir"
+    VAULT_SAME_CACHE[$key]=1
     return 1
   fi
   if cmp -s "$src" "$plain" 2>/dev/null; then
-    _vault_drop_tree "$plaindir"
-    return 0
+    rc=0
   fi
   _vault_drop_tree "$plaindir"
-  return 1
+  VAULT_SAME_CACHE[$key]="$rc"
+  return "$rc"
 }
 
 # vault_priv_run <cmd...>: run one command with privilege for a secret

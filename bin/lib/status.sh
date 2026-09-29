@@ -295,7 +295,9 @@ core_shortcuts() {
   [[ -n "$own" ]] || own='[]'
   # `|| true` on both: with set -o pipefail, a missing bindings.lua or a failing
   # `omarchy menu keybindings` ended the whole command with no output at all.
-  active=$(omarchy menu keybindings --print 2>/dev/null |
+  # Bounded: shortcuts load lazily in the panel, and a stuck helper must not
+  # hang that load.
+  active=$(timeout 10 omarchy menu keybindings --print 2>/dev/null |
     sed -e 's/[[:space:]]*→[[:space:]]*/\t/' |
     jq -Rsc 'split("\n") | map(select(length > 0) | split("\t")
       | {key: (.[0] // "" | sub("[[:space:]]+$";"")), description: (.[1] // "")})') || true
@@ -369,22 +371,27 @@ core_status() {
   # and the panel header read these, so they can never disagree. The brief path
   # below reuses the metadata cache; the full payload always evaluates bytes
   # directly and stays authoritative.
-  local n_unsaved n_incoming n_locked n_missing needs_action=false
+  local n_unsaved=0 n_incoming=0 n_locked=0 n_missing=0 needs_action=false
   # The cache serves the brief poll only: the condition short-circuits before
   # the read when this is a full status, so full evaluation never touches it.
+  # Full JSON derives its numbers from the entries payload below instead of
+  # counting twice: one byte evaluation per row, and the header can never
+  # disagree with the badges. Brief and text have no rows, so they count here.
   local cached_na=false
-  if (( brief )) && read -r n_unsaved n_incoming n_locked n_missing cached_na < <(briefcache_read 2>/dev/null); then
-    n_locked=${n_locked:-0}
-    n_missing=${n_missing:-0}
-    [[ "$cached_na" == "true" ]] && needs_action=true
-  else
-    read -r n_unsaved n_incoming n_locked n_missing < <(count_changes)
-    n_locked=${n_locked:-0}
-    n_missing=${n_missing:-0}
-    # One flag for "anything asks for an action", so the bar and the panel test
-    # one boolean instead of reimplementing the priority each.
-    (( n_unsaved > 0 || n_incoming > 0 || n_locked > 0 || n_missing > 0 )) && needs_action=true
-    (( brief )) && briefcache_write "$n_unsaved" "$n_incoming" "$n_locked" "$n_missing" "$needs_action" 2>/dev/null || true
+  if (( ! json )) || (( brief )); then
+    if (( brief )) && read -r n_unsaved n_incoming n_locked n_missing cached_na < <(briefcache_read 2>/dev/null); then
+      n_locked=${n_locked:-0}
+      n_missing=${n_missing:-0}
+      [[ "$cached_na" == "true" ]] && needs_action=true
+    else
+      read -r n_unsaved n_incoming n_locked n_missing < <(count_changes)
+      n_locked=${n_locked:-0}
+      n_missing=${n_missing:-0}
+      # One flag for "anything asks for an action", so the bar and the panel test
+      # one boolean instead of reimplementing the priority each.
+      (( n_unsaved > 0 || n_incoming > 0 || n_locked > 0 || n_missing > 0 )) && needs_action=true
+      (( brief )) && briefcache_write "$n_unsaved" "$n_incoming" "$n_locked" "$n_missing" "$needs_action" 2>/dev/null || true
+    fi
   fi
   local pending_groups=""
   path_dirty "config/"  && pending_groups="$pending_groups config"
@@ -424,6 +431,20 @@ core_status() {
         ahead:0, behind:0}')
     counts_json=$(jq -nc --argjson c "$counts_json" --argjson a "$ahead" --argjson b "$behind" \
       '$c + {ahead:$a,behind:$b}')
+    # The header numbers come from the same rows the panel draws: no second
+    # byte evaluation, and no disagreement between header and badges.
+    # needs_action keeps the brief/text meaning (unpushed excluded: the bar
+    # reads that state from ahead, not from here).
+    n_unsaved=$(jq -r '.unsaved' <<<"$counts_json")
+    n_incoming=$(jq -r '.incoming' <<<"$counts_json")
+    n_locked=$(jq -r '.locked' <<<"$counts_json")
+    n_missing=$(jq -r '.missing' <<<"$counts_json")
+    [[ "$n_unsaved" =~ ^[0-9]+$ ]] || n_unsaved=0
+    [[ "$n_incoming" =~ ^[0-9]+$ ]] || n_incoming=0
+    [[ "$n_locked" =~ ^[0-9]+$ ]] || n_locked=0
+    [[ "$n_missing" =~ ^[0-9]+$ ]] || n_missing=0
+    needs_action=false
+    (( n_unsaved > 0 || n_incoming > 0 || n_locked > 0 || n_missing > 0 )) && needs_action=true
     encryption_json=$(status_encryption_json)
     # Every machine that has ever saved into this repo, newest first. With one
     # machine it is a footnote; with two it is the answer to "did the desktop

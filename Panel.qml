@@ -1135,6 +1135,7 @@ Panel {
     else if (a === "recover")      { root.busyLabel = "Bringing back " + arg.slice(0, 7) + "…"; command = [root.cli, "recover", arg, "--apply"]; label = "Bring back" }
     else if (a === "install-theme")  { root.busyLabel = "Installing " + arg + "…"; command = [root.cli, "install-theme", arg]; label = "Install" }
     else if (a === "install-plugin") { root.busyLabel = "Installing " + arg + "…"; command = [root.cli, "install-plugin", arg]; label = "Install" }
+    else if (a === "key-init")       { root.busyLabel = "Creating encryption key…"; command = [root.cli, "key", "init"]; label = "Create key" }
     else if (a === "untrack")      { root.doUntrack(arg); return }
     else if (a === "forget")       { root.busyLabel = "Forgetting " + arg + "…"; controller.run("forget", [root.cli, "forget", arg], { label: "Forget" }); return }
     else if (a === "undo")          { root.doUndo(arg); return }

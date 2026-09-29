@@ -84,6 +84,16 @@ BorderSurface {
     Row {
       spacing: Style.space(8)
       Button {
+        visible: panel.nLocked > 0
+        text: "Create encryption key"; iconText: panel.icKey; bordered: true
+        foreground: panel.warnColor; accent: Color.accent; fontFamily: panel.ff
+        enabled: panel.ready && !panel.busy
+        tooltipText: "Create this setup's encryption key. Save encrypts your secret files after this step."
+        onClicked: panel.ask("key-init", "",
+                             "Create the encryption key for this setup? Export it before you add another machine.",
+                             "Create key")
+      }
+      Button {
         text: panel.remoteState === "remote-missing" ? "Create private repo" : (panel.remoteState === "ahead" ? "Retry push" : "Save to GitHub"); iconText: panel.icPush; bordered: true
         foreground: panel.nDirty > 0 || panel.nAhead > 0 ? Color.accent : panel.fg
         accent: Color.accent; fontFamily: panel.ff

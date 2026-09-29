@@ -19,10 +19,11 @@ Item {
   property string syncState: "saved"
   readonly property bool missing: fd.row.exists === false
   readonly property bool isSecret: fd.row.secret === true
+  readonly property bool isLocked: fd.row.locked === true || fd.syncState === "locked"
   readonly property bool isModified: fd.syncState === "unsaved" || fd.syncState === "unpushed"
   readonly property bool isIncoming: fd.syncState === "incoming"
   readonly property bool isUser: fd.row.source === "user"
-  readonly property bool canRestore: fd.row.saved === true && fd.syncState !== "off"
+  readonly property bool canRestore: fd.row.saved === true && fd.syncState !== "off" && !fd.isLocked
                                      && (fd.syncState === "unsaved" || fd.isIncoming || fd.missing)
   readonly property bool canReset: !fd.missing && fd.row.has_default === true
                                    && fd.syncState !== "default" && fd.row.is_dir !== true
@@ -170,7 +171,7 @@ Item {
       }
       RowAction {
         panel: fd.panel
-        visible: fd.missing && fd.row.saved === true
+        visible: fd.missing && fd.row.saved === true && !fd.isLocked
         text: "Forget it"; iconText: panel.icUntrack
         foreground: panel.dim
         enabled: !panel.busy

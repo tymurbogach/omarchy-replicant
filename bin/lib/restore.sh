@@ -345,12 +345,16 @@ restore_apply() {
       else failures=$((failures + 1)); fi
       continue
     fi
-    if [[ "$src" == */ ]]; then install_tree "$src" "$dst" "$mode" >&2
-    else install_file "$src" "$dst" "$mode" >&2; fi
-    changed=$((changed + 1))
+    if [[ "$src" == */ ]]; then
+      if install_tree "$src" "$dst" "$mode" >&2; then changed=$((changed + 1))
+      else failures=$((failures + 1)); fi
+    else
+      if install_file "$src" "$dst" "$mode" >&2; then changed=$((changed + 1))
+      else failures=$((failures + 1)); fi
+    fi
   done
   if (( failures > 0 )); then
-    printf 'restore: %s secret(s) failed in %s\n' "$failures" "$area" >&2
+    printf 'restore: %s file(s) failed in %s\n' "$failures" "$area" >&2
     printf '%s\n' "$changed"
     return 1
   fi

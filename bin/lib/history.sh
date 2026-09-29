@@ -80,11 +80,97 @@ core_deleted() {
 }
 
 # core_recover <sha> <dry>: undo the deletions of one commit. The copies come
-# back into the repo from the commit before it, the lines that commit removed
-# from .replicant-track come back too, and each entry is then restored onto this
-# machine with a .bak.<epoch> of whatever it replaces. The caller commits.
+# back into the repo from the commit before it, the v3 entries that commit
+# removed come back too, and each entry is then restored onto this machine
+# with a .bak.<epoch> of whatever it replaces. The caller commits.
 # RECOVERED holds the repo paths that came back, for that commit.
 RECOVERED=()
+# recover_v3_entries <sha>: reinsert the .replicant/entries.json rows that
+# <sha> removed. An untrack removes the row and the copy in one commit, and
+# the copy is useless without it: the next save would prune it again.
+recover_v3_entries() {
+  local sha="$1" parent child removed id obj current tmp
+  parent=$(git -C "$REPO_DIR" show "$sha^:.replicant/entries.json" 2>/dev/null || printf '{}\n')
+  child=$(git -C "$REPO_DIR" show "$sha:.replicant/entries.json" 2>/dev/null || printf '{}\n')
+  removed=$(jq -r --argjson p "$parent" --argjson c "$child" -n '
+    ($p | keys) - ($c | keys) | .[]' 2>/dev/null || true)
+  [[ -n "$removed" ]] || return 0
+  current=$(cat -- "$REPO_DIR/.replicant/entries.json" 2>/dev/null || printf '{}\n')
+  tmp=$(mktemp) || return 1
+  local changed=0
+  while IFS= read -r id; do
+    [[ -n "$id" ]] || continue
+    # Already back (recovered earlier, or re-tracked since): leave it alone.
+    if jq -e --arg id "$id" 'has($id)' <<<"$current" >/dev/null 2>&1; then continue; fi
+    obj=$(jq -c --arg id "$id" '.[$id]' <<<"$parent" 2>/dev/null || true)
+    [[ -n "$obj" && "$obj" != "null" ]] || continue
+    current=$(jq -c --arg id "$id" --argjson o "$obj" '.[$id] = $o' <<<"$current" 2>/dev/null || { echo "$current"; continue; })
+    echo "  + tracked again: $id" >&2
+    changed=1
+  done <<<"$removed"
+  if (( changed )); then
+    printf '%s\n' "$current" | jq . > "$tmp" 2>/dev/null || { rm -f -- "$tmp"; echo "recover: could not rebuild entries.json" >&2; return 1; }
+    validate_entries "$tmp" || { rm -f -- "$tmp"; echo "recover: recovered entries fail validation" >&2; return 1; }
+    mv -f -- "$tmp" "$REPO_DIR/.replicant/entries.json"
+    ENTRIES_VALID=0
+    load_user_manifest
+  else
+    rm -f -- "$tmp"
+  fi
+  return 0
+}
+# recover_v3_vault <sha>: merge the vault secrets that <sha> removed back
+# into the current index and restore their blob files. Needs the key: without
+# it the index does not decrypt, and the copies stay in the repo only.
+recover_v3_vault() {
+  local sha="$1" parent_age child_age pdir cdir
+  vault_identity_ok >/dev/null 2>&1 || {
+    echo "  · vault is locked — secrets stay in the repo only until the key is imported" >&2
+    return 0
+  }
+  pdir=$(mktemp -d) || return 1
+  cdir=$(mktemp -d) || { rm -rf -- "$pdir"; return 1; }
+  local parent_idx="" child_idx="" removed="" current=""
+  if git -C "$REPO_DIR" show "$sha^:vault/index.age" > "$pdir/index.age" 2>/dev/null; then
+    parent_idx=$(age -d -i "$(vault_identity_file)" -o - "$pdir/index.age" 2>/dev/null || true)
+  fi
+  if git -C "$REPO_DIR" show "$sha:vault/index.age" > "$cdir/index.age" 2>/dev/null; then
+    child_idx=$(age -d -i "$(vault_identity_file)" -o - "$cdir/index.age" 2>/dev/null || true)
+  fi
+  rm -rf -- "$pdir" "$cdir"
+  [[ -n "$parent_idx" ]] || return 0
+  [[ -n "$child_idx" ]] || child_idx='{"version":2,"secrets":[]}'
+  removed=$(jq -r --argjson p "$parent_idx" --argjson c "$child_idx" -n '
+    (($p.secrets // []) | map(.id)) - (($c.secrets // []) | map(.id)) | .[]' 2>/dev/null || true)
+  [[ -n "$removed" ]] || return 0
+  current=$(vault_index_decrypt 2>/dev/null || true)
+  [[ -n "$current" ]] || { echo "recover: vault is locked — secrets stay in the repo only" >&2; return 0; }
+  local id obj blob changed=0
+  while IFS= read -r id; do
+    [[ -n "$id" ]] || continue
+    if jq -e --arg id "$id" '.secrets[] | select(.id == $id)' <<<"$current" >/dev/null 2>&1; then continue; fi
+    obj=$(jq -c --arg id "$id" '.secrets[] | select(.id == $id)' <<<"$parent_idx" 2>/dev/null || true)
+    [[ -n "$obj" ]] || continue
+    blob=$(jq -r '.blob // empty' <<<"$obj" 2>/dev/null || true)
+    if [[ -n "$blob" ]]; then
+      mkdir -p -- "$(vault_blobs_dir)" 2>/dev/null || true
+      if [[ ! -f "$(vault_blobs_dir)/$blob.age" ]]; then
+        git -C "$REPO_DIR" show "$sha^:vault/blobs/$blob.age" > "$(vault_blobs_dir)/$blob.age" 2>/dev/null || {
+          echo "  · secret $id: blob missing in history" >&2
+          continue
+        }
+      fi
+    fi
+    current=$(jq -c --argjson o "$obj" '.secrets += [$o]' <<<"$current" 2>/dev/null || { echo "$current"; continue; })
+    echo "  + secret tracked again: $id" >&2
+    changed=1
+  done <<<"$removed"
+  if (( changed )); then
+    vault_index_write "$current" || { echo "recover: could not write the vault index" >&2; return 1; }
+    load_user_manifest
+  fi
+  return 0
+}
 core_recover() {
   local want="$1" dry="${2:-1}" sha
   RECOVERED=()
@@ -112,7 +198,20 @@ core_recover() {
   echo "From ${sha:0:7} ($(git -C "$REPO_DIR" log -1 --format=%s "$sha" 2>/dev/null)):" >&2
   for p in "${files[@]}"; do echo "  + $p" >&2; done
   for line in ${lines[@]+"${lines[@]}"}; do echo "  + tracked again: $line" >&2; done
-  if (( dry )); then skip "dry-run: nothing was touched. Repeat with --apply"; return 0; fi
+  if (( dry )); then
+    # Preview the v3 rows this commit removed, without touching the worktree.
+    # On --apply the real recover_v3_entries below prints the same lines once.
+    if repo_is_ready 2>/dev/null; then
+      local _pe _ce _rid
+      _pe=$(git -C "$REPO_DIR" show "$sha^:.replicant/entries.json" 2>/dev/null || printf '{}\n')
+      _ce=$(git -C "$REPO_DIR" show "$sha:.replicant/entries.json" 2>/dev/null || printf '{}\n')
+      while IFS= read -r _rid; do
+        [[ -n "$_rid" ]] || continue
+        echo "  + tracked again: $_rid" >&2
+      done < <(jq -r --argjson p "$_pe" --argjson c "$_ce" -n '($p | keys) - ($c | keys) | .[]' 2>/dev/null || true)
+    fi
+    skip "dry-run: nothing was touched. Repeat with --apply"; return 0
+  fi
   require_ready_schema || return 1
 
   if (( ${#lines[@]} )); then
@@ -124,6 +223,12 @@ core_recover() {
     done
     write_track_file ${keep[@]+"${keep[@]}"}
     load_user_manifest
+  fi
+  # Version 3: the row in entries.json and the vault secret come back too,
+  # or the next save prunes the copy again.
+  if repo_is_ready; then
+    recover_v3_entries "$sha" || return 1
+    recover_v3_vault "$sha" || return 1
   fi
   git -C "$REPO_DIR" checkout -q "$sha^" -- "${files[@]}" || { echo "recover: git could not restore the copies" >&2; return 1; }
   RECOVERED=("${files[@]}")

@@ -27,6 +27,10 @@ Item {
   property bool collapsible: true
   property bool expanded: false
   signal toggled()
+  Accessible.role: Accessible.Button
+  Accessible.name: ch.title + (ch.subtitle !== "" ? ". " + ch.subtitle : "")
+  Accessible.description: ch.collapsible ? (ch.expanded ? "Expanded. Activate to collapse." : "Collapsed. Activate to expand.") : "Section header."
+  Accessible.onPressAction: if (ch.collapsible) ch.toggled()
 
   implicitHeight: Style.space(46)
 
@@ -35,8 +39,12 @@ Item {
     anchors.fill: parent
     enabled: ch.collapsible
     hoverEnabled: true
+    focus: true
+    activeFocusOnTab: ch.collapsible
     cursorShape: ch.collapsible ? Qt.PointingHandCursor : Qt.ArrowCursor
     onClicked: ch.toggled()
+    Keys.onReturnPressed: if (ch.collapsible) ch.toggled()
+    Keys.onSpacePressed: if (ch.collapsible) ch.toggled()
   }
 
   Row {
@@ -103,7 +111,7 @@ Item {
       width: Style.space(14)
       horizontalAlignment: Text.AlignHCenter
       text: ch.expanded ? panel.icDown : panel.icRight
-      color: hitbox.containsMouse || ch.expanded ? panel.fg : panel.dim
+      color: hitbox.containsMouse || ch.expanded || hitbox.activeFocus ? panel.fg : panel.dim
       font.family: panel.ff; font.pixelSize: Style.font.caption
     }
   }

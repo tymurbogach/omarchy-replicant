@@ -31,8 +31,9 @@ omarchy-replicant create --push
 Use `clone <url>` on another machine. Clone accepts only a complete Replicant
 repository. Use Create when the remote repository is empty.
 
-Run `save --auto` to copy configuration, commit it, and push it. Run
-`restore --dry-run` before a restore.
+Run `save --all --auto` to copy configuration, commit it, and push it. Run
+`restore --dry-run` before a restore. `save-file <id>` and `bulk save`
+save single entries; the panel Save button saves everything.
 
 ## Repository format
 

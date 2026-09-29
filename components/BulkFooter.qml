@@ -23,6 +23,11 @@ BorderSurface {
     Row {
       spacing: Style.space(6)
       Button { text: "Save"; visible: panel.bulkActions.indexOf("save") >= 0; bordered: true; foreground: panel.fg; accent: Color.accent; fontFamily: panel.ff; onClicked: panel.doBulk("save") }
+      Button {
+        text: "Save"; visible: panel.bulkActions.indexOf("save") < 0 && panel.selectionSummary.selected > 0
+        bordered: true; foreground: panel.dim; fontFamily: panel.ff; enabled: false
+        tooltipText: "Save needs every selected row to be savable. Off, pending, incoming, missing and locked rows cannot be saved."
+      }
       Button { text: "Track"; visible: panel.bulkActions.indexOf("track-config") >= 0; bordered: true; foreground: panel.fg; accent: Color.accent; fontFamily: panel.ff; onClicked: panel.doBulk("track-config") }
       Button { text: "Track secret"; visible: panel.bulkActions.indexOf("track-secret") >= 0; bordered: false; foreground: panel.dim; fontFamily: panel.ff; onClicked: panel.doBulk("track-secret") }
       Button { text: "Shared"; visible: panel.bulkActions.indexOf("scope-shared") >= 0; bordered: false; foreground: panel.dim; fontFamily: panel.ff; onClicked: panel.doBulk("scope-shared") }

@@ -72,6 +72,15 @@ Item {
         onClicked: panel.openViewer(panel.lastTitle, panel.lastOutput, "output")
       }
       Button {
+        visible: !rb.running && (panel.resultHistory || []).length > 1
+        text: "History (" + (panel.resultHistory || []).length + ")"; bordered: false
+        fontSize: Style.font.caption; foreground: panel.dim; fontFamily: panel.ff
+        tooltipText: "Previous results in this session, newest last"
+        onClicked: panel.openViewer("Result history", (panel.resultHistory || []).map(function(h, i) {
+          return (i + 1) + ". " + h.title + " — " + (h.ok ? "ok" : "failed") + "\n" + h.text
+        }).join("\n\n───\n\n"), "output")
+      }
+      Button {
         visible: !rb.running
         iconText: panel.icClose; bordered: false; foreground: panel.dim; fontFamily: panel.ff
         tooltipText: "Dismiss"

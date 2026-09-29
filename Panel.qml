@@ -61,6 +61,7 @@ Panel {
   property bool lastOk: true
   property bool lastCancelled: false
   property string lastTitle: "Output"
+  property var resultHistory: []
   readonly property string resultLine: R.resultLine(root.lastOutput, root.lastOk)
   property string activeTab: "overview"
   property string fileSearch: ""
@@ -672,17 +673,23 @@ Panel {
     var text = root.clean(String(out || "") + "\n" + String(err || ""))
     var outcome = result ? String(result.outcome || "") : ""
     root.lastCancelled = outcome === "cancelled"
-    root.lastOk = code === 0 || outcome === "local-only" || outcome === "noop" || outcome === "cancelled"
+    if (outcome === "failed") root.lastOk = false
+    else if (outcome === "success") root.lastOk = true
+    else root.lastOk = code === 0 || outcome === "local-only" || outcome === "noop" || outcome === "cancelled"
     root.lastTitle = outcome === "local-only" ? "Saved locally" : outcome === "cancelled" ? "Cancelled" : label
     if (outcome === "local-only") {
       text = String(result.message || "Saved locally, but the push is pending.")
       if (result.recoveryCommand) text += "\nRetry: " + result.recoveryCommand
     } else if (outcome === "cancelled") {
       text = String(result.message || "Cancelled before the commit.")
-    } else if (code !== 0 && outcome !== "noop") {
+    } else if (!root.lastOk && outcome !== "noop") {
       text = label + " failed (exit " + code + ")\n" + text
     } else if (text === "") text = label + ": done."
     root.lastOutput = text.length > 20000 ? "…" + text.slice(-20000) : text
+    var entry = { title: root.lastTitle, ok: root.lastOk, text: root.lastOutput.slice(0, 2000) }
+    var hist = (root.resultHistory || []).slice(-9)
+    hist.push(entry)
+    root.resultHistory = hist
     root.refresh()
     if (root.activeTab === "restore" && root.opened) {
       root.reloadBackups()
@@ -870,6 +877,13 @@ Panel {
   }
 
   function doRevert(id, to) {
+    var where = to === "default" ? "Omarchy's default" : "the copy in your repo"
+    root.ask("revert:" + id + ":" + to, "",
+             "Replace the current value of " + id + " with " + where + "?\n\nWhat is there now is kept as .bak.<epoch>.",
+             "Revert")
+  }
+
+  function executeRevert(id, to) {
     root.busyLabel = "Reverting " + id + "…"
     controller.run("setting", [root.cli, "revert", id, "--to", to], { label: "Setting" })
   }
@@ -1038,13 +1052,14 @@ Panel {
   property bool deletedLoaded: false
   property bool deletedLoading: false
   property string deletedError: ""
+  property int deletedShown: 8
   function loadDeleted() {
     if (root.deletedLoaded || root.deletedLoading) return false
     root.deletedLoading = true
     root.deletedError = ""
     return controller.run("deleted", [root.cli, "deleted", "--json"], { busy: false, background: true })
   }
-  function reloadDeleted() { root.deletedLoaded = false; root.loadDeleted() }
+  function reloadDeleted() { root.deletedLoaded = false; root.deletedShown = 8; root.loadDeleted() }
   function askRecover(item) {
     var names = (item.files || []).map(function(f) { return R.repoPathLabel(f).label })
     root.ask("recover", item.sha,
@@ -1148,6 +1163,11 @@ Panel {
       label = "Create repo"
     }
     else if (a.indexOf("bulk:") === 0) { root.executeBulk(a.slice(5)); return }
+    else if (a.indexOf("revert:") === 0) {
+      var parts = a.slice(7).split(":")
+      root.executeRevert(parts[0], parts.slice(1).join(":"))
+      return
+    }
     else return
     if (command) controller.run("danger", command, { label: label })
   }

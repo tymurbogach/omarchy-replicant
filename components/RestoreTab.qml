@@ -176,7 +176,7 @@ Column {
       }
     }
     Repeater {
-      model: panel.deletedList.slice(0, 8)
+      model: panel.deletedList.slice(0, panel.deletedShown)
       delegate: ListRow {
         id: delRow
         required property var modelData
@@ -194,6 +194,15 @@ Column {
           tooltipText: "From " + delRow.modelData.short + ":\n" + R.nameList(delRow.modelData.files.map(function(f) { return R.repoPathLabel(f).label }), 10)
           onClicked: panel.askRecover(delRow.modelData)
         }
+      }
+    }
+    Row {
+      visible: panel.deletedList.length > panel.deletedShown
+      leftPadding: Style.spacing.rowPaddingX
+      Button {
+        text: "Show more (" + (panel.deletedList.length - panel.deletedShown) + " more)"; bordered: false
+        foreground: panel.dim; fontFamily: panel.ff
+        onClicked: panel.deletedShown = panel.deletedShown + 20
       }
     }
   }

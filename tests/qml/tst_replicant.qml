@@ -227,6 +227,8 @@ TestCase {
     compare(R.sizeText(2048), "2.0 KB")
     compare(R.sizeText(20480), "20 KB")
     compare(R.sizeText(3 * 1048576), "3.0 MB")
+    compare(R.sizeText(2 * 1073741824), "2.0 GB")
+    compare(R.sizeText(-5), "0 B")
     compare(R.prettyPath("/home/u/.config", "/home/u"), "~/.config")
     compare(R.prettyPath("/home/u", "/home/u"), "~")
     compare(R.prettyPath("/home/user2/x", "/home/u"), "/home/user2/x")
@@ -273,7 +275,7 @@ TestCase {
     compare(R.effectiveScope(row, {}), "shared")
     compare(R.effectiveScope(row, { a: "off" }), "off")
     compare(R.displayState(row, { a: "off" }), "off")
-    compare(R.displayState(row, { a: "profile" }), "saved")
+    compare(R.displayState(row, { a: "profile" }), "pending")
     compare(R.displayState({ id: "a", scope: "off", sync_state: "off" }, { a: "shared" }), "pending")
     compare(R.displayState(row, { a: "shared" }), "saved")
     verify(R.stateGlyph("pending") !== R.stateGlyph("saved"))
@@ -331,9 +333,12 @@ TestCase {
 
   function test_agoText() {
     compare(R.agoText(1000, 1030), "just now")
+    compare(R.agoText(0, 90), "1 minute ago")
     compare(R.agoText(0, 600), "10 minutes ago")
     compare(R.agoText(0, 7200), "2 hours ago")
     compare(R.agoText(0, 86400 * 3), "3 days ago")
+    compare(R.agoText(0, 86400 * 10), "1 week ago")
+    compare(R.agoText(0, 86400 * 45), "1 month ago")
     compare(R.agoText(2000, 1000), "just now")
   }
 
@@ -353,12 +358,14 @@ TestCase {
     compare(R.validBulkActions([{ id: "a", secret: false }, { id: "s", secret: true }]).join(","),
             "save")
     compare(R.validBulkActions([{ id: "s", secret: true, locked: true }]).length, 0)
+    compare(R.validBulkActions([{ id: "a", scope: "shared", sync_state: "locked", secret: false, locked: false }]).length, 0)
     verify(R.validBulkActions([{ id: "a", scope: "off", sync_state: "off", secret: false }]).indexOf("save") < 0)
     verify(R.validBulkActions([
       { id: "a", scope: "shared", sync_state: "saved", secret: false },
       { id: "b", scope: "off", sync_state: "off", secret: false }
     ]).indexOf("save") < 0)
     verify(R.validBulkActions([{ id: "a", scope: "shared", sync_state: "pending", secret: false }]).indexOf("save") < 0)
+    verify(R.validBulkActions([{ id: "a", scope: "shared", sync_state: "locked", secret: false }]).indexOf("save") < 0)
   }
 
   function test_bulk_actions_use_words_people_see() {
@@ -525,17 +532,36 @@ TestCase {
     compare(R.moveFocus(items, 8, 5), 10)
   }
 
+  function test_keyboard_focus_reaches_missing_and_locked_actions() {
+    var items = R.focusItems("configs", [
+      { id: "c", rows: [{ id: "m", sync_state: "missing" }, { id: "l", sync_state: "locked" },
+        { id: "s", sync_state: "saved" }] }
+    ], [], [])
+    verify(items.some(function(i) { return i.kind === "action" && i.id === "m" }))
+    verify(items.some(function(i) { return i.kind === "action" && i.id === "l" }))
+    verify(!items.some(function(i) { return i.kind === "action" && i.id === "s" }))
+  }
+
   function test_keyboard_focus_order_covers_setting_groups() {
     var items = R.focusItems("settings", [], [], [{ id: "display" }, { id: "input" }])
     compare(items.slice(6).map(function(item) { return item.id }).join(","), "display,input")
   }
 
+  function test_keyboard_focus_covers_setting_rows() {
+    var items = R.focusItems("settings", [], [], [
+      { id: "display", rows: [{ id: "idle.lock" }, { id: "idle.screensaver" }] }
+    ])
+    verify(items.some(function(i) { return i.kind === "row" && i.id === "idle.lock" }))
+    verify(items.some(function(i) { return i.kind === "row" && i.id === "idle.screensaver" }))
+  }
+
   function test_disabled_actions_explain_their_blocker_without_private_data() {
     compare(R.actionDisabledReason({ busy: true }), "Another Replicant operation is running.")
     compare(R.actionDisabledReason({ ready: false }), "Configure a repository first.")
-    compare(R.actionDisabledReason({ available: false }), "This setting is not available in this machine's configuration.")
-    compare(R.actionDisabledReason({ hasInput: false }), "Enter a file or folder path first.")
-    compare(R.actionDisabledReason({ hasSelection: false }), "Select entries with the same supported operation.")
-    compare(R.actionDisabledReason({ hasKey: false }), "Import the encryption key before managing secrets.")
+    compare(R.actionDisabledReason({}), "Configure a repository first.")
+    compare(R.actionDisabledReason({ available: false, ready: true }), "This setting is not available in this machine's configuration.")
+    compare(R.actionDisabledReason({ hasInput: false, ready: true }), "Enter a file or folder path first.")
+    compare(R.actionDisabledReason({ hasSelection: false, ready: true }), "Select entries with the same supported operation.")
+    compare(R.actionDisabledReason({ hasKey: false, ready: true }), "Import the encryption key before managing secrets.")
   }
 }

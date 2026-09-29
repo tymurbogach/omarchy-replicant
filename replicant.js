@@ -11,7 +11,10 @@ function mdi(cp) { return String.fromCodePoint(cp) }
 
 // "1 file", "4 files". The panel printed "file(s)" eleven times on one screen,
 // and the number was always right there next to it.
-function plural(n, one, many) { return n + " " + (n === 1 ? one : (many || one + "s")) }
+function plural(n, one, many) {
+  var count = Number(n) || 0
+  return n + " " + (count === 1 ? one : (many || one + "s"))
+}
 
 // ── sync states ─────────────────────────────────────────────────────────────
 // One place maps a sync state to how it looks, so a new state cannot be added
@@ -32,6 +35,7 @@ function stateGlyph(st) {
   // Not a state of the core: a scope change the panel has sent and the next
   // status has not confirmed yet.
   if (st === "pending") return "…"
+  if (st === "saved") return "✓"
   return "◆"
 }
 
@@ -117,28 +121,30 @@ function stateWord(st) {
 // f: { asked, ready, ahead, behind, incoming, dirty }. The counts come from the
 // rows themselves, so the header and the badges answer to one source.
 function summary(f) {
-  if (!f.asked) return "checking…"
-  if (!f.ready) return "not set up yet"
-  if (f.ahead > 0 && f.behind > 0) return "diverged"
-  if (f.behind > 0) return f.behind + " waiting on GitHub"
-  if (f.incoming > 0) return "changes to restore"
-  if (f.dirty > 0 || f.ahead > 0) return "unsaved changes"
+  var facts = f || {}
+  if (!facts.asked) return "checking…"
+  if (!facts.ready) return "not set up yet"
+  if (facts.ahead > 0 && facts.behind > 0) return "diverged"
+  if (facts.behind > 0) return facts.behind + " waiting on GitHub"
+  if (facts.incoming > 0) return "changes to restore"
+  if (facts.dirty > 0 || facts.ahead > 0) return "unsaved changes"
   return "everything saved"
 }
 
 // One sentence telling the user what to do next, or nothing at all when there
 // is nothing to do. A banner that is always present stops being read.
 function advice(f) {
-  if (!f.asked || !f.ready) return ""
-  if (f.behind > 0) return "Another machine saved " + plural(f.behind, "change") + " — press Pull to bring them here."
+  var facts = f || {}
+  if (!facts.asked || !facts.ready) return ""
+  if (facts.behind > 0) return "Another machine saved " + plural(facts.behind, "change") + " — press Pull to bring them here."
   // Before the unsaved line, and that order is the whole point of the state.
   // Both mean "this file and its copy differ"; only this one knows which way,
   // and pressing Save here commits over what the other machine saved.
   // One line, and it has to fit on one line: the banner elides, and the half
   // that got cut was the half naming the button.
-  if (f.incoming > 0) return plural(f.incoming, "file") + " came from another machine — press Restore, not Save."
-  if (f.dirty > 0) return plural(f.dirty, "file") + " changed on this machine — press Save to GitHub."
-  if (f.ahead > 0) return plural(f.ahead, "commit") + " committed but not pushed — press Save to GitHub."
+  if (facts.incoming > 0) return plural(facts.incoming, "file") + " came from another machine — press Restore, not Save."
+  if (facts.dirty > 0) return plural(facts.dirty, "file") + " changed on this machine — press Save to GitHub."
+  if (facts.ahead > 0) return plural(facts.ahead, "commit") + " committed but not pushed — press Save to GitHub."
   return ""
 }
 
@@ -146,32 +152,35 @@ function advice(f) {
 // tone. f is the facts of summary() plus { tracked, lastSave } (lastSave is
 // the agoText of the newest save, or "").
 function headline(f) {
-  if (!f.asked) return { title: "Checking this machine…", detail: "", tone: "dim" }
-  if (!f.ready) return { title: "No backup repo yet", detail: "", tone: "dim" }
-  if (f.ahead > 0 && f.behind > 0)
+  var facts = f || {}
+  if (!facts.asked) return { title: "Checking this machine…", detail: "", tone: "dim" }
+  if (!facts.ready) return { title: "No backup repo yet", detail: "", tone: "dim" }
+  if (facts.ahead > 0 && facts.behind > 0)
     return { title: "This machine and GitHub have diverged", detail: "Pull first, then save.", tone: "warn" }
-  if (f.behind > 0)
-    return { title: plural(f.behind, "change") + " waiting on GitHub",
+  if (facts.behind > 0)
+    return { title: plural(facts.behind, "change") + " waiting on GitHub",
              detail: "Another machine saved. Pull brings the changes here.", tone: "warn" }
-  if (f.incoming > 0)
-    return { title: plural(f.incoming, "file") + " came from another machine",
-             detail: "Restore puts " + (f.incoming === 1 ? "it" : "them") + " here. Save would overwrite that work.", tone: "warn" }
-  if (f.dirty > 0)
-    return { title: plural(f.dirty, "file") + " not saved yet",
+  if (facts.incoming > 0)
+    return { title: plural(facts.incoming, "file") + " came from another machine",
+             detail: "Restore puts " + (facts.incoming === 1 ? "it" : "them") + " here. Save would overwrite that work.", tone: "warn" }
+  if (facts.dirty > 0)
+    return { title: plural(facts.dirty, "file") + " not saved yet",
              detail: "Save copies, commits and pushes them.", tone: "accent" }
-  if (f.ahead > 0)
-    return { title: plural(f.ahead, "commit") + " not pushed yet",
+  if (facts.ahead > 0)
+    return { title: plural(facts.ahead, "commit") + " not pushed yet",
              detail: "Save to GitHub pushes them.", tone: "accent" }
   return { title: "Everything is saved",
-           detail: plural(f.tracked || 0, "file") + " backed up" + (f.lastSave ? " · last save " + f.lastSave : ""),
+           detail: plural(facts.tracked || 0, "file") + " backed up" + (facts.lastSave ? " · last save " + facts.lastSave : ""),
            tone: "ok" }
 }
 
 // A list of names for a tooltip: the first few, and how many more there are.
 function nameList(names, max) {
+  var list = names || []
   var m = max || 8
-  var out = names.slice(0, m).map(function(n) { return "  " + n })
-  if (names.length > m) out.push("  +" + (names.length - m) + " more")
+  if (!(m > 0)) m = 8
+  var out = list.slice(0, m).map(function(n) { return "  " + n })
+  if (list.length > m) out.push("  +" + (list.length - m) + " more")
   return out.join("\n")
 }
 
@@ -189,17 +198,26 @@ function repoPathLabel(p) {
 // Where the repo keeps a row's copy. repo_path_for is the rule in the core;
 // this only says it in words, next to the row.
 function repoCopyText(row, scope, profile) {
-  if (row.secret) return "secrets/" + row.id
-  if (scope === "profile") return "profiles/" + profile + "/config/" + row.id
-  return "config/" + row.id
+  var r = row || {}
+  if (!r.id) return ""
+  if (r.secret) return "secrets/" + r.id
+  if (scope === "profile") {
+    var who = String(profile || "").trim()
+    if (who === "") return "config/" + r.id
+    return "profiles/" + who + "/config/" + r.id
+  }
+  return "config/" + r.id
 }
 
 // Bytes, the way `ls -h` says them.
 function sizeText(b) {
   var n = Number(b) || 0
-  if (n < 1024) return n + " B"
+  if (!(n > 0)) return "0 B"
+  if (n < 1024) return Math.floor(n) + " B"
   if (n < 1048576) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + " KB"
-  return (n / 1048576).toFixed(1) + " MB"
+  if (n < 1073741824) return (n / 1048576).toFixed(1) + " MB"
+  if (n < 1099511627776) return (n / 1073741824).toFixed(1) + " GB"
+  return (n / 1099511627776).toFixed(1) + " TB"
 }
 
 // A path the way the CLI prints it: under $HOME it starts with ~.
@@ -251,12 +269,13 @@ function effectiveScope(row, overrides) {
 }
 
 // The state a row shows while its scope change is in flight. Switched off is
-// known at once. Switched on is not: the copy may differ, so it says pending.
+// known at once. Any other scope change moves the copy, so it says pending
+// until a status built after the change confirms the new location.
 function displayState(row, overrides) {
   var o = overrides ? overrides[row.id] : undefined
   if (!o || o === (row.scope || "shared")) return row.sync_state
   if (o === "off") return "off"
-  return row.sync_state === "off" ? "pending" : row.sync_state
+  return "pending"
 }
 
 // Project every row through the optimistic scope state once. All panel views
@@ -356,13 +375,19 @@ function focusItems(tab, cards, rows, settings) {
       out.push({ kind: "card", id: String(card.id) })
       ;(card.rows || []).forEach(function(row) {
         out.push({ kind: "row", id: String(row.id) })
-        if (row.sync_state === "incoming" || row.sync_state === "unsaved" || row.sync_state === "unpushed")
+        if (row.sync_state === "incoming" || row.sync_state === "unsaved" || row.sync_state === "unpushed"
+            || row.sync_state === "missing" || row.sync_state === "locked")
           out.push({ kind: "action", id: String(row.id) })
       })
     })
   } else if (tab === "settings") {
     out.push({ kind: "filter", id: "settings-search" }, { kind: "filter", id: "settings-state" })
-    ;(settings || []).forEach(function(group) { out.push({ kind: "card", id: String(group.id) }) })
+    ;(settings || []).forEach(function(group) {
+      out.push({ kind: "card", id: String(group.id) })
+      ;(group.rows || []).forEach(function(row) {
+        out.push({ kind: "row", id: String(row.id) })
+      })
+    })
   }
   return out
 }
@@ -370,13 +395,15 @@ function focusItems(tab, cards, rows, settings) {
 function moveFocus(items, index, delta) {
   var list = items || [], max = list.length - 1
   if (max < 0) return 0
-  return Math.max(0, Math.min(max, Number(index) + Number(delta)))
+  var next = Number(index) + Number(delta)
+  if (!(next >= 0)) next = 0
+  return Math.max(0, Math.min(max, next))
 }
 
 function actionDisabledReason(facts) {
   var f = facts || {}
   if (f.busy === true) return "Another Replicant operation is running."
-  if (f.ready === false) return "Configure a repository first."
+  if (f.ready !== true) return "Configure a repository first."
   if (f.available === false) return "This setting is not available in this machine's configuration."
   if (f.hasInput === false) return "Enter a file or folder path first."
   if (f.hasSelection === false) return "Select entries with the same supported operation."
@@ -387,7 +414,7 @@ function actionDisabledReason(facts) {
 function validBulkActions(rows) {
   var list = rows || []
   if (list.length === 0) return []
-  if (list.some(function(r) { return r.locked === true })) return []
+  if (list.some(function(r) { return r.locked === true || r.sync_state === "locked" })) return []
   if (list.every(function(r) { return r.suggestion === true })) {
     if (list.every(function(r) { return r.kind === "secret" })) return ["track-secret"]
     if (list.every(function(r) { return r.kind !== "secret" })) return ["track-config", "track-secret"]
@@ -397,6 +424,7 @@ function validBulkActions(rows) {
     return r.suggestion !== true && r.scope !== "off"
         && r.sync_state !== "off" && r.sync_state !== "pending"
         && r.sync_state !== "incoming" && r.sync_state !== "missing"
+        && r.sync_state !== "locked"
   })
   var out = canSave ? ["save"] : []
   if (list.every(function(r) { return r.source === "user" && r.secret !== true })) out.push("convert-secret", "untrack")
@@ -617,10 +645,13 @@ function backupRows(backups) {
 function agoText(epoch, now) {
   var t = now === undefined ? Math.floor(Date.now() / 1000) : now
   var s = Math.max(0, t - epoch)
-  if (s < 90) return "just now"
-  if (s < 5400) return plural(Math.round(s / 60), "minute") + " ago"
-  if (s < 129600) return plural(Math.round(s / 3600), "hour") + " ago"
-  return plural(Math.round(s / 86400), "day") + " ago"
+  if (s < 60) return "just now"
+  if (s < 3600) return plural(Math.max(1, Math.floor(s / 60)), "minute") + " ago"
+  if (s < 86400) return plural(Math.max(1, Math.floor(s / 3600)), "hour") + " ago"
+  if (s < 604800) return plural(Math.max(1, Math.floor(s / 86400)), "day") + " ago"
+  if (s < 2592000) return plural(Math.max(1, Math.floor(s / 604800)), "week") + " ago"
+  if (s < 31536000) return plural(Math.max(1, Math.floor(s / 2592000)), "month") + " ago"
+  return plural(Math.max(1, Math.floor(s / 31536000)), "year") + " ago"
 }
 
 // GitHub repository names use letters, numbers, dots, underscores and hyphens.

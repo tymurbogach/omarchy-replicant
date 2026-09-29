@@ -43,7 +43,7 @@ Item {
     if (!controller.settling && process.running && controller.currentJob === job
         && R.queueIsBackground(next)
         && R.queueSameCommand({ command: controller.currentCommand }, next)) return "coalesced"
-    if (process.running || controller.settling) {
+    if (process.running || controller.settling || controller.currentJob !== "") {
       var applied = R.queueEnqueue(controller.queue, next)
       controller.queue = applied.queue
       return applied.result === "coalesced" ? "coalesced" : "queued"
@@ -67,8 +67,12 @@ Item {
     else if (job === "save" || job === "bulk" || job === "danger") controller.stage = "scanning"
     else controller.stage = "running"
     var cmd = command.slice()
+    var hasProgress = false
+    for (var pi = 0; pi < cmd.length; pi++) {
+      if (String(cmd[pi]).indexOf("--progress-json") >= 0) { hasProgress = true; break }
+    }
     if (controller.currentMeta.progress !== false && String(cmd[0]) === controller.cli
-        && cmd.length > 1 && String(cmd[1]).indexOf("--progress-json") < 0) {
+        && cmd.length > 1 && !hasProgress) {
       cmd.splice(1, 0, "--progress-json")
     }
     var isCli = String(command[0]) === controller.cli

@@ -1170,8 +1170,8 @@ cmd_undo() {
       --apply) DRY=0 ;;
       --dry-run) DRY=1 ;;
       -y|--yes) fail "undo: --yes is not supported; use --apply" ;;
-      -*) ;;
-      *) [[ -z "$id" ]] && id="$arg" ;;
+      -*) fail "unknown option: $arg" ;;
+      *) [[ -z "$id" ]] && id="$arg" || fail "undo: too many ids: $arg" ;;
     esac
   done
   [[ -n "$id" ]] || fail "undo <id> — see 'omarchy-replicant backups'"

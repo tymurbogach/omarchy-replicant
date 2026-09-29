@@ -93,11 +93,9 @@ check "…under the inventory subject" "1" \
 check "…while the config edit is still pending" "1" \
   "$(run status --json --brief --no-fetch | jq -r .unsaved)"
 
-section "removed aliases fail with the canonical command"
-check_false "savegame is removed" "$CLI" savegame --auto --no-push
-check_contains "…and names save" "use save --all" "$(run savegame)"
-check_false "backup is removed" "$CLI" backup
-check_contains "…and names changes" "use changes" "$(run backup)"
+section "unknown commands fail with usage"
+check_false "an unknown command fails" "$CLI" definitely-not-a-command
+check_false "backup is unknown" "$CLI" backup
 
 section "save-file is save --id with a default subject"
 printf 'per-file\n' >> "$HOME/.config/hypr/input.lua"

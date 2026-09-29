@@ -686,7 +686,7 @@ vault_restore_entry_privileged() {
 
 # key_init: one shared post-quantum identity for this setup, plus the repo's
 # recipient. Refuses to overwrite an existing identity (rotate is the way to
-# replace one) and refuses repos older than version 3 (their secrets live in
+# replace one) and refuses a repo whose marker is not ready.
 key_init() {
   crypto_require_keygen_pq || return 1
   [[ -e "$REPO_DIR/.git" ]] || { printf 'key: no repo here — run create, clone or init first\n' >&2; return 1; }
@@ -718,7 +718,7 @@ key_init() {
   # transaction engine (core_key_init_transact), never here, so key setup
   # cannot leave a half-committed worktree behind.
   briefcache_invalidate
-  printf 'key: identity created at keys/identity.txt (0600), recipient %s recorded — run savegame to encrypt your secrets\n' "$rec" >&2
+  printf 'key: identity created at keys/identity.txt (0600), recipient %s recorded — run save to encrypt your secrets\n' "$rec" >&2
 }
 
 # key_export [--force] <absolute-destination>: a backup of the identity

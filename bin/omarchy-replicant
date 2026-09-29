@@ -1056,7 +1056,7 @@ cmd_doctor() {
   (( missing > 0 )) && printf '    (%d not on this machine — normal on a fresh install)\n' "$missing"
   local n_user n_sugg
   n_user=$(( ${#USER_MANIFEST[@]} + ${#USER_SECRETS[@]} ))
-  chk_ok "$n_user of them are yours, in .replicant-track — the rest ship with the plugin"
+  chk_ok "$n_user of them are yours — the rest ship with the plugin"
   n_sugg=$(core_suggest 2>/dev/null | grep -c . || true)
   (( n_sugg > 0 )) && chk_warn "$(plural "$n_sugg" "more file") here are not tracked — see 'omarchy-replicant suggest'"
 
@@ -1402,7 +1402,7 @@ Dry-run by default, like everything here that writes.
   omarchy-replicant undo hypr/input.lua --apply"
   [init]="init
   Prepare the local repo without touching GitHub. Safe to re-run: it creates the
-  layout, the hooks and the .gitignore, and migrates an older repo shape."
+  layout, the hooks and the .gitignore."
   [login]="login
   Log in to GitHub with gh, if you are not logged in already. Nothing else."
   [create]="create [name] [--push]
@@ -1564,11 +1564,6 @@ main() {
     shift
   fi
   local cmd="${1:-}"; [[ -z "$cmd" ]] && { usage; exit 0; }
-  case "$cmd" in
-    savegame) fail "savegame was removed in 0.14.0; use save --all" ;;
-    backup) fail "backup was removed in 0.14.0; use changes" ;;
-    sync) fail "sync was removed in 0.14.0; use scope <id> shared|profile|off" ;;
-  esac
   export REPLICANT_PROGRESS_COMMAND="$cmd"
   if [[ "${REPLICANT_PROGRESS_JSON:-0}" == 1 ]]; then
     trap progress_cli_exit EXIT

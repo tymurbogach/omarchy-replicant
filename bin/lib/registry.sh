@@ -120,8 +120,8 @@ registry_build() {
     [[ -n "$id" ]] || continue
     live="${r_live[$id]}"
     category=$(category_for_rel "$id")
-    # The shared scope map applies each schema's precedence. In version 2 the
-    # mutable .replicant-sync policy must override the initial entries record.
+    # The shared scope map applies the entries precedence: the entries record
+    # first, the shipped defaults behind it.
     scope_into scope "$id"
     blob=""; locked="false"; repo=""
     if [[ "${r_kind[$id]}" == "secret" ]]; then

@@ -48,7 +48,7 @@ repo_create() {
       return 1
     fi
   else
-    gh repo create "$name" --private --description "Omarchy replicant private savegame" >/dev/null 2>&1 || {
+    gh repo create "$name" --private --description "Omarchy replicant private repo" >/dev/null 2>&1 || {
       echo "gh create failed — run 'gh auth login', then retry 'omarchy-replicant create $name'" >&2
       return 1
     }

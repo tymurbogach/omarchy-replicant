@@ -163,15 +163,9 @@ why: recover is a dry run by default
 ---
 file: bin/lib/history.sh
 suite: test-cli.sh
-from: [[ -n "${in_head[$line]:-}" || -n "${seen[$line]:-}" ]] && continue
-to: :
+from:     [[ -n "${in_head[$line]:-}" || -n "${seen[$line]:-}" ]] && continue
+to:     :
 why: deleted does not list a copy that is back in the repo
----
-file: bin/lib/history.sh
-suite: test-cli.sh
-from: write_track_file ${keep[@]+"${keep[@]}"}
-to: :
-why: recovering an untrack tracks the file again
 ---
 file: bin/lib/update.sh
 suite: test-cli.sh
@@ -205,21 +199,15 @@ why: a plugin installed after the last save is not called recorded
 ---
 file: bin/lib/schema.sh
 suite: test-schema.sh
-from:     1|2)
-to:     1|2|99)
-why: a newer data format blocks writes
----
-file: bin/lib/schema.sh
-suite: test-schema.sh
-from:   v=$(jq -r '.dataVersion | if type == "number" then tostring else empty end' "$file" 2>/dev/null || true)
-to:   v=1
-why: the write gate reads the version from the schema file
+from:   jq -e 'type == "object" and keys == ["format"] and .format == "replicant"'
+to:   jq -e 'type == "object"'
+why: a foreign marker blocks writes
 ---
 file: bin/lib/layout.sh
 suite: test-schema.sh
-from:     ensure_v3_layout
+from:     ensure_repository_layout
 to:     :
-why: a fresh repo is born v3
+why: a fresh repo carries the exact marker
 ---
 file: bin/lib/schema.sh
 suite: test-schema.sh
@@ -229,9 +217,9 @@ why: a duplicate entry id is rejected
 ---
 file: bin/lib/schema.sh
 suite: test-schema.sh
-from:     '{machineId: $id, profile: $profile, clientVersion: $client, schemaVersion: $schema}' > "$dir/$id.json"
-to:     '{machineId: $id, profile: $profile, clientVersion: $client, schemaVersion: $schema, debug: $id}' > "$dir/$id.json"
-why: machine metadata holds exactly four fields
+from:     '{machineId: $id, profile: $profile, clientVersion: $client}' > "$dir/$id.json"
+to:     '{machineId: $id, profile: $profile, clientVersion: $client, debug: $id}' > "$dir/$id.json"
+why: machine metadata holds exactly three fields
 ---
 file: bin/lib/crypto.sh
 suite: test-crypto.sh
@@ -259,9 +247,9 @@ why: rotation re-encrypts every blob from readable plaintext
 ---
 file: bin/lib/crypto.sh
 suite: test-crypto.sh
-from:   [[ "$(repo_data_version)" == 3 ]] || {
-to:   :
-why: key init refuses a repo older than version 3
+from:   require_ready_schema || {
+to:   : || {
+why: key init refuses a repo that is not ready
 ---
 file: bin/lib/status.sh
 suite: test-crypto.sh
@@ -346,24 +334,6 @@ suite: test-save.sh
 from:     SAVE_DID_COMMIT=1
 to:     SAVE_DID_COMMIT=0
 why: a committed transaction is fast-forwarded into the active repo
----
-file: bin/lib/migrate.sh
-suite: test-migrate-v3.sh
-from:   mv -- "$REPO_DIR" "$legacy" || {
-to:   true || {
-why: migration activates the new repository only after the staged copy passes verification
----
-file: bin/lib/migrate.sh
-suite: test-migrate-v3.sh
-from:     if [[ "$provenance" == user ]]; then
-to:     if false; then
-why: migration refuses a custom secret whose path cannot be reconstructed
----
-file: bin/lib/migrate.sh
-suite: test-migrate-v3.sh
-from:   if ! git -C "$REPO_DIR" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
-to:   if false; then
-why: migration refuses a repository without upstream tracking
 ---
 file: bin/lib/bulk.sh
 suite: test-bulk.sh
@@ -554,7 +524,7 @@ why: bulk confirmations show user-facing actions
 file: Panel.qml
 suite: test-usability.sh
 from:   function doSave() { root.busyLabel = "Saving to GitHub…"; controller.run("save", [root.cli, "save", "--all", "--auto"], { label: "Save", cancelable: true }) }
-to:   function doSave() { root.busyLabel = "Saving to GitHub…"; controller.run("save", [root.cli, "savegame", "--auto"], { label: "Save", cancelable: true }) }
+to:   function doSave() { root.busyLabel = "Saving to GitHub…"; controller.run("save", [root.cli, "save", "--auto"], { label: "Save", cancelable: true }) }
 why: the panel Save uses the complete canonical transaction
 ---
 file: Panel.qml

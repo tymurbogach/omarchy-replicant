@@ -22,8 +22,6 @@
 # Both lists live in the repo rather than ~/.local/share, because "monitors are
 # machine-specific" is a fact about the setup, not about one machine: decide it
 # once, and every machine sharing the repo honours it.
-REMOVED_SCOPE_FILE="$REPO_DIR/.replicant-sync"
-REMOVED_PROFILE_FILE="$REPO_DIR/.replicant-profiles"
 
 # Seeded on a fresh repo. Not hardcoded rules: they are written into a file the
 # user can see, edit, and change from the panel. These are the files that are
@@ -98,7 +96,18 @@ ensure_profile_recorded() {
   return 0
 }
 
+# Machine assignments live in .replicant/machines/*.json, one file per
+# machine with a profile field. This prints "<machine> = <profile>" per line.
 read_profile_map() {
+  local f id prof
+  [[ -d "$REPO_DIR/.replicant/machines" ]] || return 0
+  for f in "$REPO_DIR/.replicant/machines"/*.json; do
+    [[ -f "$f" ]] || continue
+    id=$(basename "$f" .json)
+    prof=$(jq -r '.profile // empty' "$f" 2>/dev/null || true)
+    [[ -n "$prof" ]] || continue
+    printf '%s = %s\n' "$id" "$prof"
+  done
   return 0
 }
 
@@ -106,9 +115,9 @@ profile_for_machine() {
   machine_profile "$1"
 }
 
-# Resolved once per process: every scope lookup needs it. On version 3 the
-# machine JSON record is the only store: the test override wins for suites,
-# then the recorded profile, then the chassis guess.
+# Resolved once per process: every scope lookup needs it. The machine JSON
+# record is the only store: the test override wins for suites, then the
+# recorded profile, then the chassis guess.
 current_profile() {
   if [[ -n "${REPLICANT_PROFILE:-}" ]]; then printf '%s\n' "$REPLICANT_PROFILE"; return; fi
   local recorded
@@ -143,42 +152,24 @@ profile_report() {
 }
 
 # core_profile_set <name> — assign this machine to a profile, creating it.
-# On version 3 the machine JSON record is the only store: no profile file is
+# The machine JSON record is the only store.
 core_profile_set() {
   require_ready_schema || return 1
-  local want="$1" line k v
-  local -a keep=()
+  local want="$1"
   [[ "$want" =~ ^[a-z0-9][a-z0-9_-]{0,31}$ ]] || {
     echo "profile: use lowercase letters, digits, '-' or '_' (max 32)" >&2; return 1; }
   ensure_repo_layout
-  if repo_is_ready; then
-    require_valid_entries || return 1
-    local dir="$REPO_DIR/.replicant/machines"
-    mkdir -p "$dir"
-    if [[ -f "$dir/$MACHINE.json" ]]; then
-      jq --arg profile "$want" --arg client "$(running_version)" \
-        '.profile = $profile | .clientVersion = $client' \
-        "$dir/$MACHINE.json" > "$dir/$MACHINE.json.new" || return 1
-      mv -f -- "$dir/$MACHINE.json.new" "$dir/$MACHINE.json"
-    else
-      REPLICANT_PROFILE="$want" machine_metadata_write "$MACHINE" || return 1
-    fi
-    briefcache_invalidate
-    echo "$MACHINE is now in the '$want' profile" >&2
-    return 0
+  require_valid_entries || return 1
+  local dir="$REPO_DIR/.replicant/machines"
+  mkdir -p "$dir"
+  if [[ -f "$dir/$MACHINE.json" ]]; then
+    jq --arg profile "$want" --arg client "$(running_version)" \
+      '.profile = $profile | .clientVersion = $client' \
+      "$dir/$MACHINE.json" > "$dir/$MACHINE.json.new" || return 1
+    mv -f -- "$dir/$MACHINE.json.new" "$dir/$MACHINE.json"
+  else
+    REPLICANT_PROFILE="$want" machine_metadata_write "$MACHINE" || return 1
   fi
-  while IFS= read -r line; do
-    k="${line%%=*}"; k="${k//[[:space:]]/}"
-    [[ "$k" == "$MACHINE" ]] || keep+=("$line")
-  done < <(read_profile_map)
-  keep+=("$MACHINE = $want")
-  {
-    echo "# Which profile each machine belongs to: <hostname> = <profile>."
-    echo "# A machine that is not listed guesses from its own chassis."
-    echo "# Files scoped to a profile live in profiles/<profile>/config/, so two"
-    echo "# machines in different profiles never overwrite each other's copy."
-    printf '%s\n' "${keep[@]}"
-  } > "$REMOVED_PROFILE_FILE"
   briefcache_invalidate
   echo "$MACHINE is now in the '$want' profile" >&2
 }
@@ -197,45 +188,35 @@ list_profiles() {
 # more through repo_path_for — and it used to spawn a sed for every one of them.
 # On fifty rows that is a hundred and fifty processes to answer a question about
 # a file of a dozen lines. It is read once per process instead.
-SCOPES_CACHE=""; SCOPES_CACHED=0
 declare -gA SCOPE_OF=()
 SCOPE_MAP_READY=0
-invalidate_scopes_cache() { SCOPES_CACHED=0; SCOPES_CACHE=""; SCOPE_MAP_READY=0; SCOPE_OF=(); }
+invalidate_scopes_cache() { SCOPE_MAP_READY=0; SCOPE_OF=(); }
 
 # load_scope_map: the scope list as an associative array, built in this shell.
-# The first valid line for a path wins, as in scope_for, and the v0.5 off-list
-# counts only while no .replicant-sync exists. On version 3 the entries
-# records fill the map, with the shipped defaults behind them, so the
-# fork-free scope_into answers from one snapshot per process.
+# The entries records fill the map, with the shipped defaults behind them, so
+# the fork-free scope_into answers from one snapshot per process.
 load_scope_map() {
   (( SCOPE_MAP_READY )) && return 0
   SCOPE_MAP_READY=1; SCOPE_OF=()
-  local line k v vid vsc
-  if repo_is_ready; then
-    if [[ -f "$REPO_DIR/.replicant/entries.json" ]]; then
-      while IFS=$'\t' read -r vid vsc; do
-        [[ -n "${vid:-}" ]] || continue
-        case "$vsc" in shared|profile|off) [[ -n "${SCOPE_OF[$vid]:-}" ]] || SCOPE_OF[$vid]="$vsc" ;; esac
-      done < <(jq -r 'to_entries | sort_by(.key)[] | [.key, (.value.scope // "")] | @tsv' \
-        "$REPO_DIR/.replicant/entries.json" 2>/dev/null || true)
-    fi
-    local entry
-    for entry in "${DEFAULT_SCOPES[@]}"; do
-      k="${entry%%=*}"; v="${entry##*=}"
-      [[ -n "${SCOPE_OF[$k]:-}" ]] || SCOPE_OF[$k]="$v"
-    done
-    return 0
+  local k v
+  if [[ -f "$REPO_DIR/.replicant/entries.json" ]]; then
+    while IFS=$'\t' read -r vid vsc; do
+      [[ -n "${vid:-}" ]] || continue
+      case "$vsc" in shared|profile|off) [[ -n "${SCOPE_OF[$vid]:-}" ]] || SCOPE_OF[$vid]="$vsc" ;; esac
+    done < <(jq -r 'to_entries | sort_by(.key)[] | [.key, (.value.scope // "")] | @tsv' \
+      "$REPO_DIR/.replicant/entries.json" 2>/dev/null || true)
   fi
-  for line in "${DEFAULT_SCOPES[@]}"; do
-    k="${line%%=*}"; v="${line##*=}"
+  local entry
+  for entry in "${DEFAULT_SCOPES[@]}"; do
+    k="${entry%%=*}"; v="${entry##*=}"
     [[ -n "${SCOPE_OF[$k]:-}" ]] || SCOPE_OF[$k]="$v"
   done
   return 0
 }
 
 # entries_scope_for <rel>: the scope recorded in .replicant/entries.json, or
-# nothing. The single scope source on version 3. Best effort: registry_build
-# validates the file first and fails loudly, so resolution never has to.
+# nothing. The single scope source. Best effort: registry_build validates the
+# file first and fails loudly, so resolution never has to.
 entries_scope_for() {
   [[ -f "$REPO_DIR/.replicant/entries.json" ]] || return 0
   jq -r --arg id "$1" '.[$id].scope // empty' "$REPO_DIR/.replicant/entries.json" 2>/dev/null || true
@@ -256,19 +237,10 @@ repo_path_into() {
     printf -v "$1" '%s' "$CONFIG_DIR/$2"
   fi
 }
-read_scopes() {
-  if (( ! SCOPES_CACHED )); then
-    SCOPES_CACHED=1
-    [[ -f "$REMOVED_SCOPE_FILE" ]] && SCOPES_CACHE=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$REMOVED_SCOPE_FILE" 2>/dev/null || true)
-  fi
-  [[ -n "$SCOPES_CACHE" ]] && printf '%s\n' "$SCOPES_CACHE"
-  return 0
-}
-
 # scope_for <rel> → shared | profile | off   (unlisted files are shared)
-# On version 3 the answer comes from the shared scope cache that scope_into
-# reads too: the entries record first, the shipped defaults behind it, shared
-# when neither names the id. One resolution path, never two. On older layouts
+# The answer comes from the shared scope cache that scope_into reads too: the
+# entries record first, the shipped defaults behind it, shared when neither
+# names the id. One resolution path, never two.
 scope_for() {
   local rel="$1"
   load_scope_map
@@ -298,46 +270,6 @@ repo_path_for() {
 # 1, and set -e ended the first layout on a new machine with no message.
 print_lines() { (( $# )) || return 0; printf '%s\n' "$@"; }
 
-write_scope_file() {
-  if repo_is_ready; then
-    echo "scope: entries are stored in .replicant/entries.json" >&2
-    return 1
-  fi
-  local -a keep=("$@")
-  {
-    echo "# What Replicant does with each tracked file, one per line:"
-    echo "#   <path> = shared    one copy, every machine saves and restores it"
-    echo "#   <path> = profile   a copy per profile, under profiles/<profile>/config/"
-    echo "#   <path> = off       never saved from or restored onto any machine"
-    echo "# A path that is not listed is shared. Written by the panel; safe to edit."
-    print_lines "${keep[@]}"
-  } > "$REMOVED_SCOPE_FILE"
-  invalidate_scopes_cache
-}
-
-# off-list. On version 3 this is a no-op: scopes live in .replicant/entries.json
-# and no scope file is ever created.
-#
-# did not, and because read_scopes() sees no .replicant-sync it rebuilt the
-# list from nothing — silently discarding a v0.5 user's entire off-list the
-# first time they touched any file's scope. Reading has a fallback; writing
-# needs the real thing.
-ensure_scope_file() {
-  repo_is_ready && return 0
-  [[ -f "$REMOVED_SCOPE_FILE" ]] && return 0
-  mkdir -p "$(dirname "$REMOVED_SCOPE_FILE")" 2>/dev/null || true
-  local -a seed=()
-  local migrated
-  if [[ -f "$LEGACY_EXCLUDE_FILE" ]]; then
-    migrated=$(migrate_legacy_migrate_exclude || true)
-    while IFS= read -r line; do [[ -n "$line" ]] && seed+=("$line"); done <<<"$migrated"
-    write_scope_file "${seed[@]}"
-    echo "  · migrated .replicant-exclude to .replicant-sync (${#seed[@]} entries kept off)" >&2
-  else
-    write_scope_file "${DEFAULT_SCOPES[@]/=/ = }"
-  fi
-}
-
 # move_repo_copy <from> <to> — carry the copy the repo holds to its new path.
 #
 # The guard here used to be `-f`, so a tracked DIRECTORY was never moved: the
@@ -357,25 +289,13 @@ move_repo_copy() {
 # core_scope <rel> <shared|profile|off> — the panel's per-file scope control.
 core_scope() {
   require_ready_schema || return 1
-  local rel="$1" want="$2" line k old
-  local -a keep=()
+  local rel="$1" want="$2" old
   case "$want" in shared|profile|off) ;; *)
     echo "scope: expected 'shared', 'profile' or 'off'" >&2; return 1 ;; esac
   resolve_manifest_src "$rel" >/dev/null 2>&1 || { echo "unknown id: $rel" >&2; return 1; }
-  ensure_scope_file
   old=$(scope_for "$rel")
   [[ "$old" == "$want" ]] && { echo "$rel is already '$want'" >&2; return 0; }
-  if repo_is_ready; then
-    scope_store "$rel" "$want" || return 1
-  else
-    mkdir -p "$(dirname "$REMOVED_SCOPE_FILE")"
-    while IFS= read -r line; do
-      k="${line%%=*}"; k="${k//[[:space:]]/}"
-      [[ "$k" == "$rel" ]] || keep+=("$line")
-    done < <(read_scopes)
-    [[ "$want" != "shared" ]] && keep+=("$rel = $want")
-    write_scope_file "${keep[@]}"
-  fi
+  scope_store "$rel" "$want" || return 1
 
   # Moving between scopes moves the copy the repo already holds, so changing
   # your mind does not silently strand a backup at the old path.
@@ -429,8 +349,8 @@ scope_store() {
 }
 
 # core_scope_bulk <scope> <id...> — apply one scope decision to every id.
-# Validate the complete selection before changing the scope file or moving a
-# repository copy. The CLI commits the resulting shape as one decision.
+# Validate the complete selection before changing the entries record or moving
+# a repository copy. The CLI commits the resulting shape as one decision.
 core_scope_bulk() {
   require_ready_schema || return 1
   local want="$1" id src old from to
@@ -442,7 +362,7 @@ core_scope_bulk() {
   (( $# > 0 )) || { echo "policy: no entries selected" >&2; return 1; }
 
   local -A seen=()
-  local -a ids=() olds=() froms=() tos=() lines=()
+  local -a ids=() olds=() froms=() tos=()
   for id in "$@"; do
     [[ -n "$id" && -z "${seen[$id]:-}" ]] || {
       echo "policy: duplicate or empty entry id: $id" >&2; return 1; }
@@ -466,22 +386,9 @@ core_scope_bulk() {
     froms+=("$from"); tos+=("$to")
   done
 
-  ensure_scope_file
-  if repo_is_ready; then
-    for id in "${ids[@]}"; do
-      scope_store "$id" "$want" || return 1
-    done
-  else
-    while IFS= read -r line; do
-      local key="${line%%=*}"
-      key="${key//[[:space:]]/}"
-      [[ -z "${seen[$key]:-}" ]] && lines+=("$line")
-    done < <(read_scopes)
-    for id in "${ids[@]}"; do
-      [[ "$want" == shared ]] || lines+=("$id = $want")
-    done
-    write_scope_file "${lines[@]}"
-  fi
+  for id in "${ids[@]}"; do
+    scope_store "$id" "$want" || return 1
+  done
 
   local i
   for i in "${!ids[@]}"; do
@@ -492,17 +399,6 @@ core_scope_bulk() {
   echo "$(plural "${#ids[@]}" entry entries) now use the '$want' scope" >&2
 }
 
-# core_sync <rel> <on|off> — the older two-state switch, kept because it is in
-# the shipped README and in scripts. "on" means shared.
-core_sync() {
-  local rel="$1" want="$2"
-  case "$want" in
-    on)  core_scope "$rel" shared ;;
-    off) core_scope "$rel" off ;;
-    *)   echo "sync: expected 'on' or 'off'" >&2; return 1 ;;
-  esac
-}
-
 # scope_shape_paths <rel>: the repository paths one scope decision can touch.
 # A file lives at exactly one of the two copy paths; the shared policy stores
 # and the vault index cover the metadata. Prints one path per line.
@@ -510,15 +406,6 @@ scope_shape_paths() {
   local rel="$1"
   tx_shape_policy_paths
   printf '%s\n' "config/$rel" "profiles/$(current_profile)/config/$rel"
-}
-
-# core_sync_transact <rel> <on|off>: the sync switch as one transaction.
-core_sync_transact() {
-  local rel="${1:-}" want="${2:-}"
-  [[ -n "$rel" && -n "$want" ]] || { echo "usage: sync <id> on|off" >&2; return 2; }
-  local -a paths=()
-  while IFS= read -r p; do [[ -n "$p" ]] && paths+=("$p"); done < <(scope_shape_paths "$rel")
-  core_shape_transact "sync: turn $rel $want" "sync" core_sync "$rel" "$want" -- "${paths[@]}"
 }
 
 # core_scope_transact <rel> <shared|profile|off>: one scope change, one commit.
@@ -554,7 +441,7 @@ core_profile_transact() {
   local want="${1:-}"
   [[ -n "$want" ]] || { echo "usage: profile <name>" >&2; return 2; }
   local msg="profile: $MACHINE is now '$want'"
-  core_shape_transact "$msg" "profile" profile_report "$want" -- .replicant-profiles .replicant/machines || return 1
+  core_shape_transact "$msg" "profile" profile_report "$want" -- .replicant/machines || return 1
   echo "Files scoped to a profile will now be saved and restored from profiles/$want/." >&2
   return 0
 }

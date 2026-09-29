@@ -37,11 +37,11 @@ HOOK
 
 ensure_repo_layout() {
   mkdir -p "$CONFIG_DIR" "$STATE_DIR" "$TEMPLATES_DIR"
-  # A repo written before state/ was scoped by machine has its inventory flat in
-  # state/. Move it under this machine's name rather than leaving two shapes to
-  # support forever; git records the move like any other change.
+  # A repo with inventory flat in state/ has it moved under this machine's
+  # name rather than leaving two shapes to support forever; git records the
+  # move like any other change.
   # `mv -n` is not enough: it exits 0 and does NOTHING when the target already
-  # exists, so a half-migrated repo kept a stale flat copy of every inventory
+  # exists, so a half-moved repo kept a stale flat copy of every inventory
   # file next to the scoped one, forever. The scoped copy is regenerated from
   # this machine on every backup, so where both exist it is the newer of the
   # two and the flat one is what goes.
@@ -84,6 +84,7 @@ ensure_repo_layout() {
     machine_metadata_write
   fi
   mkdir -p "$REPO_DIR/profiles/$(current_profile)/config" 2>/dev/null || true
+  record_repo_version 2>/dev/null || true
   # The hook is kept in step with the plugin, like the scanner below. It was
   # written once, so a repo made by an old release kept that hook forever.
   mkdir -p "$GITHOOKS_DIR"
@@ -91,10 +92,10 @@ ensure_repo_layout() {
     precommit_hook_text > "$GITHOOKS_DIR/pre-commit"
   fi
   chmod +x "$GITHOOKS_DIR/pre-commit"
-  # .gitignore — savegame style (state/ is generated, .bak.* ignored, secrets/ tracked)
+  # .gitignore (state/ is generated, .bak.* ignored, secrets/ tracked)
   if [[ ! -f "$REPO_DIR/.gitignore" ]]; then
     cat >"$REPO_DIR/.gitignore" <<'GI'
-# — replicant savegame —
+# — replicant repo —
 *.bak.*
 *.bak
 **/.cache/

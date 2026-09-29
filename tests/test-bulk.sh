@@ -40,7 +40,7 @@ check_false "scope off needs confirmation" "$CLI" bulk scope --scope off -- hypr
 section "bulk scope is one commit"
 before=$(git -C "$REPO" rev-parse HEAD)
 check_true "scope changes succeed" "$CLI" bulk scope --scope off --yes -- hypr/input.lua hypr/hyprlock.conf
-check "both scopes changed" "2" "$(grep -c ' = off$' "$REPO/.replicant-sync")"
+check "both scopes changed" "2" "$(jq '[.[] | select(.scope == "off")] | length' "$REPO/.replicant/entries.json")"
 check "scope creates one commit" "1" "$(git -C "$REPO" log --format=%s "$before"..HEAD | grep -c '^bulk: scope 2 entries$')"
 
 section "bulk track validates all paths"
@@ -48,7 +48,7 @@ printf 'alpha\n' > "$HOME/.config/alpha.conf"
 printf 'beta\n' > "$HOME/.config/beta.conf"
 before=$(git -C "$REPO" rev-parse HEAD)
 check_true "two files track together" "$CLI" bulk track --kind config --yes -- "$HOME/.config/alpha.conf" "$HOME/.config/beta.conf"
-check "both user entries exist" "2" "$(grep -Ec 'alpha.conf|beta.conf' "$REPO/.replicant-track")"
+check "both user entries exist" "2" "$(jq '[keys[] | select(. == "alpha.conf" or . == "beta.conf")] | length' "$REPO/.replicant/entries.json")"
 check "tracking creates one commit" "1" "$(git -C "$REPO" log --format=%s "$before"..HEAD | grep -c '^bulk: track 2 entries$')"
 
 section "bulk rejects unsafe trees before mutation"
@@ -58,7 +58,7 @@ check_false "the bulk validator detects binary encoding" \
   bulk_validate_track_path "$HOME/.config/binary.conf" config
 check_false "binary secret is rejected" "$CLI" bulk track --kind secret --yes -- "$HOME/.config/alpha.conf" "$HOME/.config/binary.conf"
 check "binary rejection leaves HEAD unchanged" "$before" "$(git -C "$REPO" rev-parse HEAD)"
-check "binary rejection leaves tracking unchanged" "2" "$(grep -Ec 'alpha.conf|beta.conf' "$REPO/.replicant-track")"
+check "binary rejection leaves tracking unchanged" "2" "$(jq '[keys[] | select(. == "alpha.conf" or . == "beta.conf")] | length' "$REPO/.replicant/entries.json")"
 
 section "bulk rejects control characters in paths"
 for control in $'\n' $'\t' $'\r'; do
@@ -122,20 +122,20 @@ before=$(git -C "$REPO" rev-parse HEAD)
 check_false "large file needs allow-large" "$CLI" bulk track --kind config --yes -- "$HOME/.config/large.conf"
 check "large rejection leaves HEAD unchanged" "$before" "$(git -C "$REPO" rev-parse HEAD)"
 check_true "allow-large accepts large text" "$CLI" bulk track --kind config --yes --allow-large -- "$HOME/.config/large.conf"
-check "large file is tracked after consent" "1" "$(grep -c 'large.conf' "$REPO/.replicant-track")"
+check "large file is tracked after consent" "1" "$(jq '[keys[] | select(. == "large.conf")] | length' "$REPO/.replicant/entries.json")"
 
 section "bulk blocks plaintext secret conversion"
 printf 'secret-conversion-payload\n' > "$HOME/.config/convert-secret.conf"
 check_true "conversion source is tracked" "$CLI" bulk track --kind config --yes -- "$HOME/.config/convert-secret.conf"
 before=$(git -C "$REPO" rev-parse HEAD)
-check_false "v1 conversion is rejected" "$CLI" bulk convert-secret --yes -- convert-secret.conf
+check_false "keyless conversion is rejected" "$CLI" bulk convert-secret --yes -- convert-secret.conf
 check "rejected conversion leaves HEAD unchanged" "$before" "$(git -C "$REPO" rev-parse HEAD)"
 check "rejected conversion leaves plaintext out of Git" "0" "$(git -C "$REPO" grep -F -c 'secret-conversion-payload' HEAD 2>/dev/null || echo 0)"
 
 section "bulk untrack is atomic"
 before=$(git -C "$REPO" rev-parse HEAD)
 check_false "mixed user and shipped entries are rejected" "$CLI" bulk untrack --yes -- alpha.conf hypr/input.lua
-check "rejected untrack leaves list unchanged" "2" "$(grep -Ec 'alpha.conf|beta.conf' "$REPO/.replicant-track")"
+check "rejected untrack leaves list unchanged" "2" "$(jq '[keys[] | select(. == "alpha.conf" or . == "beta.conf")] | length' "$REPO/.replicant/entries.json")"
 check_true "user entries untrack together" "$CLI" bulk untrack --yes -- alpha.conf beta.conf
 check "untrack creates one commit" "1" "$(git -C "$REPO" log --format=%s "$before"..HEAD | grep -c '^bulk: untrack 2 entries$')"
 

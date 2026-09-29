@@ -470,8 +470,7 @@ tx_shape_finish() {
 # entries record, the vault index and encrypted blobs. One list so the shape
 # transactions in scopes, track and history cannot drift apart.
 tx_shape_policy_paths() {
-  printf '%s\n' .replicant-track .replicant-sync .replicant-profiles \
-    .replicant/entries.json vault/index.age vault/blobs
+  printf '%s\n' .replicant/entries.json vault/index.age vault/blobs
 }
 
 # core_shape_transact <msg> <scope> <relay> [relay-args...] -- <paths...>:

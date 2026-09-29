@@ -12,9 +12,9 @@
 # one person's Claude hooks, their audit script and their fingerprint-reader
 # unit — which every installer then saw as a screenful of "missing" rows for
 # files they had never heard of, while none of their OWN files were tracked at
-# all. Anything personal now lives in the user's list (see REMOVED_TRACK_FILE
-# below), inside their own repo, where it travels between their machines
-# without being published to everybody else's.
+# all. Anything personal lives in the user's own entries, inside their own
+# repo, where it travels between their machines without being published to
+# everybody else's.
 #
 # A trailing slash makes an entry a DIRECTORY (see is_dir_entry). Use it only
 # for a tree of hand-written config; anything that is really a git clone
@@ -79,44 +79,11 @@ SECRETS_MANIFEST=(
   "$HOME/.config/environment.d/60-secrets.conf:env/60-secrets.conf"
 )
 
-# Entries that an earlier release shipped and this one does not, because they
-# are not what every Omarchy machine has. If the repo holds a copy, the entry
-# moves into the user's own list once. Without that step, the prune pass would
-# delete the copy on the next save. A machine that only has the file does not
-# start to track it.
-RETIRED_SHIPPED=(
-  "$HOME/.claude/.mcp.json:claude/mcp.json"
-)
-
-migrate_retired_shipped() {
-  [[ -f "$REMOVED_TRACK_FILE" ]] || return 0
-  local entry src rel moved=0
-  for entry in "${RETIRED_SHIPPED[@]}"; do
-    src="${entry%%:*}"; rel="${entry##*:}"
-    is_user_entry "$rel" && continue
-    [[ -e "$(repo_path_for "$rel")" ]] || continue
-    track_line_for "$src" "$rel" config >> "$REMOVED_TRACK_FILE"
-    moved=$((moved + 1))
-  done
-  (( moved )) || return 0
-  load_user_manifest
-  echo "  · $(plural "$moved" entry entries) that the plugin no longer ships moved into your .replicant-track" >&2
-}
-
 # ─── THE USER'S OWN LIST ────────────────────────────────────────────────────
 # Everything above ships with the plugin. Everything a particular person wants
-# backed up on top of it lives here, in a file inside THEIR repo — the same
-# place, and for the same reason, as .replicant-sync and .replicant-profiles:
-# "back up my audit script" is a decision about the setup, not about one
-# machine, so making it once must be enough for both.
-#
-# Format, one entry per line:
-#
-#   ~/.local/bin/my-script                  a file, name in the repo derived
-#   ~/.config/foo/bar.conf = foo/bar.conf   a file, name in the repo given
-#   ~/.config/nvim/                         a directory (trailing slash)
-#   secret ~/Projects/app/.env                   stored 600, contents never rendered
-#
+# backed up on top of it lives in their own entries in the repo: "back up my
+# audit script" is a decision about the setup, not about one machine, so
+# making it once is enough for both.
 
 # ─── WHICH VERSION LAST WROTE THIS REPO ─────────────────────────────────────
 # Two machines share one repo and they are not upgraded on the same day. The
@@ -130,12 +97,13 @@ migrate_retired_shipped() {
 # does not get to decide that somebody else's are stale.
 #
 # This can only protect against versions that know about the file, which means
-# 0.7.0 onwards. There is no way to teach an already-released client to check —
-# the honest answer for a 0.6 machine is to upgrade it, and doctor says so.
-REMOVED_VERSION_FILE="$REPO_DIR/.replicant-version"
+# clients that write the version record. An already-released client that does
+# not check has no protection — the honest answer is to upgrade it, and doctor
+# says so.
+REPO_VERSION_FILE="$REPO_DIR/.replicant-version"
 
 running_version() { jq -r '.version // "0"' "$PLUGIN_DIR/manifest.json" 2>/dev/null || echo 0; }
-repo_written_by() { [[ -f "$REMOVED_VERSION_FILE" ]] && head -n1 "$REMOVED_VERSION_FILE" | tr -d '[:space:]' || echo ""; }
+repo_written_by() { [[ -f "$REPO_VERSION_FILE" ]] && head -n1 "$REPO_VERSION_FILE" | tr -d '[:space:]' || echo ""; }
 
 # version_lt <a> <b> — true when a is strictly older than b.
 version_lt() {
@@ -150,7 +118,7 @@ record_repo_version() {
   running=$(running_version); seen=$(repo_written_by)
   [[ -n "$running" && "$running" != "0" ]] || return 0
   if [[ -z "$seen" ]] || version_lt "$seen" "$running"; then
-    printf '%s\n' "$running" > "$REMOVED_VERSION_FILE"
+    printf '%s\n' "$running" > "$REPO_VERSION_FILE"
   fi
 }
 
@@ -202,32 +170,11 @@ derive_rel() {
   printf '%s%s\n' "$rel" "$slash"
 }
 
-# parse_track_line <line> -> "kind<TAB>src<TAB>rel", or nothing if unusable.
-parse_track_line() {
-  local line="$1" kind=config src rel
-  line="${line#"${line%%[![:space:]]*}"}"
-  if [[ "$line" == secret[[:space:]]* ]]; then kind=secret; line="${line#secret}"; fi
-  if [[ "$line" == *=* ]]; then src="${line%%=*}"; rel="${line#*=}"; else src="$line"; rel=""; fi
-  # Trim, but only at the ends: a path may legitimately contain a space.
-  src="${src#"${src%%[![:space:]]*}"}"; src="${src%"${src##*[![:space:]]}"}"
-  rel="${rel#"${rel%%[![:space:]]*}"}"; rel="${rel%"${rel##*[![:space:]]}"}"
-  [[ -n "$src" ]] || return 0
-  case "$src" in "~/"*) src="$HOME/${src#\~/}" ;; "\$HOME/"*) src="$HOME/${src#\$HOME/}" ;; esac
-  [[ "$src" == /* ]] || return 0
-  [[ -n "$rel" ]] || rel=$(derive_rel "$src")
-  # A directory on one side is a directory on both, whichever side said so.
-  if [[ "$src" == */ || "$rel" == */ ]]; then src="${src%/}/"; rel="${rel%/}/"; fi
-  printf '%s\t%s\t%s\n' "$kind" "$src" "$rel"
-}
-
 rebuild_tracked() {
   TRACKED=("${MANIFEST[@]}" ${USER_MANIFEST[@]+"${USER_MANIFEST[@]}"} ${AUTO_MANIFEST[@]+"${AUTO_MANIFEST[@]}"})
   TRACKED_SECRETS=("${SECRETS_MANIFEST[@]}" ${USER_SECRETS[@]+"${USER_SECRETS[@]}"})
 }
 
-# A repo written before 0.7 has no .replicant-track, but its config/ is full of
-# upgrade would see those files as untracked and core_backup's prune pass would
-# delete every one of them from the repo.
 load_user_manifest() {
   USER_MANIFEST=(); USER_SECRETS=()
   if repo_is_ready; then load_user_entries || return 1; fi

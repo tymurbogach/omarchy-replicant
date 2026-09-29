@@ -19,7 +19,7 @@ core_backup() {
   # go. Called here and not from ensure_repo_layout, which core_profile_set
   # calls itself.
   ensure_profile_recorded
-  echo "→ Copying configuration (fixed MANIFEST, savegame)" >&2
+  echo "→ Copying configuration (fixed MANIFEST)" >&2
   copied=0; missing=0
   local skipped=0 held=0
   local -a held_rels=()
@@ -38,7 +38,7 @@ core_backup() {
     rscope="${rf[4]}"; rlive="${rf[5]}"; rrepo="${rf[6]}"
     src="$rlive"
     dst="$rrepo"
-    # Switched off in .replicant-sync: not copied from here, and (see the
+    # Switched off: not copied from here, and (see the
     # prune pass below) whatever the repo already holds is left alone.
     if [[ "$rscope" == "off" ]]; then
       skipped=$((skipped + 1))
@@ -192,12 +192,12 @@ core_backup() {
     echo "  ✗ secret scanner not found, blocking the backup" >&2
     return 1
   fi
-  # Only when `backup` is the whole of what the user asked for. savegame calls
+  # Only when `backup` is the whole of what the user asked for. A save calls
   # this on its way to committing, and the advice landed one line above its own
   # commit — the panel's log pane showed "commit with a why" immediately
   # followed by the commit. Telling someone to do the thing you are about to do
   # for them reads as if neither of you did it.
-  if [[ "${1:-}" != "--for-savegame" ]]; then
+  if [[ "${1:-}" != "--for-save" ]]; then
     echo "Done. Review with 'git -C $REPO_DIR diff' and commit with a why." >&2
   fi
 }

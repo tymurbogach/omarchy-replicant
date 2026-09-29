@@ -4,47 +4,7 @@
 # functions and data and runs nothing. Other modules read its data.
 
 # ─── The user's list: writing it ────────────────────────────────────────────
-# Refused on version 3: user entries live in .replicant/entries.json and the
-# vault index, and no track file is ever created there.
-write_track_file() {
-  if repo_is_ready; then
-    echo "track: entries are stored in .replicant/entries.json" >&2
-    return 1
-  fi
-  local -a keep=("$@")
-  {
-    echo "# Files and directories YOU want backed up, on top of the ones the"
-    echo "# plugin ships with. One per line:"
-    echo "#"
-    echo "#   ~/.local/bin/my-script                  name in the repo derived"
-    echo "#   ~/.config/foo/bar.conf = foo/bar.conf   name in the repo given"
-    echo "#   ~/.config/nvim/                         a directory (trailing slash)"
-    echo "#   secret ~/Projects/app/.env                   stored 600, never rendered"
-    echo "#"
-    echo "# This file lives in the repo, so both your machines honour it."
-    echo "# Written by the panel and by 'omarchy-replicant track'; safe to edit."
-    print_lines "${keep[@]}"
-  } > "$REMOVED_TRACK_FILE"
-}
-
-# Same contract as ensure_scope_file, for the same reason: load_user_manifest
-# has a read-only fallback so nothing stops being tracked the moment you
-# upgrade, but a read-modify-write against a list the fallback invented would
-# no-op: user entries live in .replicant/entries.json and the vault index, and
-# no track file is ever created.
-ensure_track_file() {
-  return 0
-}
-
-# One line of .replicant-track, written the way a human would: the derived name
-# is left implicit, so the file only ever states what it has to.
-track_line_for() {
-  local src="$1" rel="$2" kind="${3:-config}" pretty="${1/#$HOME/\~}" line
-  line="$pretty"
-  [[ "$(derive_rel "$src")" == "$rel" ]] || line="$pretty = $rel"
-  [[ "$kind" == secret ]] && line="secret $line"
-  printf '%s\n' "$line"
-}
+# User entries live in .replicant/entries.json and the vault index.
 
 # core_track <path> [rel] [--secret] — add one path to the user's list.
 core_track() {
@@ -109,18 +69,7 @@ core_track() {
     (( n > 100 )) && echo "track: note — ${path/#$HOME/\~} holds $n files" >&2
   fi
 
-  ensure_track_file
-  if repo_is_ready; then
-    track_entry "$path" "$rel" "$kind" || return 1
-    load_user_manifest
-    briefcache_invalidate
-    echo "tracking ${path/#$HOME/\~} as $rel" >&2
-    return 0
-  fi
-  local -a keep=()
-  while IFS= read -r entry; do keep+=("$entry"); done < <(read_track_lines)
-  keep+=("$(track_line_for "$path" "$rel" "$kind")")
-  write_track_file ${keep[@]+"${keep[@]}"}
+  track_entry "$path" "$rel" "$kind" || return 1
   load_user_manifest
   briefcache_invalidate
   echo "tracking ${path/#$HOME/\~} as $rel" >&2
@@ -154,7 +103,7 @@ track_entry() {
 # row (and the copy the repo holds) instead of making both disappear.
 core_untrack() {
   require_ready_schema || return 1
-  local rel="$1" entry k line was_secret=false
+  local rel="$1" entry was_secret=false
   [[ -n "$rel" ]] || { echo "untrack: usage: untrack <id>" >&2; return 1; }
   if ! is_user_entry "$rel"; then
     for entry in "${MANIFEST[@]}" "${SECRETS_MANIFEST[@]}"; do
@@ -164,34 +113,11 @@ core_untrack() {
     done
     echo "untrack: $rel is not in your list" >&2; return 1
   fi
-  # Before the list surgery below: untracking removes the very entry that
-  # makes is_secret_rel true, so the vault branch after it would never fire.
+  # Untracking removes the very entry that makes is_secret_rel true, so the
+  # vault branch after it would never fire. Decide before the removal.
   is_secret_rel "$rel" && was_secret=true
-  if repo_is_ready; then
-    untrack_entry "$rel" "$was_secret" || return 1
-    load_user_manifest
-    briefcache_invalidate
-    echo "$rel is no longer tracked (the copy in your repo was removed too)" >&2
-    return 0
-  fi
-  ensure_track_file
-  local -a keep=()
-  while IFS= read -r line; do
-    IFS=$'\t' read -r k _ entry < <(parse_track_line "$line")
-    [[ "${entry:-}" == "$rel" ]] || keep+=("$line")
-  done < <(read_track_lines)
-  write_track_file ${keep[@]+"${keep[@]}"}
+  untrack_entry "$rel" "$was_secret" || return 1
   load_user_manifest
-  # The repo copy goes with it — core_backup's prune pass would remove it on
-  # the next save anyway, and leaving it until then means the panel shows a row
-  # for a file nothing tracks. Encrypted secrets live in the vault instead of
-  # next to the configs, so they leave through it.
-  if [[ "$was_secret" == true ]] && repo_has_vault; then
-    vault_drop_entry "$rel" || return 1
-  else
-    local copy; copy=$(repo_copy_for_rel "$rel")
-    [[ -e "$copy" ]] && rm -rf -- "$copy"
-  fi
   briefcache_invalidate
   echo "$rel is no longer tracked (the copy in your repo was removed too)" >&2
 }
@@ -268,7 +194,7 @@ core_track_transact() {
   candidate=$(tx_shape_commit "$msg" "$txdir" -- "${store_paths[@]}") || return 1
   [[ -n "$candidate" ]] || return 0
   tx_shape_finish "$txdir" || return 1
-  echo "saved with the next 'omarchy-replicant save --auto'" >&2
+  echo "saved with the next 'omarchy-replicant save --all --auto'" >&2
   return 0
 }
 

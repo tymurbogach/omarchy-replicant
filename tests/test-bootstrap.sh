@@ -68,25 +68,20 @@ no_staging_left() {
 section "missing and schema-less repositories are distinguished"
 check "a directory without git is missing" "missing" "$(repo_state)"
 git init -q -b main "$REPO_DIR" 2>/dev/null
-check "a git repo without a schema marker is rejected" "unknown" "$(repo_state)"
-check "…and its data version is unknown" "unknown" "$(repo_data_version)"
+check "a git repo without a schema marker is invalid" "invalid" "$(repo_state)"
 rm -rf -- "$REPO_DIR"
 
-section "init without existing state builds v3 atomically"
+section "init without existing state builds atomically"
 export OMARCHY_REPLICANT_HOME="$TMP/replicant"
 # shellcheck source=/dev/null
 source "$CORE" 2>/dev/null
 set +e +u
-unset USER_TRACK_FILE
 rc=0; ( set -u; core_init ) || rc=$?
 check "init succeeds on a missing repo" "0" "$rc"
-check "the schema marker says version 3" "3" \
-  "$(jq -r .dataVersion "$REPO_DIR/.replicant/schema.json" 2>/dev/null)"
-check "…and names the v2 secret format" "age-pq-v2" \
-  "$(jq -r .secretFormat "$REPO_DIR/.replicant/schema.json" 2>/dev/null)"
-check_false "no legacy track file in a fresh repo" test -f "$REPO_DIR/.replicant-track"
-check_false "no legacy sync file in a fresh repo" test -f "$REPO_DIR/.replicant-sync"
-check_false "no legacy profiles file in a fresh repo" test -f "$REPO_DIR/.replicant-profiles"
+check "the schema marker is exact" '{"format":"replicant"}' \
+  "$(cat "$REPO_DIR/.replicant/schema.json" 2>/dev/null)"
+check "the entries record starts empty" "{}" \
+  "$(jq -c . "$REPO_DIR/.replicant/entries.json" 2>/dev/null)"
 check_true "…with one initial commit" git -C "$REPO_DIR" rev-parse HEAD
 check_true "…and no staging directory left behind" no_staging_left
 
@@ -107,8 +102,8 @@ rm -rf -- "$REPO_DIR"
 make_gh "$TMP/gh-missing" missing
 out=$(PATH="$TMP/gh-missing:$PATH" repo_create "testrepo" 0 https 2>&1); rc=$?
 check "create succeeds against a missing remote" "0" "$rc"
-check "the created repo is v3" "3" \
-  "$(jq -r .dataVersion "$REPO_DIR/.replicant/schema.json" 2>/dev/null)"
+check "the created repo carries the exact marker" '{"format":"replicant"}' \
+  "$(cat "$REPO_DIR/.replicant/schema.json" 2>/dev/null)"
 check "…pointing at the private https remote" \
   "https://github.com/testuser/testrepo.git" \
   "$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null)"
@@ -164,22 +159,24 @@ check_contains "…keeping the retry command" "push" "$out"
 check_true "…keeping the local commit" git -C "$REPO_DIR" rev-parse HEAD
 check_true "…and no staging directory left behind" no_staging_left
 
-section "clone activates a v3 repository atomically"
+section "clone activates a repository atomically"
 v3src="$TMP/v3src"
 git init -q -b main "$v3src" 2>/dev/null
 git -C "$v3src" config user.name Tests 2>/dev/null
 git -C "$v3src" config user.email tests@example.com 2>/dev/null
 mkdir -p "$v3src/.replicant/machines" "$v3src/vault/blobs"
-jq -nc '{dataVersion: 3, secretFormat: "age-pq-v2"}' > "$v3src/.replicant/schema.json"
+printf '{"format":"replicant"}\n' > "$v3src/.replicant/schema.json"
 printf '{}\n' > "$v3src/.replicant/entries.json"
+: > "$v3src/vault/blobs/.keep"
+: > "$v3src/.replicant/machines/.keep"
 git -C "$v3src" add -A 2>/dev/null
-git -C "$v3src" commit -qm v3 2>/dev/null
+git -C "$v3src" commit -qm ready 2>/dev/null
 rm -rf -- "$REPO_DIR"
 out=$(repo_clone "$v3src" 2>&1); rc=$?
-check "clone of a v3 repo succeeds" "0" "$(if (( rc != 0 )); then echo 1; else echo 0; fi)"
-check "…activating it as v3" "v3" "$(repo_state)"
-check "…with the schema marker intact" "3" \
-  "$(jq -r .dataVersion "$REPO_DIR/.replicant/schema.json" 2>/dev/null)"
+check "clone of a ready repo succeeds" "0" "$(if (( rc != 0 )); then echo 1; else echo 0; fi)"
+check "…activating it as ready" "ready" "$(repo_state)"
+check "…with the schema marker intact" '{"format":"replicant"}' \
+  "$(cat "$REPO_DIR/.replicant/schema.json" 2>/dev/null)"
 check "…with the same head" \
   "$(git -C "$v3src" rev-parse HEAD 2>/dev/null)" \
   "$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)"
@@ -187,7 +184,7 @@ check_true "…and no staging directory left behind" no_staging_left
 
 section "failed clone leaves no partial repository"
 rm -rf -- "$REPO_DIR"
-out=$(REPLICANT_FAIL_BOOTSTRAP_AT=validate repo_clone "$legacy_src" 2>&1); rc=$?
+out=$(REPLICANT_FAIL_BOOTSTRAP_AT=validate repo_clone "$v3src" 2>&1); rc=$?
 check "injected failure before clone validation fails" "1" "$(if (( rc != 0 )); then echo 1; else echo 0; fi)"
 check_false "…leaving no repo directory" test -e "$REPO_DIR"
 check_true "…and no staging directory" no_staging_left

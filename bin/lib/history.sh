@@ -80,15 +80,15 @@ core_deleted() {
 }
 
 # core_recover <sha> <dry>: undo the deletions of one commit. The copies come
-# back into the repo from the commit before it, the v3 entries that commit
+# back into the repo from the commit before it, the entries that commit
 # removed come back too, and each entry is then restored onto this machine
 # with a .bak.<epoch> of whatever it replaces. The caller commits.
 # RECOVERED holds the repo paths that came back, for that commit.
 RECOVERED=()
-# recover_v3_entries <sha>: reinsert the .replicant/entries.json rows that
+# recover_entries <sha>: reinsert the .replicant/entries.json rows that
 # <sha> removed. An untrack removes the row and the copy in one commit, and
 # the copy is useless without it: the next save would prune it again.
-recover_v3_entries() {
+recover_entries() {
   local sha="$1" parent child removed id obj current tmp
   parent=$(git -C "$REPO_DIR" show "$sha^:.replicant/entries.json" 2>/dev/null || printf '{}\n')
   child=$(git -C "$REPO_DIR" show "$sha:.replicant/entries.json" 2>/dev/null || printf '{}\n')
@@ -119,11 +119,11 @@ recover_v3_entries() {
   fi
   return 0
 }
-# recover_v3_vault <sha>: merge the vault secrets that <sha> removed back
+# recover_vault <sha>: merge the vault secrets that <sha> removed back
 # into the current index and restore their blob files. Needs the key: without
 # it the index does not decrypt, and the copies stay in the repo only.
-recover_v3_vault() {
-  local sha="$1" parent_age child_age pdir cdir
+recover_vault() {
+  local sha="$1" pdir cdir
   vault_identity_ok >/dev/null 2>&1 || {
     echo "  · vault is locked — secrets stay in the repo only until the key is imported" >&2
     return 0
@@ -184,23 +184,11 @@ core_recover() {
   done < <(deleted_rows)
   (( ${#files[@]} )) || { echo "recover: ${sha:0:7} deleted nothing that is still missing" >&2; return 1; }
 
-  # The lines of .replicant-track that the commit removed. An untrack removes
-  # the line and the copy in one commit, and the copy is useless without it:
-  # the next save would prune it again.
-  local -a lines=()
-  local line
-  while IFS= read -r line; do
-    [[ -n "$line" ]] && lines+=("$line")
-  done < <(comm -23 \
-             <(git -C "$REPO_DIR" show "$sha^:.replicant-track" 2>/dev/null | sed -e 's/#.*//' -e '/^[[:space:]]*$/d' | sort -u) \
-             <(git -C "$REPO_DIR" show "$sha:.replicant-track" 2>/dev/null | sed -e 's/#.*//' -e '/^[[:space:]]*$/d' | sort -u))
-
   echo "From ${sha:0:7} ($(git -C "$REPO_DIR" log -1 --format=%s "$sha" 2>/dev/null)):" >&2
   for p in "${files[@]}"; do echo "  + $p" >&2; done
-  for line in ${lines[@]+"${lines[@]}"}; do echo "  + tracked again: $line" >&2; done
   if (( dry )); then
-    # Preview the v3 rows this commit removed, without touching the worktree.
-    # On --apply the real recover_v3_entries below prints the same lines once.
+    # Preview the rows this commit removed, without touching the worktree.
+    # On --apply the real recover_entries below prints the same lines once.
     if repo_is_ready 2>/dev/null; then
       local _pe _ce _rid
       _pe=$(git -C "$REPO_DIR" show "$sha^:.replicant/entries.json" 2>/dev/null || printf '{}\n')
@@ -214,22 +202,10 @@ core_recover() {
   fi
   require_ready_schema || return 1
 
-  if (( ${#lines[@]} )); then
-    ensure_track_file
-    local -a keep=()
-    while IFS= read -r line; do keep+=("$line"); done < <(read_track_lines)
-    for line in "${lines[@]}"; do
-      printf '%s\n' ${keep[@]+"${keep[@]}"} | grep -qxF -- "$line" || keep+=("$line")
-    done
-    write_track_file ${keep[@]+"${keep[@]}"}
-    load_user_manifest
-  fi
-  # Version 3: the row in entries.json and the vault secret come back too,
-  # or the next save prunes the copy again.
-  if repo_is_ready; then
-    recover_v3_entries "$sha" || return 1
-    recover_v3_vault "$sha" || return 1
-  fi
+  # The row in entries.json and the vault secret come back too, or the next
+  # save prunes the copy again.
+  recover_entries "$sha" || return 1
+  recover_vault "$sha" || return 1
   git -C "$REPO_DIR" checkout -q "$sha^" -- "${files[@]}" || { echo "recover: git could not restore the copies" >&2; return 1; }
   RECOVERED=("${files[@]}")
 

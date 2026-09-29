@@ -83,8 +83,8 @@ omarchy-replicant policy set --scope off -- hypr/input.lua hypr/hyprlock.conf
 
 ### Status
 
-Full JSON status uses one `entries` array and publishes `schema_version: 3`.
-Replicant accepts only a valid v3 repository with an encrypted vault.
+Full JSON status uses one `entries` array.
+Replicant accepts only a valid repository with an encrypted vault.
 
 ```bash
 omarchy-replicant status --json

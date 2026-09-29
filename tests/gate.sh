@@ -140,41 +140,40 @@ gate_g0() {
 }
 
 gate_g1() {
-  section "G1 v3 schema gate"
+  section "G1 schema gate"
   "$HERE/coverage-check.sh" >/dev/null 2>&1 && ok "coverage manifest is complete" || bad "coverage manifest is incomplete"
-  if grep -q 'SCHEMA_VERSION=3' "$ROOT/bin/lib/schema.sh" 2>/dev/null; then ok "v3 schema is canonical"; else bad "v3 schema is not canonical (expected after G1)"; fi
-  if grep -q 'schema_version:$schema_version' "$ROOT/bin/lib/status.sh" 2>/dev/null; then ok "status payload follows the schema version"; else bad "status payload hardcodes a schema version"; fi
-  grep -q 'SCHEMA_FORMAT="age-pq-v2"' "$ROOT/bin/lib/schema.sh" 2>/dev/null && ok "secret format is age-pq-v2" || bad "secret format is not age-pq-v2"
-  [[ -f "$ROOT/bin/lib/legacy.sh" ]] && ok "legacy readers live in the migration-only module" || bad "bin/lib/legacy.sh is missing"
-  if "$HERE/test-v3schema.sh" >/dev/null 2>&1; then ok "v3 schema suite passes"; else bad "v3 schema suite fails"; fi
-  if "$HERE/test-schema.sh" >/dev/null 2>&1; then ok "legacy schema suite still passes"; else bad "legacy schema suite fails"; fi
+  if grep -q 'keys == \["format"\] and .format == "replicant"' "$ROOT/bin/lib/schema.sh" 2>/dev/null; then ok "exact schema marker is canonical"; else bad "exact schema marker is missing from schema.sh"; fi
+  if grep -q 'validate_entries' "$ROOT/bin/lib/schema.sh" 2>/dev/null; then ok "entries validation exists"; else bad "entries validation is missing from schema.sh"; fi
+  if grep -q 'vault/blobs' "$ROOT/bin/lib/schema.sh" 2>/dev/null; then ok "vault layout is required"; else bad "vault layout is not required by schema.sh"; fi
+  if [[ ! -f "$ROOT/bin/lib/legacy.sh" && ! -f "$ROOT/bin/lib/migrate.sh" ]]; then ok "no legacy or migration modules remain"; else bad "a legacy or migration module remains"; fi
+  if "$HERE/test-schema.sh" >/dev/null 2>&1; then ok "schema suite passes"; else bad "schema suite fails"; fi
 }
 
 gate_g2() {
   section "G2 bootstrap gate"
   "$HERE/coverage-check.sh" >/dev/null 2>&1 && ok "coverage manifest is complete" || bad "coverage manifest is incomplete"
-  grep -q 'repo_state()' "$ROOT/bin/lib/schema.sh" 2>/dev/null && ok "missing and legacy repos are distinguished" || bad "repo_state is missing from schema.sh"
+  grep -q 'repo_state()' "$ROOT/bin/lib/schema.sh" 2>/dev/null && ok "missing and invalid repos are distinguished" || bad "repo_state is missing from schema.sh"
   grep -q 'bootstrap_fail_at' "$ROOT/bin/lib/repo.sh" 2>/dev/null && ok "failure injection points exist" || bad "bootstrap_fail_at is missing from repo.sh"
   grep -q 'mktemp -d.*replicant-init' "$ROOT/bin/lib/save.sh" 2>/dev/null && ok "init stages in a temp dir" || bad "init has no temp staging"
   grep -q 'mktemp -d.*replicant-clone' "$ROOT/bin/lib/repo.sh" 2>/dev/null && ok "clone stages in a temp dir" || bad "clone has no temp staging"
   if grep -q 'gh repo create "\$name" --private' "$ROOT/bin/lib/repo.sh" 2>/dev/null; then ok "create requests private visibility"; else bad "create does not request --private"; fi
   if grep -qE '^[[:space:]]*(command gh|gh) repo edit' "$ROOT/bin/lib/repo.sh" 2>/dev/null; then bad "bootstrap changes visibility automatically"; else ok "bootstrap never changes visibility automatically"; fi
-  grep -q 'migration-only' "$ROOT/bin/lib/repo.sh" 2>/dev/null && ok "clone names legacy repos migration-only" || bad "clone has no migration-only message"
   grep -q 'gh auth login' "$ROOT/bin/lib/repo.sh" 2>/dev/null && ok "remote failures print recovery commands" || bad "no recovery commands after remote failures"
   if "$HERE/test-bootstrap.sh" >/dev/null 2>&1; then ok "bootstrap suite passes"; else bad "bootstrap suite fails"; fi
-  if "$HERE/test-v3schema.sh" >/dev/null 2>&1; then ok "v3 schema suite still passes"; else bad "v3 schema suite fails"; fi
 }
 gate_g3() {
-  section "G3 migration gate"
+  section "G3 single-format gate"
   "$HERE/coverage-check.sh" >/dev/null 2>&1 && ok "coverage manifest is complete" || bad "coverage manifest is incomplete"
-  grep -q 'core_migrate_v3()' "$ROOT/bin/lib/migrate.sh" 2>/dev/null && ok "migrate-v3 engine exists" || bad "core_migrate_v3 is missing"
-  grep -q 'SCHEMA_VERSION.*SCHEMA_FORMAT\|dataVersion: \$v, secretFormat: \$f' "$ROOT/bin/lib/migrate.sh" 2>/dev/null && ok "migration stages the v3 schema" || bad "migration does not stage the v3 schema"
-  grep -q 'cannot reconstruct a path' "$ROOT/bin/lib/migrate.sh" 2>/dev/null && ok "unknown secret paths refuse loudly" || bad "unknown secret paths are not refused"
-  grep -q 'migration-only' "$ROOT/bin/lib/repo.sh" 2>/dev/null && ok "clone still names legacy repos migration-only" || bad "clone lost its migration-only message"
-  grep -q 'journal.json' "$ROOT/bin/lib/migrate.sh" 2>/dev/null && ok "migration keeps a recovery journal" || bad "migration has no recovery journal"
-  if "$ROOT/bin/omarchy-replicant" migrate-v2 2>&1 | grep -q 'use migrate-v3'; then ok "migrate-v2 names migrate-v3"; else bad "migrate-v2 does not name migrate-v3"; fi
-  if "$HERE/test-migrate-v3.sh" >/dev/null 2>&1; then ok "migration suite passes"; else bad "migration suite fails"; fi
-  if "$HERE/test-migration.sh" >/dev/null 2>&1; then ok "migration transition suite passes"; else bad "migration transition suite fails"; fi
+  if [[ -z "$(grep -rnE 'replicant-track|replicant-sync|replicant-profiles|savegame|migrate|legacy|dataVersion|secretFormat|LEGACY_|REMOVED_' "$ROOT/bin/" 2>/dev/null || true)" ]]; then
+    ok "bin/ names no retired format"
+  else
+    bad "bin/ still names a retired format"
+  fi
+  if [[ -z "$(grep -rnE 'replicant-track|replicant-sync|replicant-profiles|savegame|migrate-v|migrate\.sh|legacy\.sh|legacy_|dataVersion|secretFormat|LEGACY_|REMOVED_' "$ROOT/tests/test-cli.sh" "$ROOT/tests/test-bulk.sh" "$ROOT/tests/test-journey.sh" 2>/dev/null || true)" ]]; then
+    ok "core suites name no retired format"
+  else
+    bad "a core suite still names a retired format"
+  fi
 }
 gate_g4() {
   section "G4 transaction gate"
@@ -242,7 +241,7 @@ gate_g5() {
     || bad "settings do not report exact retry commands"
   if "$HERE/test-state.sh" >/dev/null 2>&1; then ok "state parity suite passes"; else bad "state parity suite fails"; fi
   if "$HERE/test-bulk.sh" >/dev/null 2>&1; then ok "bulk validation suite passes"; else bad "bulk validation suite fails"; fi
-  if "$HERE/test-bulk-v3.sh" >/dev/null 2>&1; then ok "v3 bulk secret suite passes"; else bad "v3 bulk secret suite fails"; fi
+  if "$HERE/test-bulk-vault.sh" >/dev/null 2>&1; then ok "bulk vault suite passes"; else bad "bulk vault suite fails"; fi
   if "$HERE/test-settings.sh" >/dev/null 2>&1; then ok "settings unit suite passes"; else bad "settings unit suite fails"; fi
   if "$HERE/test-settings-save.sh" >/dev/null 2>&1; then ok "settings persistence suite passes"; else bad "settings persistence suite fails"; fi
 }
@@ -352,14 +351,14 @@ gate_g7() {
 gate_g8() {
   section "G8 release gate"
   "$HERE/coverage-check.sh" >/dev/null 2>&1 && ok "coverage manifest is complete" || bad "coverage manifest is incomplete"
-  [[ "$(jq -r .version "$ROOT/manifest.json" 2>/dev/null)" == "0.14.0" ]] && ok "plugin manifest is 0.14.0" || bad "plugin manifest is not 0.14.0"
+  [[ "$(jq -r .version "$ROOT/manifest.json" 2>/dev/null)" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && ok "plugin manifest carries a release version" || bad "plugin manifest has no release version"
   if [[ -z "$(git -C "$ROOT" status --porcelain | grep -E '\.log$|\.tmp$|baseline\.txt$' || true)" ]]; then
     ok "no stray test artifacts in the working tree"
   else
     bad "stray test artifacts remain"
   fi
   if "$HERE/test-g8.sh" >/dev/null 2>&1; then ok "architecture and documentation suite passes"; else bad "architecture and documentation suite fails"; fi
-  if "$HERE/test-migrate-v3.sh" >/dev/null 2>&1; then ok "migration suite still passes"; else bad "migration suite fails"; fi
+  if "$HERE/test-bulk-vault.sh" >/dev/null 2>&1; then ok "bulk vault suite still passes"; else bad "bulk vault suite fails"; fi
   if "$HERE/test-transaction.sh" >/dev/null 2>&1; then ok "transaction suite still passes"; else bad "transaction suite fails"; fi
 }
 

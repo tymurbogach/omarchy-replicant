@@ -1,8 +1,7 @@
 #!/bin/bash
 # The unified entry registry: every source that names an entry resolves to one
-# row with eight fields, and on version 1 it holds exactly what the tracked
-# lists hold. Everything runs against a fake $HOME and a throwaway repo, the
-# way test-core.sh does.
+# row with eight fields. Everything runs against a fake $HOME and a throwaway
+# repo, the way test-core.sh does.
 set -uo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,8 +25,8 @@ printf '{"id":"io.example.demoifact","name":"Demoifact"}\n' \
   > "$HOME/.config/omarchy/plugins/demoifact/manifest.json"
 printf '{"enabled":true}\n' > "$HOME/.config/omarchy/demoifact.json"
 
-# Pin version 1: a repo with history keeps what it has, so initializing git
-# before the first backup means no v2 skeleton is ever written.
+# A repo with history keeps what it has, so initializing git before the first
+# backup means no skeleton is ever written.
 mkdir -p "$OMARCHY_REPLICANT_HOME/repo"
 git -C "$OMARCHY_REPLICANT_HOME/repo" init -q -b main 2>/dev/null
 
@@ -39,7 +38,7 @@ field() { registry_field "$2" "$1"; }
 
 section "a shipped entry resolves all eight fields"
 core_backup >/dev/null 2>&1
-check_true "the registry builds on v1" registry_build
+check_true "the registry builds" registry_build
 row=$(registry_row_for hypr/input.lua)
 check "kind" "config" "$(field 2 "$row")"
 check "source" "manifest" "$(field 3 "$row")"
@@ -47,13 +46,13 @@ check "category" "hyprland" "$(field 4 "$row")"
 check "scope" "shared" "$(field 5 "$row")"
 check "live path" "$HOME/.config/hypr/input.lua" "$(field 6 "$row")"
 check "repo path" "$CONFIG_DIR/hypr/input.lua" "$(field 7 "$row")"
-check "no blob on v1" "" "$(field 8 "$row")"
-check "not locked on v1" "false" "$(field 9 "$row")"
+check "no blob without a key" "" "$(field 8 "$row")"
+check "not locked without a key" "false" "$(field 9 "$row")"
 check "a directory entry is a dir" "dir" \
   "$(field 2 "$(registry_row_for nvim/)")"
 check "a shipped secret is a secret" "secret" \
   "$(field 2 "$(registry_row_for env/60-secrets.conf)")"
-check "…kept as plaintext on v1" "$SECRETS_DIR/env/60-secrets.conf" \
+check "…kept as plaintext without a key" "$SECRETS_DIR/env/60-secrets.conf" \
   "$(field 7 "$(registry_row_for env/60-secrets.conf)")"
 
 section "user entries win over auto-discovered ones"
@@ -63,16 +62,16 @@ check "a tracked file reads user" "user" \
   "$(field 3 "$(registry_row_for notes.conf)")"
 check "a found plugin config reads auto" "auto" \
   "$(field 3 "$(registry_row_for plugins/demoifact.json)")"
-printf '%s = plugins/demoifact.json\n' "$HOME/.config/omarchy/demoifact.json" >> "$USER_TRACK_FILE"
+core_track "$HOME/.config/omarchy/demoifact.json" plugins/demoifact.json >/dev/null 2>&1
 load_user_manifest
 registry_build >/dev/null 2>&1
 check "one row for the contested id" "1" \
   "$(printf '%s\n' "${REGISTRY[@]}" | grep -c '^plugins/demoifact.json'$'\t' || true)"
 check "…and it is the user's" "user" \
   "$(field 3 "$(registry_row_for plugins/demoifact.json)")"
-# The contested line was only for the precedence check: drop it again so the
+# The contested entry was only for the precedence check: drop it again so the
 # parity below compares the natural tracked lists.
-sed -i '\|plugins/demoifact.json|d' "$USER_TRACK_FILE"
+core_untrack plugins/demoifact.json >/dev/null 2>&1
 load_user_manifest
 registry_build >/dev/null 2>&1
 check "the contest leaves one auto row" "auto" \
@@ -86,7 +85,7 @@ check "ids arrive sorted" "$(printf '%s\n' "${REGISTRY[@]}" | cut -f1)" \
 check "no id twice" "$(printf '%s\n' "${REGISTRY[@]}" | cut -f1 | wc -l)" \
   "$(printf '%s\n' "${REGISTRY[@]}" | cut -f1 | sort -u | wc -l)"
 
-section "parity: v1 holds exactly the shipped and tracked entries"
+section "parity: the registry holds exactly the shipped and tracked entries"
 pairs_now=$(printf '%s\n' "${REGISTRY[@]}" | awk -F'\t' '{print $6 ":" $1}' | LC_ALL=C sort)
 pairs_then=$(printf '%s\n' "${TRACKED[@]}" "${TRACKED_SECRETS[@]}" | LC_ALL=C sort)
 check "registry pairs match TRACKED pairs" "$pairs_then" "$pairs_now"
@@ -136,12 +135,12 @@ section "brief cache: metadata hit, byte-accurate full"
 # The bar polls brief once a minute; full stays authoritative and never reads
 # the cache. A content change that preserves size and mtime still hits the
 # brief cache (the documented limit) while full compares bytes and sees it.
-rm -f "$OMARCHY_REPLICANT_HOME/cache/state-v2.json" 2>/dev/null || true
+rm -f "$OMARCHY_REPLICANT_HOME/cache/state.json" 2>/dev/null || true
 core_status --json --brief --no-fetch >/dev/null 2>&1
 check "the first brief writes the cache" "true" \
-  "$([[ -f "$OMARCHY_REPLICANT_HOME/cache/state-v2.json" ]] && echo true || echo false)"
+  "$([[ -f "$OMARCHY_REPLICANT_HOME/cache/state.json" ]] && echo true || echo false)"
 check "the cache declares version 2" "2" \
-  "$(jq -r .version "$OMARCHY_REPLICANT_HOME/cache/state-v2.json" 2>/dev/null)"
+  "$(jq -r .version "$OMARCHY_REPLICANT_HOME/cache/state.json" 2>/dev/null)"
 brief_u1=$(core_status --json --brief --no-fetch 2>/dev/null | jq -r .unsaved)
 brief_u2=$(core_status --json --brief --no-fetch 2>/dev/null | jq -r .unsaved)
 check "a repeated brief agrees with itself" "$brief_u1" "$brief_u2"
@@ -164,37 +163,33 @@ touch "$HOME/.config/hypr/input.lua"
 check "a mtime change misses again" "0" \
   "$(core_status --json --brief --no-fetch 2>/dev/null | jq -r .unsaved)"
 check "the cache holds no secret plaintext" "" \
-  "$(grep -o 'state-fixture-alpha' "$OMARCHY_REPLICANT_HOME/cache/state-v2.json" 2>/dev/null || true)"
+  "$(grep -o 'state-fixture-alpha' "$OMARCHY_REPLICANT_HOME/cache/state.json" 2>/dev/null || true)"
 check "…and no secret variable assignment either" "" \
-  "$(grep -o 'FIRST=' "$OMARCHY_REPLICANT_HOME/cache/state-v2.json" 2>/dev/null || true)"
-printf 'oops' > "$OMARCHY_REPLICANT_HOME/cache/state-v2.json"
+  "$(grep -o 'FIRST=' "$OMARCHY_REPLICANT_HOME/cache/state.json" 2>/dev/null || true)"
+printf 'oops' > "$OMARCHY_REPLICANT_HOME/cache/state.json"
 check "a corrupt cache falls back to a correct brief" "0" \
   "$(core_status --json --brief --no-fetch 2>/dev/null | jq -r .unsaved)"
 check "…and heals the cache file" "2" \
-  "$(jq -r .version "$OMARCHY_REPLICANT_HOME/cache/state-v2.json" 2>/dev/null)"
+  "$(jq -r .version "$OMARCHY_REPLICANT_HOME/cache/state.json" 2>/dev/null)"
 core_backup >/dev/null 2>&1
 check "a save invalidates the cache" "false" \
-  "$([[ -f "$OMARCHY_REPLICANT_HOME/cache/state-v2.json" ]] && echo true || echo false)"
+  "$([[ -f "$OMARCHY_REPLICANT_HOME/cache/state.json" ]] && echo true || echo false)"
 core_status --json --brief --no-fetch >/dev/null 2>&1
 record_incoming hypr/input.lua
 check "an incoming record invalidates the cache" "false" \
-  "$([[ -f "$OMARCHY_REPLICANT_HOME/cache/state-v2.json" ]] && echo true || echo false)"
+  "$([[ -f "$OMARCHY_REPLICANT_HOME/cache/state.json" ]] && echo true || echo false)"
 record_incoming
 
-section "the repo migrates its records to version 3"
-# What migrate-v3 does in full in phase G3, in miniature here: the legacy
-# policy files leave, the version 3 marker lands, and this machine records
-# itself again. Later sections assert version 3 behavior on the clean repo.
-rm -f "$REPO_DIR/.replicant-track" "$REPO_DIR/.replicant-sync" "$REPO_DIR/.replicant-profiles"
-mkdir -p "$REPO_DIR/.replicant"
-jq -nc '{dataVersion: 3, secretFormat: "age-pq-v2"}' > "$REPO_DIR/.replicant/schema.json"
+section "the repo records itself in the single format"
+# Later sections assert override behavior on the clean repo.
+ensure_repo_layout >/dev/null 2>&1
 machine_metadata_write
-check "the repo is version 3 now" "3" "$(repo_data_version)"
-check "no legacy policy file remains" "" "$(for n in .replicant-track .replicant-sync .replicant-profiles; do [[ -e "$REPO_DIR/$n" ]] && echo "$n"; done)"
+check "the schema marker is exact" '{"format":"replicant"}' "$(cat "$REPO_DIR/.replicant/schema.json" 2>/dev/null)"
+check "the entries record exists" "true" "$([[ -f "$REPO_DIR/.replicant/entries.json" ]] && echo true || echo false)"
 
-section "a v3 override record wins over the shipped entry"
-ensure_v3_layout >/dev/null 2>&1
-check "the repo is version 3 now" "3" "$(repo_data_version)"
+section "an override record wins over the shipped entry"
+ensure_repo_layout >/dev/null 2>&1
+check "the schema marker is exact" '{"format":"replicant"}' "$(cat "$REPO_DIR/.replicant/schema.json" 2>/dev/null)"
 cat > "$REPO_DIR/.replicant/entries.json" <<EOF
 {"hypr/input.lua": {"path": "$HOME/.config/hypr/input.lua", "kind": "config", "scope": "profile", "source": "override"}}
 EOF
@@ -240,7 +235,7 @@ else
 fi
 
 section "parity: the same world dumps the committed fixtures"
-for world in v1 v3; do
+for world in plaintext vault; do
   parity_out="$TMP/parity-$world"
   bash "$HERE/parity-dump.sh" "$world" "$parity_out" >/dev/null 2>&1
   for f in "$HERE/fixtures/state-parity/$world"/*; do
@@ -258,7 +253,7 @@ section "one state model: full and brief counts agree"
 # A clean slate, so both payloads evaluate the same world.
 git -C "$REPO_DIR" add -A >/dev/null 2>&1
 git -C "$REPO_DIR" commit -qm "g5 clean slate" >/dev/null 2>&1 || true
-rm -f "$OMARCHY_REPLICANT_HOME/cache/state-v2.json" 2>/dev/null || true
+rm -f "$OMARCHY_REPLICANT_HOME/cache/state.json" 2>/dev/null || true
 full_status_g5=$(core_status --json --no-fetch 2>/dev/null)
 brief_status_g5=$(core_status --json --brief --no-fetch 2>/dev/null)
 for k in unsaved incoming locked missing; do

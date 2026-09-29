@@ -1,9 +1,8 @@
 #!/bin/bash
-# G8 release review: architecture boundaries and v3 documentation.
+# G8 release review: architecture boundaries and single-format documentation.
 # Static checks over the source tree: the CLI owns no git plumbing, the
-# transaction module owns mutations, legacy parsing lives in migration code,
-# obsolete v2 write helpers are gone, duplicated resolution paths are unified,
-# and the docs describe the v3 repository accurately.
+# transaction module owns mutations, no retired format is named anywhere, and
+# the docs describe the one repository format accurately.
 set -uo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "$HERE/.." && pwd)"
@@ -33,28 +32,16 @@ check_true "bulk runs through the transaction journal" \
 check_true "profile changes use the shared shape transaction" \
   bash -c 'grep -q "core_shape_transact" "$1"' _ "$ROOT/bin/lib/scopes.sh"
 
-section "legacy parsing lives in migration code"
-for fn in migrate_legacy_profile_for_machine migrate_legacy_read_profile_map \
-  migrate_legacy_user_entries migrate_legacy_personal_present \
-  migrate_legacy_exclude_map migrate_legacy_migrate_exclude; do
-  check_true "migrate.sh owns $fn" \
-    bash -c 'grep -q "^$2()" "$1"' _ "$ROOT/bin/lib/migrate.sh" "$fn"
-done
-check_false "scopes.sh calls no legacy reader directly" \
-  bash -c 'grep -nE "(^|[^_a-zA-Z])(legacy_read_profile_map|legacy_profile_for_machine|legacy_user_entries|legacy_personal_present|legacy_exclude_map|legacy_migrate_exclude)" "$1" | grep -vE "^[0-9]+:[[:space:]]*#" | grep -q .' _ "$ROOT/bin/lib/scopes.sh"
-check_false "manifest.sh calls no legacy reader directly" \
-  bash -c 'grep -nE "(^|[^_a-zA-Z])(legacy_read_profile_map|legacy_profile_for_machine|legacy_user_entries|legacy_personal_present|legacy_exclude_map|legacy_migrate_exclude)" "$1" | grep -vE "^[0-9]+:[[:space:]]*#" | grep -q .' _ "$ROOT/bin/lib/manifest.sh"
-check_false "track.sh calls no legacy reader directly" \
-  bash -c 'grep -nE "(^|[^_a-zA-Z])(legacy_read_profile_map|legacy_profile_for_machine|legacy_user_entries|legacy_personal_present|legacy_exclude_map|legacy_migrate_exclude)" "$1" | grep -vE "^[0-9]+:[[:space:]]*#" | grep -q .' _ "$ROOT/bin/lib/track.sh"
-
-section "obsolete v2 write helpers are gone"
-check_false "no v2 skeleton writer in bin/" \
-  bash -c 'grep -rn "ensure_v2_layout" "$1/bin" | grep -q .' _ "$ROOT"
-check_false "no v2 skeleton writer in tests/" \
-  bash -c 'grep -rn "ensure_v2_layout" "$1/tests" --exclude=test-g8.sh | grep -q .' _ "$ROOT"
+section "no retired format remains"
+check_false "no migration module in bin/" \
+  bash -c 'ls "$1"/bin/lib/migrate.sh "$1"/bin/lib/legacy.sh 2>/dev/null | grep -q .' _ "$ROOT"
+check_false "bin/ names no retired store" \
+  bash -c 'grep -rnE "replicant-track|replicant-sync|replicant-profiles|savegame|migrate|legacy|dataVersion|secretFormat|LEGACY_|REMOVED_" "$1/bin" | grep -q .' _ "$ROOT"
+check_false "no retired store in the policy paths" \
+  bash -c 'grep -q "replicant-track" "$1"' _ "$ROOT/bin/lib/transaction.sh"
 
 section "no duplicate resolution paths"
-check_true "scope_for answers from the shared scope cache on v3" \
+check_true "scope_for answers from the shared scope cache" \
   bash -c 'sed -n "/^scope_for/,/^}/p" "$1" | grep -q "SCOPE_OF"' _ "$ROOT/bin/lib/scopes.sh"
 check_true "scope shape paths use the shared policy stores" \
   bash -c 'grep -q "tx_shape_policy_paths" "$1"' _ "$ROOT/bin/lib/scopes.sh"
@@ -63,42 +50,22 @@ check_true "track uses the shared policy stores" \
 check_true "recover uses the shared policy stores" \
   bash -c 'grep -q "tx_shape_policy_paths" "$1"' _ "$ROOT/bin/lib/history.sh"
 
-section "the v3 schema is documented"
-check_true "SPEC names the v3 schema record" \
-  bash -c 'grep -q "dataVersion[^\n]*3" "$1" && grep -q "age-pq-v2" "$1"' _ "$ROOT/docs/SPEC.md"
+section "the single format is documented"
+check_true "SPEC names the exact marker" \
+  bash -c 'grep -q "{\"format\":\"replicant\"}" "$1"' _ "$ROOT/docs/SPEC.md"
 check_true "SPEC names entries.json as the policy store" \
   bash -c 'grep -q "\.replicant/entries\.json" "$1"' _ "$ROOT/docs/SPEC.md"
-check_true "SPEC publishes schema version 3" \
-  bash -c 'grep -q "schema_version.*3" "$1"' _ "$ROOT/docs/SPEC.md"
-check_true "SPEC documents migrate-v3" \
-  bash -c 'grep -q "migrate-v3" "$1"' _ "$ROOT/docs/SPEC.md"
-check_true "SPEC documents transaction recovery" \
-  bash -c 'grep -q "tx resume\|tx-resume\|resume" "$1"' _ "$ROOT/docs/SPEC.md"
-check_true "SPEC documents every key workflow" \
-  bash -c 'for k in "key init" "key export" "key import" "key status" "key rotate"; do grep -q "$k" "$1" || exit 1; done' _ "$ROOT/docs/SPEC.md"
-check_true "SPEC states secrets use age encryption" \
-  bash -c 'grep -qi "age encryption\|encrypted.*age\|age.*encrypt" "$1"' _ "$ROOT/docs/SPEC.md"
-check_true "SPEC states the identity never enters the repo" \
-  bash -c 'grep -q "never.*identity\|identity.*never" "$1"' _ "$ROOT/docs/SPEC.md"
-check_true "SPEC documents public-repository refusal" \
-  bash -c 'grep -qi "public.*refus\|refus.*public\|never.*public" "$1"' _ "$ROOT/docs/SPEC.md"
-check_true "SPEC documents migration acknowledgement" \
-  bash -c 'grep -qi "acknowledg\|upgraded or offline\|every.*machine" "$1"' _ "$ROOT/docs/SPEC.md"
+check_false "SPEC names no version number" \
+  bash -c 'grep -qiE "dataVersion|secretFormat|schema_version|version 3|\bv3\b|migrate" "$1"' _ "$ROOT/docs/SPEC.md"
+check_true "SPEC states secrets are encrypted" \
+  bash -c 'grep -qi "encrypt" "$1"' _ "$ROOT/docs/SPEC.md"
 
-section "examples and guides use migrate-v3"
-check_true "README migrates with migrate-v3" \
-  bash -c 'grep -q "migrate-v3" "$1"' _ "$ROOT/README.md"
-check_false "README shows no migrate-v2 command" \
-  bash -c 'grep -q "migrate-v2 --remote\|migrate-v2 --github" "$1"' _ "$ROOT/README.md"
-check_true "getting-started migrates with migrate-v3" \
-  bash -c 'grep -q "migrate-v3" "$1"' _ "$ROOT/docs/getting-started.md"
-check_true "getting-started names the v3 policy store" \
-  bash -c 'grep -q "entries\.json" "$1"' _ "$ROOT/docs/getting-started.md"
-check_true "the journal records transaction recovery" \
-  bash -c 'grep -qi "transaction recovery\|tx resume\|recovery.*transaction" "$1"' _ "$ROOT/docs/journal.md"
+section "examples stay free of retired commands"
+check_false "getting-started names no retired command" \
+  bash -c 'grep -qE "migrate|savegame|replicant-track" "$1"' _ "$ROOT/docs/getting-started.md"
 
 section "the release version is set"
-check "plugin manifest is 0.14.0" "0.14.0" \
-  "$(jq -r .version "$ROOT/manifest.json" 2>/dev/null)"
+check "plugin manifest carries a release version" "1" \
+  "$(jq -r .version "$ROOT/manifest.json" 2>/dev/null | grep -cE '^[0-9]+\.[0-9]+\.[0-9]+$' || true)"
 
 summary

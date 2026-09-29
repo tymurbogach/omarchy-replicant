@@ -429,7 +429,7 @@ core_install_plugin() {
 
 # A theme installed here that no origin can be worked out for — a hand-made one
 # in ~/.config/omarchy/themes. Nothing reinstalls it, so `doctor` says so and
-# the answer is to track that directory in .replicant-track.
+# the answer is to track that directory.
 local_only_themes() {
   local tdir tname
   for tdir in "$HOME/.config/omarchy/themes"/*/; do

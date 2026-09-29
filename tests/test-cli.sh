@@ -214,8 +214,7 @@ check "…with the message given"      "config: test" "$(git -C "$REPO" log -1 -
 check_false "save-file on an unknown id fails" "$CLI" save-file nope/nope
 
 section "a save with no remote says where it went"
-# This repo has no remote. savegame skipped the push without a word and ended
-# with "Everything saved and pushed."
+# This repo has no remote. A save commits locally and says it did not push.
 printf 'saved where there is no remote\n' > "$HOME/.config/hypr/input.lua"
 out=$(run save --all --auto)
 check_contains "save says there is no remote" "no remote" "$out"
@@ -239,36 +238,33 @@ check_false "diff with no id fails" "$CLI" diff nope/nope
 # rule 7. The panel never used it.
 check_contains "diff no longer takes --terminal" "unknown option" "$(run diff hypr/input.lua --terminal)"
 
-section "removed commands name their replacements"
-check_contains "savegame names save" "use save --all" "$(run savegame)"
-check_contains "backup names changes" "use changes" "$(run backup)"
-check_contains "migrate-v2 names migrate-v3" "use migrate-v3" "$(run migrate-v2)"
-check_contains "sync names scope" "use scope" "$(run sync hypr/input.lua off)"
-check_false "init rejects the removed option" "$CLI" init --savegame
+section "unknown commands fail with usage"
+check_false "an unknown command fails" "$CLI" definitely-not-a-command
+check_false "init takes no options" "$CLI" init --anything
 
 section "scope changes from the command line"
 check_false "scope needs both arguments" "$CLI" scope hypr/input.lua
 check_false "…and a real id"             "$CLI" scope nope/nope off
 check_false "…and a real state"          "$CLI" scope hypr/input.lua sideways
 run scope hypr/input.lua off >/dev/null 2>&1
-check "switching off is recorded in the repo" "1" \
-  "$(grep -cx 'hypr/input.lua = off' "$REPO/.replicant-sync" 2>/dev/null || true)"
+check "switching off is recorded in the repo" "off" \
+  "$(jq -r '.["hypr/input.lua"].scope' "$REPO/.replicant/entries.json" 2>/dev/null || echo "")"
 check "…and the panel reads it back as off" "off" \
   "$(run status --json --no-fetch | jq -r '[.entries[] | select(.id=="hypr/input.lua")][0].sync_state')"
 # The decision is a fact about the setup, so it travels with the repo.
 check "…committed, not left dangling" "0" \
-  "$(git -C "$REPO" status --porcelain -- .replicant-sync | grep -c . || true)"
+  "$(git -C "$REPO" status --porcelain -- .replicant/entries.json | grep -c . || true)"
 run scope hypr/input.lua shared >/dev/null 2>&1
-check "switching back on clears it" "0" \
-  "$(grep -c '^hypr/input.lua' "$REPO/.replicant-sync" 2>/dev/null || true)"
+check "switching back on clears it" "shared" \
+  "$(jq -r '.["hypr/input.lua"].scope' "$REPO/.replicant/entries.json" 2>/dev/null || echo "")"
 
 section "three scopes and two profiles, from the command line"
 check_false "scope needs both arguments" "$CLI" scope hypr/input.lua
 check_false "…and a real id"             "$CLI" scope nope/nope shared
 check_false "…and a real scope"          "$CLI" scope hypr/input.lua sideways
 run scope hypr/input.lua profile >/dev/null 2>&1
-check "scoping to a profile is recorded" "1" \
-  "$(grep -cx 'hypr/input.lua = profile' "$REPO/.replicant-sync" 2>/dev/null || true)"
+check "scoping to a profile is recorded" "profile" \
+  "$(jq -r '.["hypr/input.lua"].scope' "$REPO/.replicant/entries.json" 2>/dev/null || echo "")"
 check "…and the panel reads the scope back" "profile" \
   "$(run status --json --no-fetch | jq -r '[.entries[] | select(.id=="hypr/input.lua")][0].scope')"
 # Scoped to a profile is emphatically NOT switched off: it still syncs, just
@@ -276,7 +272,7 @@ check "…and the panel reads the scope back" "profile" \
 check "…and it is not reported as off" "false" \
   "$(run status --json --no-fetch | jq -r '[.entries[] | select(.id=="hypr/input.lua")][0].sync_state == "off"')"
 check "…committed, not left dangling" "0" \
-  "$(git -C "$REPO" status --porcelain -- .replicant-sync | grep -c . || true)"
+  "$(git -C "$REPO" status --porcelain -- .replicant/entries.json | grep -c . || true)"
 run scope hypr/input.lua shared >/dev/null 2>&1
 
 check "profile prints the current one" "1" \
@@ -307,12 +303,12 @@ check_false "policy refuses an unknown id before mutation" "$CLI" policy set --s
 check "invalid bulk policy leaves the commit unchanged" "$before_head" "$(git -C "$REPO" rev-parse HEAD)"
 run policy set --scope off -- hypr/input.lua hypr/hyprlock.conf >/dev/null 2>&1
 check "bulk policy writes both entries" "2" \
-  "$(grep -Ec '^hypr/(input\.lua|hyprlock\.conf) = off$' "$REPO/.replicant-sync")"
+  "$(jq '[.["hypr/input.lua"].scope, .["hypr/hyprlock.conf"].scope] | map(select(. == "off")) | length' "$REPO/.replicant/entries.json")"
 check "bulk policy creates one commit" "1" \
   "$(git -C "$REPO" log --format=%s "$before_head"..HEAD | grep -c '^policy: set off for 2 entries$')"
 run policy set --scope shared -- hypr/input.lua hypr/hyprlock.conf >/dev/null 2>&1
-check "bulk policy can restore the shared scope" "0" \
-  "$(grep -Ec '^hypr/(input\.lua|hyprlock\.conf) = ' "$REPO/.replicant-sync" 2>/dev/null || true)"
+check "bulk policy can restore the shared scope" "2" \
+  "$(jq '[.["hypr/input.lua"].scope, .["hypr/hyprlock.conf"].scope] | map(select(. == "shared")) | length' "$REPO/.replicant/entries.json")"
 
 section "editing a file, and coming back to the panel"
 # --wait only means something for an editor that can be waited on. A terminal
@@ -603,12 +599,8 @@ printf 'old\n' > "$HOME/.config/nvim.bak.1700000000/init.lua"
 mkdir -p "$OMARCHY_REPLICANT_HOME/staged"
 printf '[Login]\n' > "$OMARCHY_REPLICANT_HOME/staged/99-lid.conf"
 # These are recovery data. A normal purge must name and retain every one.
-mkdir -p "$OMARCHY_REPLICANT_HOME/keys" "$OMARCHY_REPLICANT_HOME/migration/interrupted" \
-  "$OMARCHY_REPLICANT_HOME/legacy-repo-1700000000"
+mkdir -p "$OMARCHY_REPLICANT_HOME/keys"
 printf 'test identity\n' > "$OMARCHY_REPLICANT_HOME/keys/identity.txt"
-printf 'interrupted migration\n' > "$OMARCHY_REPLICANT_HOME/migration/interrupted/journal.json"
-printf 'legacy repository\n' > "$OMARCHY_REPLICANT_HOME/legacy-repo-1700000000/README"
-printf 'legacy_repo=%s\n' "$OMARCHY_REPLICANT_HOME/legacy-repo-1700000000" > "$OMARCHY_REPLICANT_HOME/migration-warning"
 out=$(run purge)
 check_contains "a directory backup is listed too" ".bak.<epoch> backup" "$out"
 check_contains "…and so is a staged root-owned write" "staged" "$out"
@@ -619,8 +611,6 @@ check "purge --dry-run removes nothing"   "1" "$(ls "$PATH_LINK" 2>/dev/null | w
 check_contains "keeps the repo unless asked" "pass --repo" "$out"
 check_contains "names retained recovery data" "would keep for recovery" "$out"
 check_contains "…including the key" "keys" "$out"
-check_contains "…including the legacy repo" "legacy-repo-1700000000" "$out"
-check_contains "…including the migration journal" "migration" "$out"
 check "…and the repo is still there"      "1" "$(ls -d "$REPO" 2>/dev/null | wc -l)"
 run purge --apply --yes >/dev/null 2>&1
 check "purge --apply removes the symlink" "0" "$(ls "$PATH_LINK" 2>/dev/null | wc -l)"
@@ -628,8 +618,6 @@ check "…and still keeps the repo"         "1" "$(ls -d "$REPO" 2>/dev/null | w
 check "…and the lock file is gone"        "0" "$(ls "$OMARCHY_REPLICANT_HOME/.replicant.lock" 2>/dev/null | wc -l)"
 check "…and the staged write is gone"     "0" "$(ls -d "$OMARCHY_REPLICANT_HOME/staged" 2>/dev/null | wc -l)"
 check "…and keeps the key" "1" "$(ls "$OMARCHY_REPLICANT_HOME/keys/identity.txt" 2>/dev/null | wc -l)"
-check "…and keeps the legacy repo" "1" "$(ls -d "$OMARCHY_REPLICANT_HOME/legacy-repo-1700000000" 2>/dev/null | wc -l)"
-check "…and keeps the migration journal" "1" "$(ls "$OMARCHY_REPLICANT_HOME/migration/interrupted/journal.json" 2>/dev/null | wc -l)"
 check_contains "purge --repo names recovery deletion" "recovery data included" "$(run purge --repo)"
 run purge --apply --yes --repo >/dev/null 2>&1
 check "…and the directory backup is really gone, not just listed" "0" \
@@ -643,8 +631,7 @@ git init -q "$REPO"
 git -C "$REPO" config user.email t@example.com
 git -C "$REPO" config user.name Test
 # Two writes racing used to collide on .git/index.lock and one would die
-# half-done, leaving the repo mid-commit. save takes the repo lock; the
-# deprecated backup is read-only now and would not exercise it.
+# half-done, leaving the repo mid-commit. Save takes the repo lock.
 # shellcheck disable=SC2034  # a repetition counter; the body deliberately ignores it
 for i in 1 2 3; do ( "$CLI" save --inventory --no-push >/dev/null 2>&1 ) & done
 wait
@@ -682,11 +669,11 @@ printf 'mine\n' > "$HOME/.config/mine.conf"
 printf '{ "idle": { "lock": 900 } }\n' > "$HOME/.config/omarchy/shell.json"
 copy_backup >/dev/null 2>&1
 run track "$HOME/.config/mine.conf" >/dev/null 2>&1
-check_contains "the list names it" "mine.conf" "$(cat "$REPO/.replicant-track" 2>/dev/null)"
-check "the track commit is about the list, not the pending edit" "0" \
+check_contains "the entries record names it" "mine.conf" "$(cat "$REPO/.replicant/entries.json" 2>/dev/null)"
+check "the track commit is about the entries, not the pending edit" "0" \
   "$(git -C "$REPO" show --stat --format="" HEAD 2>/dev/null | grep -c 'shell.json' || true)"
-check "…and it does commit the list" "1" \
-  "$(git -C "$REPO" show --stat --format="" HEAD 2>/dev/null | grep -c 'replicant-track' || true)"
+check "…and it does commit the entries" "1" \
+  "$(git -C "$REPO" show --stat --format="" HEAD 2>/dev/null | grep -c 'entries.json' || true)"
 check "…leaving the unrelated edit still pending" "1" \
   "$(git -C "$REPO" status --porcelain -- config/omarchy/shell.json | grep -c . || true)"
 check_false "track needs a path"                "$CLI" track
@@ -694,8 +681,8 @@ check_false "…that exists"                      "$CLI" track "$HOME/.config/de
 check_false "untrack needs an id"               "$CLI" untrack
 check_false "untrack refuses a shipped file"    "$CLI" untrack hypr/input.lua
 run untrack mine.conf >/dev/null 2>&1
-check "untracking removes it from the list" "0" \
-  "$(grep -c 'mine.conf' "$REPO/.replicant-track" 2>/dev/null || true)"
+check "untracking removes it from the entries" "0" \
+  "$(jq '[keys[] | select(. == "mine.conf")] | length' "$REPO/.replicant/entries.json" 2>/dev/null || echo 0)"
 # The track section above leaves backup copies and a planted edit uncommitted
 # on purpose. A save needs a clean worktree now, so absorb them the way the
 # save-file section does, before the saves below.
@@ -811,7 +798,7 @@ run save --all -m "save mine2" --no-push >/dev/null 2>&1
 check_true "the copy is saved first" test -f "$REPO/config/mine2.conf"
 run untrack mine2.conf >/dev/null 2>&1
 check "untrack leaves nothing pending" "0" \
-  "$(git -C "$REPO" status --porcelain -- .replicant-track config/mine2.conf | grep -c . || true)"
+  "$(git -C "$REPO" status --porcelain -- .replicant/entries.json config/mine2.conf | grep -c . || true)"
 check "…because it made its own commit" "untrack: mine2.conf" "$(git -C "$REPO" log -1 --format=%s)"
 
 section "forget: a deleted file leaves the repo, and history brings it back"
@@ -849,11 +836,11 @@ check_false "recover refuses what is not a commit" "$CLI" recover not-a-commit -
 usha=$(git -C "$REPO" log --format='%H %s' | awk '$2 == "untrack:" && $3 == "mine2.conf" { print $1; exit }')
 rm -f "$HOME/.config/mine2.conf"
 run recover "$usha" --apply >/dev/null 2>&1
-check_contains "recovering an untrack tracks the file again" "mine2.conf" "$(cat "$REPO/.replicant/entries.json" 2>/dev/null; cat "$REPO/.replicant-track" 2>/dev/null)"
+check_contains "recovering an untrack tracks the file again" "mine2.conf" "$(cat "$REPO/.replicant/entries.json" 2>/dev/null)"
 check "…and puts it back on the machine" "mine" "$(cat "$HOME/.config/mine2.conf" 2>/dev/null)"
 # The recovered row survives the next save: the prune pass must keep it.
 run save --all --auto --no-push >/dev/null 2>&1 || true
-check_contains "…and the next save keeps the recovered row" "mine2.conf" "$(cat "$REPO/.replicant/entries.json" 2>/dev/null; cat "$REPO/.replicant-track" 2>/dev/null)"
+check_contains "…and the next save keeps the recovered row" "mine2.conf" "$(cat "$REPO/.replicant/entries.json" 2>/dev/null)"
 
 section "the file picker lists one directory and writes nothing"
 printf 'x\n' > "$HOME/.config/api-token.txt"

@@ -475,7 +475,7 @@ function selectionSummary(rows) {
 }
 
 // ── rows ────────────────────────────────────────────────────────────────────
-// Entry rows are the version 3 status contract.
+// Entry rows are the status contract.
 function entryRows(repoState) {
   var out = []
   var list = repoState.entries || []

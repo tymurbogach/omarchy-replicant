@@ -22,7 +22,6 @@ cleanup() {
 }
 trap cleanup EXIT
 export HOME="$TMP/home" OMARCHY_PATH="$TMP/omarchy" OMARCHY_REPLICANT_HOME="$TMP/replicant"
-export REPLICANT_TEST_ALLOW_LEGACY_WRITES=1
 REPO="$OMARCHY_REPLICANT_HOME/repo"
 mkdir -p "$HOME/.config/hypr" "$HOME/.config/environment.d" "$OMARCHY_PATH/config/hypr"
 printf 'default input\n' > "$OMARCHY_PATH/config/hypr/input.lua"

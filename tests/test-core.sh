@@ -17,9 +17,8 @@ export HOME="$TMP/home"
 export OMARCHY_PATH="$TMP/omarchy"
 export OMARCHY_REPLICANT_HOME="$TMP/replicant"
 
-# This suite pins the version 1 layout (plaintext secrets/ and friends) until
-# the section 9 migration. A repo born here would be version 2, so the git
-# dir is made first: every backup below then keeps the v1 files it asserts.
+# This suite pins a plain git dir before the first backup: every backup below
+# then keeps the files it asserts.
 git init -q -b main "$OMARCHY_REPLICANT_HOME/repo" 2>/dev/null || true
 
 mkdir -p "$HOME/.config/hypr" "$HOME/.config/omarchy/plugins/com.example.demo" "$HOME/.config/alacritty"
@@ -365,20 +364,14 @@ check "a profile file lives under profiles/<profile>/" \
 core_scope hypr/input.lua off >/dev/null 2>&1
 check_true  "switching one off takes"            is_excluded hypr/input.lua
 core_scope hypr/input.lua off >/dev/null 2>&1
-check "switching it off twice does not duplicate it" "1" \
-  "$(read_scopes | grep -cx 'hypr/input.lua = off' || true)"
+check "switching it off twice does not duplicate it" "off" "$(scope_for hypr/input.lua)"
 core_scope hypr/input.lua shared >/dev/null 2>&1
 check_false "switching it back on takes"         is_excluded hypr/input.lua
 check_false "an unknown id is refused"           core_scope nope/nope off
 check_false "an unknown scope is refused"        core_scope hypr/input.lua sideways
-check "the decision travels in the repo, not in ~/.local" "1" \
-  "$(ls "$REPO_DIR/.replicant-sync" 2>/dev/null | wc -l)"
-
-# The v0.5 two-state switch still works, because it is in the shipped README.
-core_sync hypr/input.lua off >/dev/null 2>&1
-check "sync off still means off"   "off"    "$(scope_for hypr/input.lua)"
-core_sync hypr/input.lua on  >/dev/null 2>&1
-check "sync on still means shared" "shared" "$(scope_for hypr/input.lua)"
+core_scope hypr/input.lua off >/dev/null 2>&1
+check "the decision is recorded in entries.json" "off" "$(scope_for hypr/input.lua)"
+core_scope hypr/input.lua shared >/dev/null 2>&1
 
 section "a profile-scoped file does not cross machines"
 printf 'monitors as of now\n' > "$HOME/.config/hypr/monitors.lua"
@@ -561,26 +554,13 @@ check_false "a nonsense profile name is refused" core_profile_set "../etc"
 check "the profile list includes ours" "1" \
   "$(list_profiles | grep -cx laptop || true)"
 
-section "a v0.5 repo migrates its off-list"
-# .replicant-exclude only ever meant "off", so the translation is exact and
-# nothing the user chose is reinterpreted as something else.
-rm -f "$REPO_DIR/.replicant-sync"
-printf '# a comment\nhypr/monitors.lua\ngit/config\n' > "$REPO_DIR/.replicant-exclude"
-check "the old file is honoured before the migration runs" "off" "$(scope_for git/config)"
-ensure_repo_layout >/dev/null 2>&1
-check "…and it is gone afterwards"  "0" "$(ls "$REPO_DIR/.replicant-exclude" 2>/dev/null | wc -l)"
-check "…with both entries kept off" "2" \
-  "$(read_scopes | grep -c ' = off$' || true)"
-check "…meaning the same thing"     "off" "$(scope_for git/config)"
-
-# The bug this guards against: changing ONE file's scope on a v0.5 repo used to
-# rebuild the list from an empty read and throw the whole off-list away.
-rm -f "$REPO_DIR/.replicant-sync"
-printf 'hypr/monitors.lua\ngit/config\n' > "$REPO_DIR/.replicant-exclude"
-core_scope hypr/input.lua profile >/dev/null 2>&1
-check "changing one scope migrates first, it does not start from scratch" "off" \
-  "$(scope_for git/config)"
-check "…the other migrated entry survives too" "off" "$(scope_for hypr/monitors.lua)"
+section "scope choices persist in the entries record"
+core_scope git/config off >/dev/null 2>&1
+check "an off choice is honoured" "off" "$(scope_for git/config)"
+core_scope git/config shared >/dev/null 2>&1
+check "…and a shared choice clears it" "shared" "$(scope_for git/config)"
+check "changing one scope keeps the others" "off" \
+  "$(core_scope hypr/monitors.lua off >/dev/null 2>&1; core_scope hypr/input.lua profile >/dev/null 2>&1; scope_for hypr/monitors.lua)"
 check "…and the new choice is recorded"        "profile" "$(scope_for hypr/input.lua)"
 core_scope git/config shared >/dev/null 2>&1
 core_scope hypr/monitors.lua profile >/dev/null 2>&1
@@ -719,26 +699,16 @@ for entry in "${MANIFEST[@]}"; do
   esac
 done
 check "the shipped manifest names nobody in particular" "0" "$personal"
-check "~/Projects/mise.toml is gone for good, not migrated" "0" \
-  "$(printf '%s\n' "${LEGACY_PERSONAL[@]}" "${LEGACY_PERSONAL_SECRETS[@]}" | grep -c 'mise.toml' || true)"
 
-section "upgrading a 0.6 repo keeps tracking what it tracked"
-# The migration hazard this release creates: those entries were in MANIFEST, so
-# an upgraded repo already holds copies of them. If the new core simply forgot
-# them, the very next save would see the copies as untracked and PRUNE them —
-# the user's backup deleted by an upgrade.
+section "a personal file is tracked only when the user tracks it"
 mkdir -p "$HOME/.local/bin" "$CONFIG_DIR/bin"
 printf 'my audit script\n' > "$HOME/.local/bin/omarchy-audit"
 printf 'my audit script\n' > "$CONFIG_DIR/bin/omarchy-audit"
-rm -f "$USER_TRACK_FILE"
 load_user_manifest
-check_true "a 0.6 entry is still tracked before any migration runs" \
+check_false "an untracked personal file is not tracked" \
   is_tracked_path "$HOME/.local/bin/omarchy-audit"
-ensure_track_file
-check_true "…and the migration writes it into the user's own list" \
-  test -f "$USER_TRACK_FILE"
-check "…naming it" "1" "$(grep -c 'omarchy-audit' "$USER_TRACK_FILE" || true)"
-check_true "…and it is still tracked afterwards" is_tracked_path "$HOME/.local/bin/omarchy-audit"
+core_track "$HOME/.local/bin/omarchy-audit" >/dev/null 2>&1
+check_true "…and it is tracked after the user tracks it" is_tracked_path "$HOME/.local/bin/omarchy-audit"
 check "it is the user's entry now, not the plugin's" "0" \
   "$(printf '%s\n' "${MANIFEST[@]}" | grep -c 'omarchy-audit' || true)"
 core_backup >/dev/null 2>&1
@@ -1039,25 +1009,19 @@ check "a file that holds a credential is proposed as a secret" "secret" \
 check "suggest --json is valid JSON" "0" \
   "$(core_suggest --json | jq empty >/dev/null 2>&1; echo $?)"
 
-section "every writer of the tracked list migrates first"
-# The same rule ensure_scope_file exists for, and the same failure if it is
-# broken: load_user_manifest's fallback invents a list, and a read-modify-write
-# against an invented list is a delete.
+section "every writer requires a ready repo first"
+# track and untrack refuse before any mutation when the marker is not exact.
 for fn in core_track core_untrack; do
   body=$(declare -f "$fn")
-  check "$fn calls ensure_track_file before writing" "1" \
-    "$(grep -c 'ensure_track_file' <<<"$body" || true)"
-  check "…and before write_track_file" "1" \
-    "$(awk '/ensure_track_file/{seen=1} /write_track_file/{if(seen) print "1"; exit}' <<<"$body" | head -n1 || true)"
+  check "$fn requires the ready schema" "1" \
+    "$(grep -c 'require_ready_schema' <<<"$body" || true)"
 done
 
 section "an older machine never deletes what a newer one tracks"
 # The premise of this plugin is two machines sharing one repo, and they are not
 # upgraded on the same day. The prune pass deletes whatever is not in the
 # RUNNING version's list — so the machine still on the old release silently
-# deleted every file the upgraded one tracked, on its next save. This actually
-# happened while building 0.7.0: the ~/.config/nvim tree the new code had just
-# saved was gone by the time anyone looked.
+# deleted every file the upgraded one tracked, on its next save.
 check "a save records the version that wrote the repo" "$(running_version)" \
   "$(repo_written_by)"
 check_true  "0.6.9 is older than 0.7.0"  version_lt 0.6.9 0.7.0
@@ -1066,14 +1030,14 @@ check_false "a version is not older than itself" version_lt 0.7.0 0.7.0
 check_true "a client at the repo's own version may prune" may_prune
 mkdir -p "$CONFIG_DIR/from-the-future"
 printf 'z\n' > "$CONFIG_DIR/from-the-future/thing.conf"
-printf '99.0.0\n' > "$REPO_VERSION_FILE"
+printf '99.0.0\n' > "$REPO_DIR/.replicant-version"
 check_false "a client older than the repo may not prune" may_prune
 core_backup >/dev/null 2>&1
 check_true "…so a newer version's file survives its save" \
   test -f "$CONFIG_DIR/from-the-future/thing.conf"
 check "…and the recorded version is never lowered" "99.0.0" "$(repo_written_by)"
 rm -rf "$CONFIG_DIR/from-the-future"
-printf '%s\n' "$(running_version)" > "$REPO_VERSION_FILE"
+printf '%s\n' "$(running_version)" > "$REPO_DIR/.replicant-version"
 core_backup >/dev/null 2>&1
 check_true "back at its own version it prunes again" may_prune
 
@@ -1406,7 +1370,7 @@ section "a plugin's settings survive a machine that does not have the plugin"
 # whatever is not tracked: a laptop without a plugin deleted the desktop's
 # settings for it on every save. Which plugins another machine has is a
 # question for that machine's inventory.
-rm -f "$REPO_VERSION_FILE"
+rm -f "$REPO_DIR/.replicant-version"
 mkdir -p "$STATE_ROOT/otherhost" "$CONFIG_DIR/plugins"
 printf '# id\tversion\torigin\tmethod\ncom.example.elsewhere\t1.0\thttps://example.com/elsewhere\tadd\n' \
   > "$STATE_ROOT/otherhost/omarchy-plugins.txt"
@@ -1484,21 +1448,20 @@ check "a hook restores runnable" "755" "$(restore_mode_for omarchy/hooks/theme-s
 check "a template is filed under Appearance" "appearance" "$(category_for_rel omarchy/themed/alacritty.toml.tpl)"
 rm -rf "$HOME/.config/omarchy/hooks" "$HOME/.config/omarchy/themed"
 
-section "an entry the plugin stops shipping stays tracked where it was saved"
+section "an entry the plugin stops shipping stays where it was saved"
 # The shipped list names only what every Omarchy machine has, and
-# ~/.claude/.mcp.json is not that. A repo that saved it keeps it: it moves into
-# the user's own list instead of being pruned on the next save.
+# ~/.claude/.mcp.json is not that. A repo that saved it keeps the copy:
+# nothing prunes what entries.json still names.
 mkdir -p "$HOME/.claude"; printf '{}\n' > "$HOME/.claude/.mcp.json"
 check "it is no longer in the shipped list" "0" \
   "$(printf '%s\n' "${MANIFEST[@]}" | grep -c ':claude/mcp.json$' || true)"
 ensure_repo_layout >/dev/null 2>&1
 check "a machine that only has the file does not start tracking it" "0" \
-  "$(grep -c 'claude/.mcp.json' "$USER_TRACK_FILE" || true)"
+  "$(jq '[keys[] | select(. == "claude/mcp.json")] | length' "$REPO_DIR/.replicant/entries.json" 2>/dev/null || echo 0)"
 mcp_copy=$(repo_path_for claude/mcp.json); mkdir -p "$(dirname "$mcp_copy")"
 cp "$HOME/.claude/.mcp.json" "$mcp_copy"
 core_backup >/dev/null 2>&1
 check_true "a repo that saved it keeps its copy" test -f "$mcp_copy"
-check_contains "…because it moved into the user's list" ".claude/.mcp.json" "$(cat "$USER_TRACK_FILE")"
 core_untrack claude/mcp.json >/dev/null 2>&1; rm -f "$HOME/.claude/.mcp.json"
 
 section "a secret this user cannot read is named, not a failed backup"
@@ -1530,13 +1493,10 @@ check "…and names the user the system names" "$(id -un)" \
 rm -rf "$fresh"
 
 section "a writer with nothing to keep still succeeds"
-# write_track_file ended in `(( n )) && printf`. With nothing to keep it
-# returned 1, and set -e ended the first layout on a machine that has none of
-# the old personal files: init printed nothing and made no repo.
-rc=0; ( USER_TRACK_FILE="$TMP/empty.track"; write_track_file ) || rc=$?
-check "an empty track list is written" "0" "$rc"
-check "…with its header and no blank line" "0" "$(grep -c '^$' "$TMP/empty.track" 2>/dev/null || true)"
-rm -f "$TMP/empty.track"
+# print_lines ended in `(( n )) && printf`. With nothing to keep it
+# returned 1, and set -e ended callers that passed no lines.
+rc=0; ( print_lines ) || rc=$?
+check "an empty print is a success" "0" "$rc"
 
 section "a backup leaves no variables of its own behind"
 # Bash scopes dynamically, and core_backup assigned src, rel, entry and more

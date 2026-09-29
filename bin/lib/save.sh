@@ -306,9 +306,9 @@ save_stage() {
     rm -f -- "$snap_tmp"
   else
     if (( SAVE_TXMODE )); then
-      REPLICANT_TX_REPO="$SAVE_REPO" bash "$REAL_CORE" backup --for-savegame 2>&1 || snap_rc=1
+      REPLICANT_TX_REPO="$SAVE_REPO" bash "$REAL_CORE" backup --for-save 2>&1 || snap_rc=1
     else
-      bash "$REAL_CORE" backup --for-savegame 2>&1 || snap_rc=1
+      bash "$REAL_CORE" backup --for-save 2>&1 || snap_rc=1
     fi
   fi
   if (( snap_rc )); then
@@ -366,7 +366,7 @@ save_validate_commit() {
         SAVE_SUBJECT="state: $machine inventory (packages, plugins, themes)"
       else
         # Only the inventory moved: it carries its own standing subject, the
-        # way bare savegame always committed it. Anything else without a
+        # way an inventory-only save always committed it. Anything else without a
         # message is a review, not a commit.
         local nonstate
         nonstate=$(git -C "$SAVE_REPO" status --porcelain -- . ':(exclude)state/' 2>/dev/null || true)
@@ -508,8 +508,8 @@ save_activate() {
   return 0
 }
 
-# core_init: create the initial savegame commit. The CLI parses the deprecated
-# flags and reports the command result; this function owns repository writes.
+# core_init: create the initial commit. The CLI parses the flags and reports
+# the command result; this function owns repository writes.
 # against the staged repo, never before the schema marker exists.
 core_init() {
   if [[ "$(repo_state)" == missing ]]; then
@@ -527,7 +527,7 @@ core_init() {
     echo "init commit" >&2
   fi
   git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
-  echo "init done at $REPO_DIR (savegame layout: config/secrets/state)" >&2
+  echo "init done at $REPO_DIR (layout: config/secrets/state)" >&2
 }
 
 # (same parent, so the rename is atomic), validate it, and move it into place.
@@ -570,7 +570,7 @@ _core_init_build() {
   local saved_state_root="$STATE_ROOT" saved_state="$STATE_DIR"
   local saved_templates="$TEMPLATES_DIR" saved_secrets="$SECRETS_DIR"
   local saved_hooks="$GITHOOKS_DIR"
-  local saved_version="$REMOVED_VERSION_FILE" saved_scope="$REMOVED_SCOPE_FILE"
+  local saved_version="$REPO_VERSION_FILE"
   if ! bootstrap_fail_at validate; then
     return 1
   fi
@@ -578,8 +578,7 @@ _core_init_build() {
   STATE_ROOT="$stage/state" STATE_DIR="$stage/state/$MACHINE"
   TEMPLATES_DIR="$stage/templates" SECRETS_DIR="$stage/secrets"
   GITHOOKS_DIR="$stage/.githooks"
-  REMOVED_VERSION_FILE="$stage/.replicant-version"
-  REMOVED_SCOPE_FILE="$stage/.replicant-sync"
+  REPO_VERSION_FILE="$stage/.replicant-version"
   if ! ensure_repo_layout; then
     rc=1
   elif ! _schema_marker_valid; then
@@ -591,6 +590,6 @@ _core_init_build() {
   STATE_ROOT="$saved_state_root" STATE_DIR="$saved_state"
   TEMPLATES_DIR="$saved_templates" SECRETS_DIR="$saved_secrets"
   GITHOOKS_DIR="$saved_hooks"
-  REMOVED_VERSION_FILE="$saved_version" REMOVED_SCOPE_FILE="$saved_scope"
+  REPO_VERSION_FILE="$saved_version"
   return "$rc"
 }

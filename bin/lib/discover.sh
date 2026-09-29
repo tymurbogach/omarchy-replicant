@@ -139,7 +139,6 @@ load_auto_manifest() {
   local src rel label entry taken
   AUTO_MANIFEST=(); AUTO_LABEL=()
   rebuild_tracked
-  read_scopes >/dev/null
   while IFS=$'\t' read -r src rel label; do
     [[ -n "$rel" ]] || continue
     is_auto_entry "$rel" && continue

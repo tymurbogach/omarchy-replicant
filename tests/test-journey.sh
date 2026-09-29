@@ -113,7 +113,7 @@ git -C "$DREPO" push -q -u origin HEAD:main >/dev/null 2>&1
 check_true "a shared file is in the repo"        test -f "$DREPO/config/hypr/input.lua"
 check_true "a tracked directory is, whole"       test -f "$DREPO/config/nvim/lua/plugins.lua"
 check_true "a file the user added is"            test -f "$DREPO/config/bin/my-script"
-check_true "the decision to track it travels"    test -f "$DREPO/.replicant-track"
+check_true "the decision to track it travels"    test -f "$DREPO/.replicant/entries.json"
 check_true "a secret is, under secrets/"         test -f "$DREPO/secrets/env/60-secrets.conf"
 # monitors.lua describes the screens plugged into THIS box. It is not switched
 # off — it is kept per profile, so both machines get a backup of their own.
@@ -128,7 +128,7 @@ check "…and no theme file was copied into the repo" "0" \
 
 section "save, the button the panel actually presses"
 # Nothing exercised this command. Every suite reached for `backup` and drove
-# git by hand, so the commit step savegame does on its own was never run — and
+# git by hand, so the commit step save does on its own was never run — and
 # a variable named there that belongs to the core, not the CLI, killed it under
 # `set -u` after it had copied every file in. A save that does the work and
 # then fails is the worst shape this tool has.
@@ -182,7 +182,7 @@ check "an explicit -m still wins over --auto" "config: raise the repeat rate" \
 
 section "push means push"
 # It used to mean "copy everything in, stage the lot with add -A, invent a
-# subject out of the date, commit, push" — a second, worse savegame that
+# subject out of the date, commit, push" — a second, worse save that
 # nothing called, and that took its arguments as the commit message, which is
 # how a commit titled "--help" once reached GitHub.
 printf 'not saved by push\n' > "$D/.config/hypr/input.lua"
@@ -193,7 +193,7 @@ check "push commits nothing on its own" "$before_head" "$(git -C "$DREPO" rev-pa
 # "nothing to push" and "nothing to do" are not the same sentence, and the
 # difference is the whole reason someone is reading this command's output.
 check_contains "…and says there is work it did not take on" "uncommitted changes" "$out"
-check_true "…leaving it for savegame" \
+check_true "…leaving it for save" \
   bash -c 'git -C "$1" status --porcelain -- config/ | grep -q .' _ "$DREPO"
 # A save needs a clean worktree: the backup's copies are regenerable, so the
 # save refuses them instead of committing over them. The refusal names the
@@ -213,7 +213,7 @@ check_true "…which really reached the remote" \
   bash -c 'git -C "$1" diff --quiet origin/main HEAD' _ "$DREPO"
 
 section "a save that did not reach GitHub says so"
-# Another machine pushes first, so the desktop's push is rejected. savegame
+# Another machine pushes first, so the desktop's push is rejected. A save
 # still printed "Everything saved and pushed." and exited 0. With two machines
 # on one repo, this is the normal case.
 git clone -q "$TMP/origin.git" "$TMP/elsewhere" >/dev/null 2>&1
@@ -272,7 +272,7 @@ check_contains "install-theme calls omarchy theme install with the recorded orig
 check_true "a shared file arrived"            test -f "$L/.config/hypr/input.lua"
 check "…with the desktop's content" "my own input" "$(cat "$L/.config/hypr/input.lua" 2>/dev/null)"
 check_true "the whole directory arrived"      test -f "$L/.config/nvim/lua/plugins.lua"
-# The file the user added to their own list. If .replicant-track did not travel,
+# The file the user added to their own list. If entries.json did not travel,
 # or the laptop ignored it, this is the row that silently does not come back.
 check_true "the file the user added arrived"  test -f "$L/.local/bin/my-script"
 check "…still executable"  "755" "$(stat -c%a "$L/.local/bin/my-script" 2>/dev/null)"

@@ -1216,6 +1216,10 @@ cmd_purge() {
   [[ -f "$REPLICANT_HOME/catalog.json" ]] && targets+=("$REPLICANT_HOME/catalog.json")
   # The brief-status cache: file identity and counts, no secret content.
   [[ -d "$REPLICANT_HOME/cache" ]] && targets+=("$REPLICANT_HOME/cache")
+  # The rotation recovery record. Kept with the keys by default: while it
+  # exists, a previous rotation never finished reconciling. Named here
+  # literally like incoming above, for the same unbound-variable reason.
+  [[ -f "$REPLICANT_HOME/key-rotation.json" ]] && recovery+=("$REPLICANT_HOME/key-rotation.json")
   # Abandoned save transactions (worktree plus meta.json journal). A finished
   # save removes its own; only interrupted ones are ever still here.
   [[ -d "$REPLICANT_HOME/transactions" ]] && targets+=("$REPLICANT_HOME/transactions")
@@ -1589,12 +1593,24 @@ main() {
   # not become a documented CLI command or part of the stable command surface.
   # Anything that writes to the repo takes the lock first; read-only commands
   # (status/get/diff/edit) stay lock-free so the panel's polling never blocks.
+  # wants_apply <args...>: 0 when the effective mode writes. undo, backups,
+  # purge and recover are dry runs by default and take --apply to write; a
+  # later --dry-run wins over an earlier --apply, the way each command parses
+  # them. Matching whole tokens, not substrings: an id that merely contains
+  # "--apply" must not take the lock.
+  wants_apply() {
+    local a seen=1
+    for a in "$@"; do
+      case "$a" in --apply) seen=0 ;; --dry-run) seen=1 ;; esac
+    done
+    return "$seen"
+  }
   case "$cmd" in
     init|create|save|set|save-file|reset|reset-all|push|pull|clone|restore|scope|policy|bulk|track|untrack|forget|profile|revert|restore-file|install-theme|install-plugin|tx) acquire_repo_lock ;;
     # These write only when they apply. A dry run takes no lock: taking it
     # creates the lock file, and purge would then list its own lock.
     undo|backups|purge|recover)
-      if [[ -d "$REPLICANT_HOME" ]] && [[ " $* " == *" --apply "* ]]; then
+      if [[ -d "$REPLICANT_HOME" ]] && wants_apply "$@"; then
         acquire_repo_lock
       fi ;;
   esac

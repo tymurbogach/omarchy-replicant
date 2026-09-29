@@ -564,4 +564,14 @@ TestCase {
     compare(R.actionDisabledReason({ hasSelection: false, ready: true }), "Select entries with the same supported operation.")
     compare(R.actionDisabledReason({ hasKey: false, ready: true }), "Import the encryption key before managing secrets.")
   }
+
+  function test_keyboard_action_matches_the_row_state() {
+    compare(R.keyboardActionFor({ sync_state: "incoming" }), "restore")
+    compare(R.keyboardActionFor({ sync_state: "missing" }), "restore")
+    compare(R.keyboardActionFor({ sync_state: "locked" }), "locked")
+    compare(R.keyboardActionFor({ sync_state: "locked", locked: true }), "locked")
+    compare(R.keyboardActionFor({ sync_state: "unsaved" }), "save")
+    compare(R.keyboardActionFor({ sync_state: "unpushed" }), "save")
+    compare(R.keyboardActionFor({ sync_state: "saved" }), "save")
+  }
 }

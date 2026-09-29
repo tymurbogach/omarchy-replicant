@@ -20,6 +20,13 @@ BorderSurface {
             + panel.selectionSummary.files + " files · " + R.sizeText(panel.selectionSummary.bytes)
       color: panel.fg; font.family: panel.ff; font.pixelSize: Style.font.caption
     }
+    Text {
+      width: parent.width
+      visible: panel.selectedRows.some(function(r) { return r.locked === true || r.sync_state === "locked" })
+      text: "Locked rows need the encryption key first: import it, then select them again."
+      color: panel.warnColor; font.family: panel.ff; font.pixelSize: Style.font.caption
+      wrapMode: Text.WordWrap
+    }
     Row {
       spacing: Style.space(6)
       Button { text: "Save"; visible: panel.bulkActions.indexOf("save") >= 0; bordered: true; foreground: panel.fg; accent: Color.accent; fontFamily: panel.ff; onClicked: panel.doBulk("save") }

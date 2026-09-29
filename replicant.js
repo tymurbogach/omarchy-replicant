@@ -392,6 +392,18 @@ function focusItems(tab, cards, rows, settings) {
   return out
 }
 
+// The keyboard action for one row. Restore brings a newer or absent copy
+// here, save commits this machine's version, and a locked secret has no local
+// action until its key is imported. The visible primary button shows only
+// Save and Restore; the keyboard reaches missing and locked rows too, so its
+// action must not fall through to Save and fail there.
+function keyboardActionFor(row) {
+  var st = row ? row.sync_state : ""
+  if (st === "incoming" || st === "missing") return "restore"
+  if (st === "locked" || (row && row.locked === true)) return "locked"
+  return "save"
+}
+
 function moveFocus(items, index, delta) {
   var list = items || [], max = list.length - 1
   if (max < 0) return 0

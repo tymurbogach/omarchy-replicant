@@ -152,8 +152,16 @@ Panel {
     if (target.kind === "card") { root.toggleCard(target.id); return }
     if (target.kind === "action") {
       var actionRow = root.visibleConfigRows.filter(function(item) { return item.id === target.id })[0]
-      if (actionRow && actionRow.sync_state === "incoming") root.askRestoreFile(actionRow)
-      else if (actionRow) root.doSaveFile(actionRow.id)
+      if (!actionRow) return
+      var action = R.keyboardActionFor(actionRow)
+      if (action === "restore") root.askRestoreFile(actionRow)
+      else if (action === "locked") {
+        root.lastTitle = "Locked secret"
+        root.lastOk = false
+        root.lastCancelled = false
+        root.lastOutput = actionRow.id + " needs the encryption key before anything acts on it: omarchy-replicant key import <source>"
+      }
+      else root.doSaveFile(actionRow.id)
       return
     }
     if (target.kind === "row" && target.id !== "") root.toggleRow(target.id)

@@ -306,14 +306,31 @@ print_lines() { (( $# )) || return 0; printf '%s\n' "$@"; }
 # tree stayed at the old path while repo_path_for pointed at the new one, and
 # until the next save the panel called a saved tree unsaved and revert-to-repo
 # could not find it. Both sides are inside the repo, which is the only reason
-# clearing the destination first is safe — and it is checked, not assumed.
+# moving is safe at all — and the destination is checked, not assumed.
+#
+# The destination is never cleared first. Clearing it and then moving loses
+# both copies when the move fails. Instead the destination (when present)
+# moves aside, the source moves over, and only then is the aside copy dropped;
+# a failed move restores it, so one failed scope change cannot eat a backup.
 move_repo_copy() {
-  local from="${1%/}" to="${2%/}"
+  local from="${1%/}" to="${2%/}" aside=""
   [[ -e "$from" ]] || return 0
   case "$to/" in "$REPO_DIR"/*) ;; *) echo "refusing to move outside the repo: $to" >&2; return 1 ;; esac
   mkdir -p "$(dirname "$to")"
-  rm -rf -- "$to"
-  mv -f -- "$from" "$to"
+  if [[ -e "$to" ]]; then
+    aside="$to.__prev.$$"
+    rm -rf -- "$aside"
+    mv -- "$to" "$aside" || { echo "could not stage the destination aside: $to" >&2; return 1; }
+  fi
+  if mv -- "$from" "$to"; then
+    [[ -n "$aside" ]] && rm -rf -- "$aside"
+    return 0
+  fi
+  echo "could not move $from to $to — nothing was lost" >&2
+  if [[ -n "$aside" ]]; then
+    mv -- "$aside" "$to" 2>/dev/null || echo "restore $aside to $to by hand" >&2
+  fi
+  return 1
 }
 
 # core_scope <rel> <shared|profile|off> — the panel's per-file scope control.
@@ -350,8 +367,16 @@ core_scope() {
 # scope_store <rel> <scope>: record one scope decision in the canonical
 # .replicant/entries.json, creating an override record for shipped entries
 # that carry non-default policy. Fails before mutation when validation fails.
+# Secrets cannot use the profile scope from any path: vault blobs are global,
+# so a per-profile secret would record a scope its storage cannot honour.
+# bulk.sh refused it while this function accepted it; the single rule lives
+# here, where every scope write (single, bulk, policy) arrives.
 scope_store() {
   local rel="$1" want="$2" src kind scope source
+  if [[ "$want" == profile ]] && is_secret_rel "$rel"; then
+    echo "scope: secret entries cannot use the profile scope: $rel" >&2
+    return 1
+  fi
   if is_secret_rel "$rel"; then
     vault_identity_ok || return 1
     local idx blob

@@ -6,7 +6,7 @@ WORK="$(mktemp -d)"
 trap 'rm -rf -- "$WORK"' EXIT
 export HOME="$WORK/home" OMARCHY_REPLICANT_HOME="$WORK/data" REPLICANT_PROFILE=desktop
 mkdir -p "$HOME"
-"$ROOT/bin/omarchy-replicant" init >/dev/null
+"$ROOT/bin/replicant" init >/dev/null
 test "$(jq -r .format "$OMARCHY_REPLICANT_HOME/repo/.replicant/schema.json")" = replicant
 "$ROOT/bin/replicant-core.sh" schema-gate
 for marker in '{}' '{"format":"wrong"}' '{"format":"replicant","extra":true}'; do

@@ -5,7 +5,7 @@ set -uo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "$HERE/.." && pwd)"
-CLI="$ROOT/bin/omarchy-replicant"
+CLI="$ROOT/bin/replicant"
 # shellcheck source=tests/lib.sh
 source "$HERE/lib.sh"
 
@@ -51,7 +51,7 @@ section "progress-json reports local-only with --no-push"
 printf 'local only fixture\n' >> "$HOME/.config/hypr/input.lua"
 "$CLI" --progress-json save --all --auto --no-push >"$TMP/out3.txt" 2>"$TMP/err3.txt"
 check_contains "local-only outcome is explicit" '"outcome":"local-only"' "$(cat "$TMP/err3.txt")"
-check_contains "local-only names the retry" "omarchy-replicant push" "$(cat "$TMP/err3.txt")"
+check_contains "local-only names the retry" "replicant push" "$(cat "$TMP/err3.txt")"
 
 section "normal output stays compatible without the flag"
 printf 'compat fixture\n' >> "$HOME/.config/hypr/input.lua"
@@ -83,7 +83,7 @@ git -C "$REPO" remote remove origin
 printf 'local shape fixture\n' > "$HOME/.config/hypr/local-only.lua"
 "$CLI" --progress-json track "$HOME/.config/hypr/local-only.lua" >"$TMP/out7.txt" 2>"$TMP/err7.txt"
 check_contains "no-remote shape outcome is local-only" '"outcome":"local-only"' "$(cat "$TMP/err7.txt")"
-check_contains "no-remote shape gives its recovery command" "omarchy-replicant create --push" "$(cat "$TMP/err7.txt")"
+check_contains "no-remote shape gives its recovery command" "replicant create --push" "$(cat "$TMP/err7.txt")"
 
 section "cancel before commit stops the complete process group"
 WRAPPERS="$TMP/wrappers"; CONTROL="$TMP/control"

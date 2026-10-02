@@ -122,7 +122,7 @@ count_changes() {
   printf '%s %s %s %s\n' "$n_unsaved" "$n_incoming" "$n_locked" "$n_missing"
 }
 
-# Used by the omarchy-replicant CLI wrapper
+# Used by the replicant CLI wrapper
 # core_incoming <before-rev> <after-rev> — which tracked entries a pull moved.
 # Written down for the panel and printed for the caller.
 #

@@ -195,7 +195,7 @@ core_track_transact() {
   candidate=$(tx_shape_commit "$msg" "$txdir" -- "${store_paths[@]}") || return 1
   [[ -n "$candidate" ]] || return 0
   tx_shape_finish "$txdir" || return 1
-  echo "saved with the next 'omarchy-replicant save --all --auto'" >&2
+  echo "saved with the next 'replicant save --all --auto'" >&2
   return 0
 }
 

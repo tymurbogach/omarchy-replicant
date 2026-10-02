@@ -450,14 +450,14 @@ save_activate() {
   if (( SAVE_TXMODE )) && (( SAVE_DID_COMMIT )) && [[ "$now_head" != "$SAVE_BASE" ]]; then
     echo "save: the active repo moved during the save (another save landed first)" >&2
     echo "The transaction is kept at $SAVE_TXDIR — pull, then save again." >&2
-    progress_result failed "The active repo moved during the save" "omarchy-replicant pull"
+    progress_result failed "The active repo moved during the save" "replicant pull"
     return 1
   fi
   if (( SAVE_TXMODE )) && (( SAVE_DID_COMMIT )); then
     git -C "$REPO_DIR" merge --ff-only -q "$SAVE_CANDIDATE" 2>/dev/null || {
       echo "save: cannot fast-forward the active repo (it has changes the save did not make)" >&2
       echo "The transaction is kept at $SAVE_TXDIR — resolve the worktree, then save again." >&2
-      progress_result failed "Cannot fast-forward the active repo" "omarchy-replicant changes"
+      progress_result failed "Cannot fast-forward the active repo" "replicant changes"
       return 1
     }
     tx_meta_write "$SAVE_TXDIR" fast-forwarded "$SAVE_BASE" "$SAVE_SCOPE" "$SAVE_SUBJECT" ${SAVE_IDS[@]+"${SAVE_IDS[@]}"} \
@@ -479,9 +479,9 @@ save_activate() {
   if [[ "$PUSHED" == "failed" ]]; then
     echo "Saved locally, but the push to GitHub failed:" >&2
     printf '%s\n' "$PUSH_ERR" | sed 's/^/    /' >&2
-    echo "Another machine may have saved first. Run 'omarchy-replicant pull', then save again." >&2
+    echo "Another machine may have saved first. Run 'replicant pull', then save again." >&2
     echo "The next save (or an explicit push) retries it." >&2
-    progress_result local-only "Saved locally, but the push failed" "omarchy-replicant push"
+    progress_result local-only "Saved locally, but the push failed" "replicant push"
     return 1
   fi
   if (( ! SAVE_DID_COMMIT )) && [[ "$PUSHED" != "ok" ]]; then
@@ -493,12 +493,12 @@ save_activate() {
   (( SAVE_TXMODE )) && tx_remove "$SAVE_TXDIR"
   case "$PUSHED" in
     no-remote)
-      echo "Everything saved on this machine. There is no remote yet: run 'omarchy-replicant create --push'." >&2
-      progress_result local-only "Saved on this machine, no remote yet" "omarchy-replicant create --push"
+      echo "Everything saved on this machine. There is no remote yet: run 'replicant create --push'." >&2
+      progress_result local-only "Saved on this machine, no remote yet" "replicant create --push"
       ;;
     held)
       echo "Everything saved on this machine, not pushed (--no-push)." >&2
-      progress_result local-only "Saved on this machine, not pushed" "omarchy-replicant push"
+      progress_result local-only "Saved on this machine, not pushed" "replicant push"
       ;;
     *)
       echo "Everything saved and pushed." >&2

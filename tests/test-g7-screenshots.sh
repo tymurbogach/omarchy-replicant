@@ -68,7 +68,7 @@ render locked "$FIXTURES/status.json" configs secrets ""
 compare_fixture locked
 
 render local-only "$FIXTURES/status.json" overview "" \
-  'p.lastTitle = "Saved locally"; p.lastOk = true; p.lastCancelled = false; p.lastOutput = "Saved locally, but the push failed.\nRetry: omarchy-replicant push"'
+  'p.lastTitle = "Saved locally"; p.lastOk = true; p.lastCancelled = false; p.lastOutput = "Saved locally, but the push failed.\nRetry: replicant push"'
 compare_fixture local-only
 
 render failure "$FIXTURES/status.json" overview "" \

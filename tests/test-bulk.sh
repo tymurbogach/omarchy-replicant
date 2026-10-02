@@ -1,7 +1,7 @@
 #!/bin/bash
 set -uo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-CLI="$HERE/../bin/omarchy-replicant"
+CLI="$HERE/../bin/replicant"
 CORE="$HERE/../bin/replicant-core.sh"
 source "$HERE/lib.sh"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT

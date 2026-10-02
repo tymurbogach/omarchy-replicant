@@ -181,19 +181,19 @@ gate_g4() {
   [[ -f "$ROOT/bin/lib/transaction.sh" ]] && ok "the transaction engine exists" || bad "bin/lib/transaction.sh is missing"
   grep -q 'transaction' "$ROOT/bin/replicant-core.sh" 2>/dev/null && ok "the core loads the transaction engine" || bad "replicant-core.sh does not load transaction.sh"
   grep -q 'core_bulk_transact()' "$ROOT/bin/lib/bulk.sh" 2>/dev/null && ok "bulk runs through the library engine" || bad "core_bulk_transact is missing from bulk.sh"
-  if [[ "$(grep -c 'worktree add' "$ROOT/bin/omarchy-replicant" 2>/dev/null || true)" == 0 ]]; then
+  if [[ "$(grep -c 'worktree add' "$ROOT/bin/replicant" 2>/dev/null || true)" == 0 ]]; then
     ok "the CLI creates no transaction worktree"
   else
     bad "the CLI still owns worktree transactions"
   fi
-  if [[ -z "$(grep -nE 'git[^|]* (add|commit)[^|]*\|\| true' "$ROOT/bin/lib/repo.sh" "$ROOT/bin/lib/transaction.sh" "$ROOT/bin/lib/save.sh" "$ROOT/bin/omarchy-replicant" 2>/dev/null || true)" ]]; then
+  if [[ -z "$(grep -nE 'git[^|]* (add|commit)[^|]*\|\| true' "$ROOT/bin/lib/repo.sh" "$ROOT/bin/lib/transaction.sh" "$ROOT/bin/lib/save.sh" "$ROOT/bin/replicant" 2>/dev/null || true)" ]]; then
     ok "no git add or commit failure is ignored"
   else
     bad "an ignored git add or commit failure remains"
   fi
   grep -q 'core_key_init_transact\|core_key_rotate_transact' "$ROOT/bin/lib/crypto.sh" 2>/dev/null && ok "key writes run through transactions" || bad "key transact wrappers are missing"
-  grep -q -- '--force' "$ROOT/bin/omarchy-replicant" 2>/dev/null && ok "key export knows --force" || bad "key export --force is missing"
-  grep -q 'acquire_repo_lock' "$ROOT/bin/omarchy-replicant" 2>/dev/null && ok "key mutations take the repo lock" || bad "key locking is missing"
+  grep -q -- '--force' "$ROOT/bin/replicant" 2>/dev/null && ok "key export knows --force" || bad "key export --force is missing"
+  grep -q 'acquire_repo_lock' "$ROOT/bin/replicant" 2>/dev/null && ok "key mutations take the repo lock" || bad "key locking is missing"
   grep -q 'save_plan\|save_stage\|save_validate_commit\|save_activate' "$ROOT/bin/lib/save.sh" 2>/dev/null && ok "core_save is split into phases" || bad "core_save is not split into phases"
   if "$HERE/test-transaction.sh" >/dev/null 2>&1; then ok "transaction suite passes"; else bad "transaction suite fails"; fi
   if "$HERE/test-save.sh" >/dev/null 2>&1; then ok "save suite still passes"; else bad "save suite fails"; fi
@@ -232,11 +232,11 @@ gate_g5() {
     && ok "bulk checks content encoding" \
     || bad "bulk does not check content encoding"
   grep -q 'setting_save_id' "$ROOT/bin/lib/settings.sh" 2>/dev/null \
-    && grep -q 'cmd_save_setting' "$ROOT/bin/omarchy-replicant" 2>/dev/null \
+    && grep -q 'cmd_save_setting' "$ROOT/bin/replicant" 2>/dev/null \
     && ok "settings save through their owning entry" \
     || bad "settings still save all entries"
-  grep -q 'changed on this machine but was not saved' "$ROOT/bin/omarchy-replicant" 2>/dev/null \
-    && grep -q 'Retry: omarchy-replicant push' "$ROOT/bin/omarchy-replicant" 2>/dev/null \
+  grep -q 'changed on this machine but was not saved' "$ROOT/bin/replicant" 2>/dev/null \
+    && grep -q 'Retry: replicant push' "$ROOT/bin/replicant" 2>/dev/null \
     && ok "settings report persistence and push retries" \
     || bad "settings do not report exact retry commands"
   if "$HERE/test-state.sh" >/dev/null 2>&1; then ok "state parity suite passes"; else bad "state parity suite fails"; fi
@@ -289,14 +289,14 @@ gate_g6() {
 }
 gate_g7() {
   section "G7 progress protocol"
-  grep -q -- '--progress-json' "$ROOT/bin/omarchy-replicant" \
+  grep -q -- '--progress-json' "$ROOT/bin/replicant" \
     && ok "CLI accepts the global progress option" \
     || bad "CLI has no global progress option"
   grep -q 'progress_stage()' "$ROOT/bin/lib/progress.sh" \
     && grep -q 'progress_result()' "$ROOT/bin/lib/progress.sh" \
     && ok "CLI has stage and result events" \
     || bad "CLI progress helpers are missing"
-  grep -q 'progress_stage run false' "$ROOT/bin/omarchy-replicant" \
+  grep -q 'progress_stage run false' "$ROOT/bin/replicant" \
     && ok "every command announces its start" \
     || bad "CLI does not announce command start"
   grep -q 'progress_stage commit false' "$ROOT/bin/lib/save.sh" \

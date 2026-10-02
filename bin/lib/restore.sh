@@ -234,7 +234,7 @@ restore_area_extras() {
       while IFS=$'\t' read -r name _; do
         [[ -n "$name" ]] || continue
         n=$((n + 1))
-        skip "$name — third-party theme, not auto-installed: omarchy-replicant install-theme $name"
+        skip "$name — third-party theme, not auto-installed: replicant install-theme $name"
       done < <(missing_themes)
       (( n == 0 )) && skip "every theme in the inventory is already installed"
       restore_active_theme "$dry" ;;
@@ -242,7 +242,7 @@ restore_area_extras() {
       while IFS=$'\t' read -r name _; do
         [[ -n "$name" ]] || continue
         n=$((n + 1))
-        skip "$name — third-party plugin, not auto-installed: omarchy-replicant install-plugin $name"
+        skip "$name — third-party plugin, not auto-installed: replicant install-plugin $name"
       done < <(missing_plugins)
       (( n == 0 )) && skip "every plugin in the inventory is already installed" ;;
   esac
@@ -264,7 +264,7 @@ restore_active_theme() {
   if (( dry )); then skip "dry-run: would apply theme '$want' (currently '${current:-unknown}')"; return 0; fi
   if command -v omarchy-theme-set >/dev/null 2>&1; then
     if omarchy-theme-set "$want" >/dev/null 2>&1; then ok "theme -> $want"
-    else warn "could not apply theme '$want' — if it is not installed here: omarchy-replicant install-theme $want"; fi
+    else warn "could not apply theme '$want' — if it is not installed here: replicant install-theme $want"; fi
   else
     warn "omarchy-theme-set not found"
   fi
@@ -283,7 +283,7 @@ restore_pending() {
     if [[ "$src" == vault:* ]]; then
       id="${src#vault:}"
       if ! vault_unlocked; then
-        warn "$id is locked — run: omarchy-replicant key import <source>"
+        warn "$id is locked — run: replicant key import <source>"
         continue
       fi
       printf '%s|%s|%s\n' "$src" "$dst" "$mode"

@@ -1,5 +1,5 @@
 #!/bin/bash
-# The bin/omarchy-replicant command surface: argument handling, the read-only
+# The bin/replicant command surface: argument handling, the read-only
 # commands, and — the part that matters most — that every destructive command
 # really is a no-op until it is given --apply.
 #
@@ -8,7 +8,7 @@
 set -uo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-CLI="$HERE/../bin/omarchy-replicant"
+CLI="$HERE/../bin/replicant"
 CORE_BIN="$HERE/../bin/replicant-core.sh"
 # shellcheck source=tests/lib.sh
 source "$HERE/lib.sh"
@@ -59,7 +59,7 @@ while read -r c; do
   # A word boundary either side: "sync" must not be satisfied by "syncing", and
   # must still be found inside "(sync <id> on|off is the old form)".
   grep -qE "(^|[^a-z-])$c([^a-z-]|$)" <<<"$helptext" || { undocumented=$((undocumented+1)); echo "    '$c' is a command but is not in --help"; }
-done < <(grep -oE '^    [a-z|-]+\) shift' "$HERE/../bin/omarchy-replicant" | sed -e 's/^ *//' -e 's/) shift//' | tr '|' '\n' | sort -u)
+done < <(grep -oE '^    [a-z|-]+\) shift' "$HERE/../bin/replicant" | sed -e 's/^ *//' -e 's/) shift//' | tr '|' '\n' | sort -u)
 check "every command the dispatcher accepts is in --help" "0" "$undocumented"
 check_contains "…and the help says the panel does this too" "panel in your bar" "$helptext"
 check_contains "…and keeps the two ways back apart" "reset-all --apply" "$helptext"
@@ -82,7 +82,7 @@ section "--help is a question, never an instruction"
 # Derived from the dispatcher so a new command cannot be added without landing
 # in here, and measured against the whole tree so "it did nothing" is a fact
 # about the disk, not about the exit code.
-mapfile -t ALL_CMDS < <(grep -oE '^    [a-z|-]+\) shift' "$HERE/../bin/omarchy-replicant" \
+mapfile -t ALL_CMDS < <(grep -oE '^    [a-z|-]+\) shift' "$HERE/../bin/replicant" \
   | sed -e 's/^ *//' -e 's/) shift//' | tr '|' '\n' | grep -v '^-' | sort -u)
 check_true "the dispatcher has commands to check" test "${#ALL_CMDS[@]}" -gt 20
 before_help=$(hash_tree "$HOME")$(hash_tree "$OMARCHY_REPLICANT_HOME")
@@ -113,10 +113,10 @@ section "a core that cannot load stops the command with a message"
 broken="$TMP/broken-plugin"; mkdir -p "$broken"
 cp -a "$HERE/../bin" "$HERE/../manifest.json" "$broken/"
 sed -i '6i if then fi' "$broken/bin/replicant-core.sh"
-rc=0; out=$("$broken/bin/omarchy-replicant" get idle.lock 2>&1) || rc=$?
+rc=0; out=$("$broken/bin/replicant" get idle.lock 2>&1) || rc=$?
 check "the command fails" "1" "$rc"
 check_contains "…and names the core it could not load" "could not load" "$out"
-rc=0; out=$("$broken/bin/omarchy-replicant" undo hypr/input.lua --apply 2>&1) || rc=$?
+rc=0; out=$("$broken/bin/replicant" undo hypr/input.lua --apply 2>&1) || rc=$?
 check "undo also fails when the core cannot load" "1" "$rc"
 check_contains "…and shows the core syntax error" "syntax error" "$out"
 rm -rf "$broken"
@@ -453,7 +453,7 @@ check "…nor omarchy plugin clone" "0" \
 check_contains "…and says how to install the plugin instead" "install-plugin demo.widget" "$out"
 
 section "link / unlink is reversible and touches nothing else"
-export PATH_LINK="$HOME/.local/bin/omarchy-replicant"
+export PATH_LINK="$HOME/.local/bin/replicant"
 check "nothing on PATH before linking" "0" "$(ls "$PATH_LINK" 2>/dev/null | wc -l)"
 run link >/dev/null 2>&1
 check "link creates the symlink"       "1" "$(ls "$PATH_LINK" 2>/dev/null | wc -l)"
@@ -656,7 +656,7 @@ for c in "undo hypr/input.lua --apply" "backups --prune --apply" "install-theme 
          "install-plugin demo.widget" "purge --apply --yes"; do
   # shellcheck disable=SC2086
   out=$(PATH="$TMP/fakebin:$PATH" REPLICANT_LOCK_WAIT=1 run $c)
-  check_contains "'$c' waits for the lock" "another omarchy-replicant operation" "$out"
+  check_contains "'$c' waits for the lock" "another replicant operation" "$out"
 done
 # While the lock is still held: a dry run must not wait for it.
 check_contains "a dry run takes no lock" "would remove" "$(REPLICANT_LOCK_WAIT=1 run purge)"
@@ -877,34 +877,34 @@ git -C "$porigin" symbolic-ref HEAD refs/heads/main
 pid=$(jq -r '.id' "$pwork/manifest.json")
 pinst="$HOME/.config/omarchy/plugins/$pid"
 git clone -q "$porigin" "$pinst" 2>/dev/null
-uc=$("$pinst/bin/omarchy-replicant" update-check --json 2>/dev/null)
+uc=$("$pinst/bin/replicant" update-check --json 2>/dev/null)
 check "an up-to-date checkout has no update" "false" "$(jq -r '.available' <<<"$uc")"
 check "…and knows it is the installed copy" "true" "$(jq -r '.installed' <<<"$uc")"
 jq '.version = "99.0.0"' "$pwork/manifest.json" > "$pwork/m.json" && mv "$pwork/m.json" "$pwork/manifest.json"
 git -C "$pwork" commit -qam "Release 99.0.0" && git -C "$pwork" push -q origin main 2>/dev/null
-uc=$("$pinst/bin/omarchy-replicant" update-check --json --fetch 2>/dev/null)
+uc=$("$pinst/bin/replicant" update-check --json --fetch 2>/dev/null)
 check "a newer origin is an update" "true" "$(jq -r '.available' <<<"$uc")"
 check "…named by its version" "99.0.0" "$(jq -r '.latest' <<<"$uc")"
 check "…with what it changes" "Release 99.0.0" "$(jq -r '.commits[0].subject' <<<"$uc")"
-check_contains "the text form says how to update" "omarchy-replicant update" \
-  "$("$pinst/bin/omarchy-replicant" update-check 2>&1)"
+check_contains "the text form says how to update" "replicant update" \
+  "$("$pinst/bin/replicant" update-check 2>&1)"
 stamp="$pinst/.git/FETCH_HEAD"
 touch -d '1 hour ago' "$stamp"; m1=$(stat -c %Y "$stamp")
-"$pinst/bin/omarchy-replicant" update-check --json >/dev/null 2>&1
+"$pinst/bin/replicant" update-check --json >/dev/null 2>&1
 check "the origin is asked at most every 6 hours" "$m1" "$(stat -c %Y "$stamp")"
-REPLICANT_UPDATE_MAX_AGE=0 "$pinst/bin/omarchy-replicant" update-check --json >/dev/null 2>&1
+REPLICANT_UPDATE_MAX_AGE=0 "$pinst/bin/replicant" update-check --json >/dev/null 2>&1
 check_false "…and again once that is up" test "$m1" = "$(stat -c %Y "$stamp")"
-check_false "a copy that is not the installed one refuses to update" "$pwork/bin/omarchy-replicant" update --yes
-check_contains "…and says to use git" "git pull" "$("$pwork/bin/omarchy-replicant" update --yes 2>&1)"
+check_false "a copy that is not the installed one refuses to update" "$pwork/bin/replicant" update --yes
+check_contains "…and says to use git" "git pull" "$("$pwork/bin/replicant" update --yes 2>&1)"
 : > "$STUB_LOG"
-check_false "a failing omarchy plugin update fails the update" "$pinst/bin/omarchy-replicant" update --yes
+check_false "a failing omarchy plugin update fails the update" "$pinst/bin/replicant" update --yes
 check_contains "…and Omarchy's command is the one that ran" "omarchy plugin update $pid --yes" "$(cat "$STUB_LOG")"
 okbin="$TMP/okbin"; mkdir -p "$okbin"
 printf '#!/bin/sh\necho "omarchy $*" >> "%s"\nexit 0\n' "$TMP/ok.log" > "$okbin/omarchy"; chmod +x "$okbin/omarchy"
 mkdir -p "$HOME/.cache/quickshell/qmlcache"; touch "$HOME/.cache/quickshell/qmlcache/stale"
 # XDG_CACHE_HOME is pinned to the fake $HOME: the real one would clear the
 # compiled QML of the shell that is running on this machine.
-PATH="$okbin:$PATH" XDG_CACHE_HOME="$HOME/.cache" "$pinst/bin/omarchy-replicant" update --yes --restart >/dev/null 2>&1
+PATH="$okbin:$PATH" XDG_CACHE_HOME="$HOME/.cache" "$pinst/bin/replicant" update --yes --restart >/dev/null 2>&1
 for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q 'restart shell' "$TMP/ok.log" 2>/dev/null && break; sleep 0.2; done
 check_contains "update runs Omarchy's update" "omarchy plugin update $pid --yes" "$(cat "$TMP/ok.log" 2>/dev/null)"
 check_contains "…--restart then restarts the shell" "omarchy restart shell" "$(cat "$TMP/ok.log" 2>/dev/null)"
@@ -916,9 +916,9 @@ section "the documented IPC surface is the one that exists"
 # The form that works, and that this was checked against, is `omarchy shell`.
 svc="$HERE/../Service.qml"
 check "no command that does not exist is documented" "0" \
-  "$(grep -c 'omarchy ipc call omarchy-replicant' "$svc" || true)"
+  "$(grep -c 'omarchy ipc call replicant' "$svc" || true)"
 check "…and the one that does is" "2" \
-  "$(grep -c 'omarchy shell omarchy-replicant' "$svc" || true)"
+  "$(grep -c 'omarchy shell replicant-service' "$svc" || true)"
 # Inside the IpcHandler block specifically: Service.qml also has a plain
 # refresh() of its own, and counting both would pass whether or not the handler
 # exposes anything.

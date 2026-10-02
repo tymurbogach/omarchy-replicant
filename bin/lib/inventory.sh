@@ -34,7 +34,7 @@ regenerate_inventory() {
   {
     echo "# id<TAB>version<TAB>origin<TAB>method"
     echo "# A restore never fetches one. Install it yourself, one at a time:"
-    echo "#   omarchy-replicant install-plugin <id>"
+    echo "#   replicant install-plugin <id>"
     echo "# method 'add'   -> omarchy plugin add <origin>"
     echo "# method 'clone' -> omarchy plugin clone <origin>"
     for pmf in "$HOME/.config/omarchy/plugins"/*/manifest.json; do
@@ -50,7 +50,7 @@ regenerate_inventory() {
 
   {
     echo "# name<TAB>origin — user-installed themes. A restore never fetches one."
-    echo "#   omarchy-replicant install-theme <name>"
+    echo "#   replicant install-theme <name>"
     for tdir in "$HOME/.config/omarchy/themes"/*/; do
       [[ -d "$tdir" ]] || continue
       tname=$(basename "${tdir%/}")

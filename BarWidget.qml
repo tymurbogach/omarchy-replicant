@@ -7,11 +7,11 @@ import "replicant.js" as R
 
 BarWidget {
   id: root
-  moduleName: "io.github.tymurbogach.omarchy-replicant"
+  moduleName: "io.github.tymurbogach.replicant"
 
   // The CLI inside this plugin, resolved relative to this file and never looked
   // up on PATH. Service.qml says why.
-  readonly property string cli: String(Qt.resolvedUrl("bin/omarchy-replicant")).replace(/^file:\/\//, "")
+  readonly property string cli: String(Qt.resolvedUrl("bin/replicant")).replace(/^file:\/\//, "")
 
   property var repoState: ({ initialized: false })
   property bool asked: false
@@ -247,7 +247,7 @@ BarWidget {
   //   omarchy shell replicant toggle
   //   omarchy shell replicant tab settings
   //
-  // This target was `omarchy-replicant-panel`, and the base Panel made a
+  // This target was `replicant-panel`, and the base Panel made a
   // second one, `replicant`. Two names opened the same panel, and only the
   // second was documented, so the one handler now has that name.
   IpcHandler {

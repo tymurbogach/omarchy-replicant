@@ -5,8 +5,8 @@ import Quickshell.Io
 // keepLoaded service. Its only job is the IPC surface, so a script can ask the
 // running shell what Replicant sees without shelling out to git itself:
 //
-//   omarchy shell omarchy-replicant status
-//   omarchy shell omarchy-replicant refresh
+//   omarchy shell replicant-service status
+//   omarchy shell replicant-service refresh
 //
 // (`omarchy ipc call ...`, which this comment used to give, is not a command.
 // The verified form is `omarchy shell <target> <method>`.)
@@ -31,11 +31,11 @@ Item {
   // The CLI that ships inside this plugin. Resolved relative to this file, so
   // it is correct no matter where the plugin was installed — including a
   // symlinked dev checkout. It is NOT looked up on PATH: `omarchy plugin add`
-  // runs no install hook, so nothing puts omarchy-replicant on PATH, and a
+  // runs no install hook, so nothing puts replicant on PATH, and a
   // fresh install pointing at ~/.local/bin would leave every button in this
-  // panel silently doing nothing. `omarchy-replicant link` is the opt-in that
+  // panel silently doing nothing. `replicant link` is the opt-in that
   // adds it to PATH for terminal use; the UI never depends on it.
-  readonly property string cli: String(Qt.resolvedUrl("bin/omarchy-replicant")).replace(/^file:\/\//, "")
+  readonly property string cli: String(Qt.resolvedUrl("bin/replicant")).replace(/^file:\/\//, "")
 
   function refresh(full) {
     if (probe.running) return
@@ -64,7 +64,7 @@ Item {
   }
 
   IpcHandler {
-    target: "omarchy-replicant"
+    target: "replicant-service"
     function status(): string { return JSON.stringify(root.replicantState) }
     function refresh() { root.refresh(true) }
   }

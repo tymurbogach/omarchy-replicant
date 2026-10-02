@@ -9,7 +9,7 @@
 set -uo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-CLI="$HERE/../bin/omarchy-replicant"
+CLI="$HERE/../bin/replicant"
 CORE_BIN="$HERE/../bin/replicant-core.sh"
 # shellcheck source=tests/lib.sh
 source "$HERE/lib.sh"

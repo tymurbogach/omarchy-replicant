@@ -10,14 +10,14 @@ ROOT="$(cd -- "$HERE/.." && pwd)"
 source "$HERE/lib.sh"
 
 section "the CLI owns no git plumbing"
-check_false "no direct git invocation in bin/omarchy-replicant" \
-  bash -c 'grep -n "git -C" "$1" | grep -v "^.*#" | grep -q .' _ "$ROOT/bin/omarchy-replicant"
+check_false "no direct git invocation in bin/replicant" \
+  bash -c 'grep -n "git -C" "$1" | grep -v "^.*#" | grep -q .' _ "$ROOT/bin/replicant"
 check_false "no local git_repo helper in the CLI" \
-  bash -c 'grep -q "^git_repo()" "$1"' _ "$ROOT/bin/omarchy-replicant"
+  bash -c 'grep -q "^git_repo()" "$1"' _ "$ROOT/bin/replicant"
 check_false "no local cache invalidation duplicate in the CLI" \
-  bash -c 'grep -q "invalidate_brief_cache()" "$1"' _ "$ROOT/bin/omarchy-replicant"
+  bash -c 'grep -q "invalidate_brief_cache()" "$1"' _ "$ROOT/bin/replicant"
 check_true "the CLI invalidates through the core engine" \
-  bash -c 'grep -q "briefcache_invalidate\|cache-invalidate" "$1"' _ "$ROOT/bin/omarchy-replicant"
+  bash -c 'grep -q "briefcache_invalidate\|cache-invalidate" "$1"' _ "$ROOT/bin/replicant"
 
 section "git mutations live in the transaction module"
 for fn in tx_shape_begin tx_shape_commit tx_shape_finish core_shape_transact \

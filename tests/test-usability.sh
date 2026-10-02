@@ -12,7 +12,7 @@ ROOT="${USABILITY_ROOT:-$(cd -- "$HERE/.." && pwd)}"
 source "$HERE/lib.sh"
 
 PANEL="$ROOT/Panel.qml"
-CLI="$ROOT/bin/omarchy-replicant"
+CLI="$ROOT/bin/replicant"
 # Every QML file, the panel's parts in components/ included. A check that reads
 # only Panel.qml stops seeing a label the day its component moves to a file.
 QML=("$ROOT"/*.qml "$ROOT"/components/*.qml)
@@ -129,16 +129,16 @@ check_true "SSH remains a transport choice" grep -qF 'text: root.sshReady() ? "S
 section "installation exposes and preserves the bar position"
 check "new widgets default to the center section" "center" \
   "$(jq -r '.barWidget.defaultSection' "$ROOT/manifest.json")"
-interactive_install='omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --enable'
+interactive_install='omarchy plugin add https://github.com/tymurbogach/replicant --enable'
 check_true "the README shows the interactive install" grep -qF "$interactive_install" "$ROOT/README.md"
 check_false "the interactive install does not bypass the position question" \
   grep -qF "$interactive_install --yes" "$ROOT/README.md"
 check_true "the README gives an automatic add command" \
-  grep -qF 'omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --yes' "$ROOT/README.md"
+  grep -qF 'omarchy plugin add https://github.com/tymurbogach/replicant --yes' "$ROOT/README.md"
 check_true "the automatic path chooses a section explicitly" \
-  grep -qF 'omarchy plugin enable io.github.tymurbogach.omarchy-replicant --section center' "$ROOT/README.md"
+  grep -qF 'omarchy plugin enable io.github.tymurbogach.replicant --section center --after omarchy.clock' "$ROOT/README.md"
 check_true "later moves use the live Omarchy bar command" \
-  grep -qF 'omarchy bar move io.github.tymurbogach.omarchy-replicant --section <left|center|right>' "$ROOT/README.md"
+  grep -qF 'omarchy bar move io.github.tymurbogach.replicant --section <left|center|right>' "$ROOT/README.md"
 
 section "the bar names the missing state"
 # Regression test for the missing-file defect. A saved file

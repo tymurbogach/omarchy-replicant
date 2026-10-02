@@ -237,13 +237,13 @@ core_tx_resume() {
   if [[ "$PUSHED" == "failed" ]]; then
     echo "Saved locally, but the push to GitHub failed:" >&2
     printf '%s\n' "$PUSH_ERR" | sed 's/^/    /' >&2
-    echo "Another machine may have saved first. Run 'omarchy-replicant pull', then push again." >&2
+    echo "Another machine may have saved first. Run 'replicant pull', then push again." >&2
     echo "The transaction is kept at $txdir — push again to retry." >&2
     return 1
   fi
   tx_remove "$txdir"
   case "$PUSHED" in
-    no-remote) echo "Resumed and saved on this machine. There is no remote yet: run 'omarchy-replicant create --push'." >&2 ;;
+    no-remote) echo "Resumed and saved on this machine. There is no remote yet: run 'replicant create --push'." >&2 ;;
     *) echo "Resumed transaction $uuid and pushed." >&2 ;;
   esac
   return 0
@@ -443,7 +443,7 @@ tx_shape_finish() {
       || echo "transaction: warning: the push state did not reach the journal" >&2
     tx_remove "$txdir"
     briefcache_invalidate 2>/dev/null || true
-    progress_result local-only "Saved on this machine, no remote yet" "omarchy-replicant create --push"
+    progress_result local-only "Saved on this machine, no remote yet" "replicant create --push"
     return 0
   fi
   progress_stage publish false "Publishing"
@@ -452,10 +452,10 @@ tx_shape_finish() {
       || echo "transaction: warning: the push state did not reach the journal" >&2
     echo "Saved locally, but the push to GitHub failed:" >&2
     printf '%s\n' "$push_err" | sed 's/^/    /' >&2
-    echo "Another machine may have saved first. Run 'omarchy-replicant pull', then push again." >&2
+    echo "Another machine may have saved first. Run 'replicant pull', then push again." >&2
     echo "The next save (or an explicit push) retries it." >&2
     briefcache_invalidate 2>/dev/null || true
-    progress_result local-only "Saved locally, but the push failed" "omarchy-replicant push"
+    progress_result local-only "Saved locally, but the push failed" "replicant push"
     return 1
   fi
   tx_meta_field "$txdir" push "ok" \

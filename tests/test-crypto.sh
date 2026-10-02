@@ -7,7 +7,7 @@ set -uo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CORE="$HERE/../bin/replicant-core.sh"
-CLI="$HERE/../bin/omarchy-replicant"
+CLI="$HERE/../bin/replicant"
 # shellcheck source=tests/lib.sh
 source "$HERE/lib.sh"
 
@@ -262,16 +262,16 @@ check "a locked row carries no count either" "0" \
   "$(build_secrets_json 2>/dev/null | jq -r '[.[] | select(.id=="env/60-secrets.conf")][0].var_count')"
 check_contains "doctor names the import remedy" "key import" \
   "$("$CLI" doctor 2>&1)"
-check_contains "…with the exact command" "omarchy-replicant key import" \
+check_contains "…with the exact command" "replicant key import" \
   "$("$CLI" doctor 2>&1)"
-check "remediation points at import when keyless" "omarchy-replicant key import <source>" \
+check "remediation points at import when keyless" "replicant key import <source>" \
   "$(key_remediation 2>/dev/null)"
 mv "$TMP/identity.keep" "$KEYS"
 check "brief is back to 0 with the key" "0" \
   "$(core_status --json --brief --no-fetch 2>/dev/null | jq -r .locked)"
 check_contains "doctor reports the key ready" "secret key ready" \
   "$("$CLI" doctor 2>&1)"
-check "remediation is a no-op when ready" "omarchy-replicant key status" \
+check "remediation is a no-op when ready" "replicant key status" \
   "$(key_remediation 2>/dev/null)"
 
 section "the hook lets vault ciphertext through"

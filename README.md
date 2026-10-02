@@ -1,4 +1,4 @@
-<h1 align="center">Omarchy Replicant</h1>
+<h1 align="center">Replicant</h1>
 
 <p align="center">
   <b>Manage, save and replicate your Omarchy setup across your machines.</b><br>
@@ -14,16 +14,33 @@
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --enable
+omarchy plugin add https://github.com/tymurbogach/replicant --enable
 ```
 
 Omarchy asks whether to trust the plugin and where to place its widget: left, center or right.
 For an automated installation, choose the section explicitly:
 
 ```bash
-omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --yes
-omarchy plugin enable io.github.tymurbogach.omarchy-replicant --section center
+omarchy plugin add https://github.com/tymurbogach/replicant --yes
+omarchy plugin enable io.github.tymurbogach.replicant --section center --after omarchy.clock
 ```
+
+The default spot is center, right after the clock. To put it elsewhere, move it
+afterwards with the command under **Bar position**.
+
+### Migrate from `omarchy-replicant`
+
+The plugin id changed. Remove the old one first, keep your local data, then add
+the new one:
+
+```bash
+omarchy plugin remove io.github.tymurbogach.omarchy-replicant
+mv ~/.local/share/omarchy-replicant ~/.local/share/replicant
+omarchy plugin add https://github.com/tymurbogach/replicant --enable
+```
+
+Your private data repo on GitHub is untouched. Moving the folder keeps your key
+(`keys/identity.txt`) and caches, so no key import is needed.
 
 Click the icon in your bar, then **Create private repo**. The panel requires GitHub API
 authentication to create the repository. It checks SSH separately as an optional Git transport.
@@ -37,8 +54,8 @@ lists what changed, installs the version with `omarchy plugin update`, and resta
 panel asks GitHub at most every six hours. Click the version in the header to ask at once.
 
 ```bash
-omarchy-replicant update-check    # what is new, if anything
-omarchy-replicant update          # asks, then updates; --restart restarts the shell
+replicant update-check    # what is new, if anything
+replicant update          # asks, then updates; --restart restarts the shell
 ```
 
 ## Usage
@@ -75,10 +92,10 @@ The package and plugin inventory is recorded for each hostname, so two machines 
 instead of overwriting each other.
 
 ```bash
-omarchy-replicant profile              # which profile this machine is in
-omarchy-replicant profile desktop      # put it in another one
-omarchy-replicant scope hypr/input.lua profile
-omarchy-replicant policy set --scope off -- hypr/input.lua hypr/hyprlock.conf
+replicant profile              # which profile this machine is in
+replicant profile desktop      # put it in another one
+replicant scope hypr/input.lua profile
+replicant policy set --scope off -- hypr/input.lua hypr/hyprlock.conf
 ```
 
 ### Status
@@ -87,7 +104,7 @@ Full JSON status uses one `entries` array.
 Replicant accepts only a valid repository with an encrypted vault.
 
 ```bash
-omarchy-replicant status --json
+replicant status --json
 ```
 
 ### A key for secrets
@@ -96,11 +113,11 @@ Secrets are encrypted with age. One machine creates the shared identity, backs i
 repo, and each other machine adopts it once:
 
 ```bash
-omarchy-replicant key init
-omarchy-replicant key export /path/outside/replicant/identity.txt
-omarchy-replicant key import /path/outside/replicant/identity.txt
-omarchy-replicant key status
-omarchy-replicant key rotate   # re-encrypts every secret to a new identity
+replicant key init
+replicant key export /path/outside/replicant/identity.txt
+replicant key import /path/outside/replicant/identity.txt
+replicant key status
+replicant key rotate   # re-encrypts every secret to a new identity
 ```
 
 The repository holds only the public recipient. The private identity never enters Git, logs,
@@ -123,10 +140,10 @@ Panel, **Configs**, **Add files** has two ways in:
 Nothing is added until you press a button.
 
 ```bash
-omarchy-replicant suggest                                # the same list, in a terminal
-omarchy-replicant track ~/.local/bin/my-script
-omarchy-replicant track ~/.config/nvim/                  # a whole directory
-omarchy-replicant track ~/.config/gh/hosts.yml --secret  # stored at mode 600, never shown
+replicant suggest                                # the same list, in a terminal
+replicant track ~/.local/bin/my-script
+replicant track ~/.config/nvim/                  # a whole directory
+replicant track ~/.config/gh/hosts.yml --secret  # stored at mode 600, never shown
 ```
 
 ### Stop saving a file, and get it back
@@ -139,9 +156,9 @@ Git history keeps every copy. **Restore**, **Deleted from your repo** lists them
 removed them. **Bring back** puts the copy back in the repo and on this machine, and tracks it again.
 
 ```bash
-omarchy-replicant forget hypr/old.lua        # a file you deleted: its copy goes too
-omarchy-replicant deleted                    # what left the repo, by commit
-omarchy-replicant recover <sha> --apply      # bring back what that commit deleted
+replicant forget hypr/old.lua        # a file you deleted: its copy goes too
+replicant deleted                    # what left the repo, by commit
+replicant recover <sha> --apply      # bring back what that commit deleted
 ```
 
 ### Big things are installed, not copied
@@ -156,7 +173,7 @@ directories. So what travels is the URL.
 | Packages | For each hostname, official and AUR | Your package manager |
 
 **A restore does not fetch a theme or a plugin.** It names each missing one with its origin. You
-install it with `omarchy-replicant install-theme <name>`, `omarchy-replicant install-plugin <id>`,
+install it with `replicant install-theme <name>`, `replicant install-plugin <id>`,
 or the **Install** button in the panel. An origin holds whatever its owner pushed today, and no
 Omarchy install command takes a commit to pin, so fetching somebody else's code stays your decision.
 
@@ -201,10 +218,10 @@ A plugin with a settings file of its own, `~/.config/omarchy/<name>.json`, also 
 ### Second machine
 
 ```bash
-omarchy plugin add https://github.com/tymurbogach/omarchy-replicant --enable
-P=~/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant
-$P/bin/omarchy-replicant clone https://github.com/<you>/<hostname>-replicant
-$P/bin/omarchy-replicant key import /path/to/identity.txt   # before saving secrets
+omarchy plugin add https://github.com/tymurbogach/replicant --enable
+P=~/.config/omarchy/plugins/io.github.tymurbogach.replicant
+$P/bin/replicant clone https://github.com/<you>/<hostname>-replicant
+$P/bin/replicant key import /path/to/identity.txt   # before saving secrets
 ```
 
 Panel, **Restore**, *Preview* shows what would change, and touches nothing.
@@ -212,18 +229,18 @@ Panel, **Restore**, *Preview* shows what would change, and touches nothing.
 ## Configure
 
 - **Settings**: panel, **Settings**. A change is written to the real config file, applied, and
-  committed. The CLI does the same with `omarchy-replicant set <id> <value>`, in the stored unit.
+  committed. The CLI does the same with `replicant set <id> <value>`, in the stored unit.
 - **Scopes and profiles**: open a row in **Configs** and pick **Shared**, your profile, or **Off**.
   The row shows the change at once. Off publishes that policy once, then future saves skip the file.
   Git keeps the last saved copy. In a terminal: `scope` and `profile`.
 - **Bar position**: run
-  `omarchy bar move io.github.tymurbogach.omarchy-replicant --section <left|center|right>`.
+  `omarchy bar move io.github.tymurbogach.replicant --section <left|center|right>`.
   The bar reloads the saved `shell.json` layout immediately. Updates and shell restarts keep it.
 - **Your own files**: **Add files** in the panel, or `track`, `untrack` and `forget`.
 - **A key for the panel**: bind `omarchy shell replicant toggle` in `~/.config/hypr/bindings.lua`.
   `omarchy shell replicant tab settings` opens the panel on one tab.
-- **The command line**: the panel does not need it. To put `omarchy-replicant` on your `PATH`, run
-  `$P/bin/omarchy-replicant link`. `unlink` takes it off again.
+- **The command line**: the panel does not need it. To put `replicant` on your `PATH`, run
+  `$P/bin/replicant link`. `unlink` takes it off again.
 
 ## Safety
 
@@ -236,17 +253,17 @@ kept as `<file>.bak.<epoch>`. Nothing outside `$HOME` is written without a word:
 `purge` lives inside the plugin, so run it **before** you remove the plugin:
 
 ```bash
-P=~/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant
-$P/bin/omarchy-replicant purge                 # show what is on disk, and change nothing
-$P/bin/omarchy-replicant purge --apply --repo  # remove it, the local clone included
-omarchy plugin remove io.github.tymurbogach.omarchy-replicant
+P=~/.config/omarchy/plugins/io.github.tymurbogach.replicant
+$P/bin/replicant purge                 # show what is on disk, and change nothing
+$P/bin/replicant purge --apply --repo  # remove it, the local clone included
+omarchy plugin remove io.github.tymurbogach.replicant
 ```
 
 Your GitHub repo is not touched either way.
 
 ## Requirements
 
-Omarchy 4 (Quattro), and three tools beyond a stock install. `omarchy-replicant doctor` checks
+Omarchy 4 (Quattro), and three tools beyond a stock install. `replicant doctor` checks
 all three, and it names the command that installs a missing one.
 
 | Tool | Why | Install |
@@ -256,7 +273,7 @@ all three, and it names the command that installs a missing one.
 | `age` | Encrypts secrets with a shared post-quantum key (`age-keygen -pq`) | `omarchy pkg add age` |
 
 `git` is on every Omarchy machine. The plugin pulls in nothing else, and it writes nothing outside
-its own folder and `~/.local/share/omarchy-replicant/`.
+its own folder and `~/.local/share/replicant/`.
 
 ## Docs
 

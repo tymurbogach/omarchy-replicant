@@ -14,12 +14,12 @@ mkdir -p "$HOME/.config/hypr" "$HOME/.config/omarchy" "$OMARCHY_PATH/config/hypr
 printf 'default input\n' > "$OMARCHY_PATH/config/hypr/input.lua"
 printf 'local input\n' > "$HOME/.config/hypr/input.lua"
 printf '{ "idle": { "screensaver": 300, "lock": 600 } }\n' > "$HOME/.config/omarchy/shell.json"
-"$ROOT/bin/omarchy-replicant" init >/dev/null 2>&1
+"$ROOT/bin/replicant" init >/dev/null 2>&1
 STATUS="$TMP/status.json"
-"$ROOT/bin/omarchy-replicant" status --json --no-fetch > "$STATUS"
+"$ROOT/bin/replicant" status --json --no-fetch > "$STATUS"
 
 for state in overview configs manage settings; do
-  out="/tmp/omarchy-replicant-panel-$state.png"
+  out="/tmp/replicant-panel-$state.png"
   case "$state" in
     overview) tab=overview; cards=; js= ;;
     configs) tab=configs; cards=; js= ;;

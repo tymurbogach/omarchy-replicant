@@ -13,7 +13,7 @@ LIST_ONLY=0
 [[ "${1:-}" == "--list-missing" ]] && LIST_ONLY=1
 
 dispatch_commands() {
-  grep -oE '^    [a-z][a-z0-9|-]*\) shift' "$ROOT/bin/omarchy-replicant" \
+  grep -oE '^    [a-z][a-z0-9|-]*\) shift' "$ROOT/bin/replicant" \
     | sed -e 's/^ *//' -e 's/) shift//' | sort -u
 }
 

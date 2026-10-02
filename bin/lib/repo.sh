@@ -39,7 +39,7 @@ repo_create() {
   [[ "$transport" == https || "$transport" == ssh ]] || { echo "invalid transport: $transport" >&2; return 1; }
   gh_user=$(gh api user --jq .login 2>/dev/null || gh auth status 2>&1 | grep -oP 'account \K\w+' | head -n1)
   if [[ -z "$gh_user" ]]; then
-    echo "no gh user — run 'gh auth login', then retry 'omarchy-replicant create $name'" >&2
+    echo "no gh user — run 'gh auth login', then retry 'replicant create $name'" >&2
     return 1
   fi
   echo "creating github.com/$gh_user/$name --private ..." >&2
@@ -52,7 +52,7 @@ repo_create() {
     fi
   else
     gh repo create "$name" --private --description "Omarchy replicant private repo" >/dev/null 2>&1 || {
-      echo "gh create failed — run 'gh auth login', then retry 'omarchy-replicant create $name'" >&2
+      echo "gh create failed — run 'gh auth login', then retry 'replicant create $name'" >&2
       return 1
     }
     vis=$(gh repo view "$gh_user/$name" --json visibility --jq .visibility 2>/dev/null || echo "")
@@ -88,7 +88,7 @@ repo_create() {
       _repo_create_push "$url" "$txdir" || return 1
     else
       tx_abort "$txdir"
-      echo "remote $url; run omarchy-replicant save --auto to push" >&2
+      echo "remote $url; run replicant save --auto to push" >&2
     fi
     return 0
   fi
@@ -99,8 +99,8 @@ repo_create() {
       || echo "create: warning: the push state did not reach the journal" >&2
     tx_remove "$txdir"
     briefcache_invalidate 2>/dev/null || true
-    progress_result local-only "Saved on this machine, not pushed" "omarchy-replicant push"
-    echo "remote $url; run omarchy-replicant save --auto to push" >&2
+    progress_result local-only "Saved on this machine, not pushed" "replicant push"
+    echo "remote $url; run replicant save --auto to push" >&2
   fi
 }
 
@@ -138,7 +138,7 @@ _repo_create_push() {
     echo "push to $url held by injected failure — the local commit is kept; retry 'git -C $REPO_DIR push -u origin main'" >&2
     echo "The transaction is kept — resume it with 'tx resume' (see 'tx list')." >&2
     briefcache_invalidate 2>/dev/null || true
-    progress_result local-only "Saved locally, but the push failed" "omarchy-replicant push"
+    progress_result local-only "Saved locally, but the push failed" "replicant push"
     return 1
   fi
   progress_stage publish false "Publishing"
@@ -153,10 +153,10 @@ _repo_create_push() {
   fi
   tx_meta_field "$txdir" push "failed" \
     || echo "create: warning: the push state did not reach the journal" >&2
-  echo "push to $url failed — the local commit is kept; run 'omarchy-replicant pull', then retry 'git -C $REPO_DIR push -u origin main'" >&2
+  echo "push to $url failed — the local commit is kept; run 'replicant pull', then retry 'git -C $REPO_DIR push -u origin main'" >&2
   echo "The transaction is kept — resume it with 'tx resume' (see 'tx list')." >&2
   briefcache_invalidate 2>/dev/null || true
-  progress_result local-only "Saved locally, but the push failed" "omarchy-replicant push"
+  progress_result local-only "Saved locally, but the push failed" "replicant push"
   return 1
 }
 
@@ -165,7 +165,7 @@ repo_push() {
   local remote branch ahead err
   remote=$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null || true)
   if [[ -z "$remote" ]]; then
-    echo "nothing to push — there is no remote yet: run 'omarchy-replicant create --push'" >&2
+    echo "nothing to push — there is no remote yet: run 'replicant create --push'" >&2
     return 0
   fi
   branch=$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)
@@ -193,7 +193,7 @@ repo_push() {
   fi
   echo "Saved locally, but the push to GitHub failed:" >&2
   printf '%s\n' "$err" | sed 's/^/    /' >&2
-  echo "Another machine may have saved first. Run 'omarchy-replicant pull', then push again." >&2
+  echo "Another machine may have saved first. Run 'replicant pull', then push again." >&2
   return 1
 }
 
@@ -263,7 +263,7 @@ repo_clone() {
   fi
   git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
   rm -f -- "$REPLICANT_HOME/cache/state.json" 2>/dev/null || true
-  echo "cloned into $REPO_DIR — run omarchy-replicant restore --dry-run" >&2
+  echo "cloned into $REPO_DIR — run replicant restore --dry-run" >&2
 }
 
 # _repo_clone_build <url> <stage>: clone and validate inside the staging dir.
@@ -277,13 +277,13 @@ _repo_clone_build() {
   git clone -- "$url" "$stage" 2>&1 || {
     echo "clone failed — the temporary clone was removed; check access, then retry:" >&2
     echo "  gh auth login" >&2
-    printf '  omarchy-replicant clone %s\n' "$url" >&2
+    printf '  replicant clone %s\n' "$url" >&2
     return 1
   }
   if ! git -C "$stage" rev-parse HEAD >/dev/null 2>&1; then
     branches=$(git -C "$stage" branch -r --format='%(refname:short)' 2>/dev/null | sed 's|^origin/||' | grep -v '^HEAD' | paste -sd' ' -)
     if [[ -z "$branches" ]]; then
-      echo "the clone worked but the remote is empty. Use 'omarchy-replicant create --push' on the first machine." >&2
+      echo "the clone worked but the remote is empty. Use 'replicant create --push' on the first machine." >&2
       return 1
     fi
     local branch="${branches%% *}"
@@ -293,7 +293,7 @@ _repo_clone_build() {
   if REPO_DIR="$stage" require_ready_schema; then
       :
   else
-        printf 'clone: the staged schema marker is invalid — the temporary clone was removed; verify the remote, then retry omarchy-replicant clone %s\n' "$url" >&2
+        printf 'clone: the staged schema marker is invalid — the temporary clone was removed; verify the remote, then retry replicant clone %s\n' "$url" >&2
         return 1
   fi
   return 0

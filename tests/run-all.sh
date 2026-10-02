@@ -13,7 +13,7 @@ section "static: format"
 bash "$HERE/test-format.sh"
 
 section "static: syntax"
-for file in "$ROOT"/bin/omarchy-replicant "$ROOT"/bin/*.sh "$ROOT"/bin/lib/*.sh; do
+for file in "$ROOT"/bin/replicant "$ROOT"/bin/*.sh "$ROOT"/bin/lib/*.sh; do
   bash -n "$file"
 done
 

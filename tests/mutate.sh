@@ -269,7 +269,7 @@ from:   for retired in system.txt mise.txt npm-global.txt containers.txt system-
 to:   for retired in system.txt mise.txt npm-global.txt containers.txt system-services.txt; do
 why: a backup sweeps retired inventories including defined-secrets.txt
 ---
-file: bin/omarchy-replicant
+file: bin/replicant
 suite: test-crypto.sh
 from:     if key_out=$(bash "$CORE" key status 2>&1); then key_rc=0; else key_rc=$?; fi
 to:     key_rc=0
@@ -355,7 +355,7 @@ why: pull refuses a dirty worktree instead of stashing it
 ---
 file: bin/lib/repo.sh
 suite: test-save.sh
-from:     echo "nothing to push — there is no remote yet: run 'omarchy-replicant create --push'" >&2
+from:     echo "nothing to push — there is no remote yet: run 'replicant create --push'" >&2
 to:     :
 why: push names the next step when there is no remote
 ---
@@ -461,15 +461,15 @@ from:   [[ "$(basename -- "$real")" != .git ]] || {
 to:   [[ "$(basename -- "$real")" == .git ]] || {
 why: bulk rejects a single .git file as well as tree artifacts
 ---
-file: bin/omarchy-replicant
+file: bin/replicant
 suite: test-settings-save.sh
 from:   save_args=(--id "$owner")
 to:   save_args=(--all)
 why: setting writes never save unrelated entries
 ---
-file: bin/omarchy-replicant
+file: bin/replicant
 suite: test-settings-save.sh
-from:     echo "The setting is saved locally, but the push failed. Retry: omarchy-replicant push" >&2
+from:     echo "The setting is saved locally, but the push failed. Retry: replicant push" >&2
 to:     echo "The setting is saved locally, but the push failed." >&2
 why: setting push failures print an exact retry command
 ---
@@ -545,25 +545,25 @@ from:   readonly property string metaText: root.statusError !== "" ? "status una
 to:   readonly property string metaText: root.ready
 why: the panel header never calls a failed status not set up
 ---
-file: bin/omarchy-replicant
+file: bin/replicant
 suite: test-cli.sh
 from:     [[ "$arg" == "--help" ]] || continue
 to:     [[ false ]] || continue
 why: help after another option stops the command
 ---
-file: bin/omarchy-replicant
+file: bin/replicant
 suite: test-cli.sh
 from:   exec 9>"$REPLICANT_HOME/.replicant.lock" || fail "cannot open the Replicant lock file: $REPLICANT_HOME/.replicant.lock"
 to:   exec 9>"$REPLICANT_HOME/.replicant.lock" || return 0
 why: a lock descriptor failure stops the command
 ---
-file: bin/omarchy-replicant
+file: bin/replicant
 suite: test-cli.sh
 from:       -y|--yes) fail "undo: --yes is not supported; use --apply" ;;
 to:       -y|--yes) DRY=0 ;;
 why: undo accepts only --apply for a mutation
 ---
-file: bin/omarchy-replicant
+file: bin/replicant
 suite: test-cli.sh
 from: source "$1" || exit $?
 to: source "$1" 2>/dev/null || true

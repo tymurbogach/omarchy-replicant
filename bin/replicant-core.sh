@@ -11,7 +11,7 @@ PLUGIN_DIR="$(cd -- "$(dirname -- "$REAL_CORE")/.." && pwd)"
 # shellcheck source=bin/lib/common.sh
 source "$PLUGIN_DIR/bin/lib/common.sh" || { echo "replicant-core.sh: bin/lib/common.sh is missing" >&2; exit 1; }
 # User's target repo (separate from the plugin's own code): private save layout
-REPLICANT_HOME="${OMARCHY_REPLICANT_HOME:-$HOME/.local/share/omarchy-replicant}"
+REPLICANT_HOME="${OMARCHY_REPLICANT_HOME:-$HOME/.local/share/replicant}"
 # A save transaction snapshots into a detached worktree: the snapshot half
 # re-runs the copy passes with the repo paths redirected there, so the active
 # worktree stays untouched until the fast-forward. Only save.sh sets this.
@@ -60,7 +60,7 @@ load_auto_manifest
 
 # The commands below run only when this file is executed. A caller that sources
 # it for its functions passes its own positional parameters through, so without
-# this line `omarchy-replicant path machine` ran the `machine` command first.
+# this line `replicant path machine` ran the `machine` command first.
 [[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
 
 # An unknown command is an error. The chain of ifs that this replaces did

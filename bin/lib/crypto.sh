@@ -651,7 +651,7 @@ vault_restore_entry_privileged() {
   local rel="$1" src="$2" blobfile="$3" tmp idf apply script
   vault_arm_traps
   tmp=$(vault_priv_mktemp "$(dirname -- "$src")") || {
-    printf 'replicant: cannot acquire privilege for %s — run with a polkit agent or passwordless sudo, then retry: omarchy-replicant restore-file %s\n' "$src" "$rel" >&2
+    printf 'replicant: cannot acquire privilege for %s — run with a polkit agent or passwordless sudo, then retry: replicant restore-file %s\n' "$src" "$rel" >&2
     return 1
   }
   _vault_note_priv_temp "$tmp"
@@ -690,7 +690,7 @@ vault_restore_entry_privileged() {
   else
     vault_priv_cleanup "$tmp"
     _vault_drop_priv_temp "$tmp"
-    printf 'replicant: privileged install of %s failed — the live file is untouched; retry: omarchy-replicant restore-file %s\n' "$src" "$rel" >&2
+    printf 'replicant: privileged install of %s failed — the live file is untouched; retry: replicant restore-file %s\n' "$src" "$rel" >&2
     return 1
   fi
   apply=$(apply_for_category "$(category_for_rel "$rel")")
@@ -836,31 +836,31 @@ key_status() {
 }
 
 # key_remediation: the one command that fixes the current key state, for
-# doctor and for scripts. Prints e.g. "omarchy-replicant key import <source>".
+# doctor and for scripts. Prints e.g. "replicant key import <source>".
 # Never prints key material, only the command.
 key_remediation() {
   local idf recf mine rec
   idf=$(vault_identity_file)
   if [[ ! -f "$idf" ]]; then
-    printf 'omarchy-replicant key import <source>\n'
+    printf 'replicant key import <source>\n'
     return 0
   fi
   mine=$(age-keygen -y "$idf" 2>/dev/null || true)
   if [[ "$mine" != age1* ]]; then
-    printf 'omarchy-replicant key import <source>\n'
+    printf 'replicant key import <source>\n'
     return 0
   fi
   recf=$(vault_recipient_file)
   if [[ ! -f "$recf" ]]; then
-    printf 'omarchy-replicant key init\n'
+    printf 'replicant key init\n'
     return 0
   fi
   rec=$(tr -d '[:space:]' < "$recf" 2>/dev/null || true)
   if [[ "$mine" != "$rec" ]]; then
-    printf 'omarchy-replicant key import <source>\n'
+    printf 'replicant key import <source>\n'
     return 0
   fi
-  printf 'omarchy-replicant key status\n'
+  printf 'replicant key status\n'
 }
 
 # key_rotate: a new identity for the setup, with every blob re-encrypted to
@@ -1008,9 +1008,9 @@ key_rotation_reconcile() {
   idf=$(vault_identity_file)
   echo "key: a previous rotation did not finish (journal at $journal) — keys and repository disagree" >&2
   if [[ -f "$prev" ]]; then
-    echo "To recover: 'omarchy-replicant key import $prev', then 'omarchy-replicant key rotate' again." >&2
+    echo "To recover: 'replicant key import $prev', then 'replicant key rotate' again." >&2
   else
-    echo "To recover: restore the working identity with 'omarchy-replicant key import <source>', then rotate again." >&2
+    echo "To recover: restore the working identity with 'replicant key import <source>', then rotate again." >&2
   fi
   echo "When 'key status' is ready and the vault is committed, remove $journal and retry." >&2
   return 1

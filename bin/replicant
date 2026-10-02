@@ -1,5 +1,5 @@
 #!/bin/bash
-# omarchy-replicant: back up, restore and replicate an Omarchy 4 setup through
+# replicant: back up, restore and replicate an Omarchy 4 setup through
 # a private GitHub repo that holds config, secrets and state. The panel under
 # the bar icon drives this CLI and reads its state from `status --json`.
 # shellcheck disable=SC2088 # "~" below is literal text and patterns, never an expansion
@@ -10,16 +10,16 @@ PLUGIN_DIR="$(cd -- "$(dirname -- "$REAL_BIN")/.." && pwd)"
 CORE="$PLUGIN_DIR/bin/replicant-core.sh"
 # fallback if running via a copy without the plugin dir
 if [[ ! -f "$CORE" ]]; then
-  installed_core="$HOME/.config/omarchy/plugins/io.github.tymurbogach.omarchy-replicant/bin/replicant-core.sh"
+  installed_core="$HOME/.config/omarchy/plugins/io.github.tymurbogach.replicant/bin/replicant-core.sh"
   if [[ -f "$installed_core" ]]; then
     CORE="$installed_core"
     PLUGIN_DIR="$(cd -- "$(dirname -- "$installed_core")/.." && pwd)"
   fi
 fi
-PLUGIN_ID="io.github.tymurbogach.omarchy-replicant"
-REPLICANT_HOME="${OMARCHY_REPLICANT_HOME:-$HOME/.local/share/omarchy-replicant}"
+PLUGIN_ID="io.github.tymurbogach.replicant"
+REPLICANT_HOME="${OMARCHY_REPLICANT_HOME:-$HOME/.local/share/replicant}"
 REPO_DIR="$REPLICANT_HOME/repo"
-fail() { echo "omarchy-replicant: $*" >&2; exit 1; }
+fail() { echo "replicant: $*" >&2; exit 1; }
 info() { echo -e "\e[36m$*\e[0m" >&2; }
 warn() { echo -e "\e[33m$*\e[0m" >&2; }
 ok()   { echo -e "\e[32m$*\e[0m" >&2; }
@@ -66,7 +66,7 @@ progress_cli_cancel() {
 # machine called "omarchy", the distribution's default hostname, would get the
 # name of this plugin's own repo, so it takes $USER instead.
 _replicant_host=$(replicant_machine); _replicant_host="${_replicant_host%%.*}"
-if [[ "$_replicant_host-replicant" == "omarchy-replicant" ]]; then
+if [[ "$_replicant_host-replicant" == "replicant" ]]; then
   DEFAULT_REPO_NAME="${USER:-user}-replicant"
 else
   DEFAULT_REPO_NAME="$_replicant_host-replicant"
@@ -88,7 +88,7 @@ acquire_repo_lock() {
   exec 9>"$REPLICANT_HOME/.replicant.lock" || fail "cannot open the Replicant lock file: $REPLICANT_HOME/.replicant.lock"
   # REPLICANT_LOCK_WAIT exists for the tests, which cannot wait 90 s per check.
   if ! flock -w "${REPLICANT_LOCK_WAIT:-90}" 9; then
-    fail "another omarchy-replicant operation is still running — try again in a moment"
+    fail "another replicant operation is still running — try again in a moment"
   fi
 }
 
@@ -119,9 +119,9 @@ cmd_tx() {
   [[ "$sub" != "list" ]] && shift || true
   case "$sub" in
     list) bash "$CORE" tx-list ;;
-    resume) [[ -n "${1:-}" ]] || fail "usage: omarchy-replicant tx resume <uuid>"; bash "$CORE" tx-resume "$1" || exit 1; bash "$CORE" cache-invalidate ;;
-    discard) [[ -n "${1:-}" ]] || fail "usage: omarchy-replicant tx discard <uuid> [--force]"; bash "$CORE" tx-discard "$@" || exit 1; bash "$CORE" cache-invalidate ;;
-    *) fail "usage: omarchy-replicant tx list|resume <uuid>|discard <uuid> [--force]" ;;
+    resume) [[ -n "${1:-}" ]] || fail "usage: replicant tx resume <uuid>"; bash "$CORE" tx-resume "$1" || exit 1; bash "$CORE" cache-invalidate ;;
+    discard) [[ -n "${1:-}" ]] || fail "usage: replicant tx discard <uuid> [--force]"; bash "$CORE" tx-discard "$@" || exit 1; bash "$CORE" cache-invalidate ;;
+    *) fail "usage: replicant tx list|resume <uuid>|discard <uuid> [--force]" ;;
   esac
 }
 
@@ -199,7 +199,7 @@ cmd_create() {
     --public) warn "replicant is always private (it holds secrets/) — ignoring --public"; shift;;
     --push) do_push=1; shift;;
     --transport) transport="${2:-}"; shift 2;;
-    --help|-h) echo "Usage: omarchy-replicant create [name] [--push] [--transport https|ssh] (always --private)"; return 0;;
+    --help|-h) echo "Usage: replicant create [name] [--push] [--transport https|ssh] (always --private)"; return 0;;
     -*) fail "unknown option: $1";;
     *) name="$1"; shift;;
   esac; done
@@ -408,7 +408,7 @@ cmd_save_setting() {
   if ! owner=$(setting_save_id "$id"); then
     setting_entry=$(find_setting "$id") || return 1
     setting_file=$(setting_field "$setting_entry" 3)
-    printf 'The setting changed on this machine but has no tracked entry. Retry: omarchy-replicant track %q && omarchy-replicant set %q %q\n' \
+    printf 'The setting changed on this machine but has no tracked entry. Retry: replicant track %q && replicant set %q %q\n' \
       "$setting_file" "$id" "$value" >&2
     return 1
   fi
@@ -418,9 +418,9 @@ cmd_save_setting() {
 
   setting_value_saved "$id" "$value" && saved=true
   if [[ "$saved" == true ]]; then
-    echo "The setting is saved locally, but the push failed. Retry: omarchy-replicant push" >&2
+    echo "The setting is saved locally, but the push failed. Retry: replicant push" >&2
   else
-    printf 'The setting changed on this machine but was not saved. Retry: omarchy-replicant save --id %q -m %q\n' \
+    printf 'The setting changed on this machine but was not saved. Retry: replicant save --id %q -m %q\n' \
       "$owner" "$subject" >&2
   fi
   return "$rc"
@@ -492,7 +492,7 @@ cmd_settings() {
 # one-commit-per-decision convention exists to prevent.
 cmd_scope() {
   local id="${1:-}" want="${2:-}"
-  [[ -n "$id" && -n "$want" ]] || fail "usage: omarchy-replicant scope <id> shared|profile|off"
+  [[ -n "$id" && -n "$want" ]] || fail "usage: replicant scope <id> shared|profile|off"
   load_core
   core_scope_transact "$id" "$want" || exit 1
   bash "$CORE" cache-invalidate
@@ -561,7 +561,7 @@ cmd_bulk() {
 # shipped with. These three are that step, from a terminal; the panel drives
 # the same core functions.
 cmd_track() {
-  [[ $# -gt 0 ]] || fail "usage: omarchy-replicant track <path> [name-in-repo] [--secret]"
+  [[ $# -gt 0 ]] || fail "usage: replicant track <path> [name-in-repo] [--secret]"
   load_core
   core_track_transact "$@" || exit 1
   bash "$CORE" cache-invalidate
@@ -569,7 +569,7 @@ cmd_track() {
 
 cmd_untrack() {
   local id="${1:-}"
-  [[ -n "$id" ]] || fail "usage: omarchy-replicant untrack <id>"
+  [[ -n "$id" ]] || fail "usage: replicant untrack <id>"
   load_core
   core_untrack_transact "$id" || exit 1
   bash "$CORE" cache-invalidate
@@ -591,7 +591,7 @@ cmd_key() {
     rotate) acquire_repo_lock; load_core; core_key_rotate_transact "$@" || exit 1 ;;
     export) acquire_repo_lock; bash "$CORE" key export "$@" || exit 1 ;;
     status) bash "$CORE" key status "$@" || exit 1 ;;
-    *) fail "usage: omarchy-replicant key init|export [--force] <dest>|import <src>|status|rotate" ;;
+    *) fail "usage: replicant key init|export [--force] <dest>|import <src>|status|rotate" ;;
   esac
   bash "$CORE" cache-invalidate
 }
@@ -600,7 +600,7 @@ cmd_key() {
 # your own entries is untracked; a shipped one keeps its place in the list.
 cmd_forget() {
   local id="${1:-}"
-  [[ -n "$id" ]] || fail "usage: omarchy-replicant forget <id>"
+  [[ -n "$id" ]] || fail "usage: replicant forget <id>"
   load_core
   core_forget_transact "$id" || exit 1
   bash "$CORE" cache-invalidate
@@ -620,7 +620,7 @@ cmd_recover() {
       *) [[ -z "$sha" ]] && sha="$arg" ;;
     esac
   done
-  [[ -n "$sha" ]] || fail "usage: omarchy-replicant recover <sha> [--apply]  (the shas: omarchy-replicant deleted)"
+  [[ -n "$sha" ]] || fail "usage: replicant recover <sha> [--apply]  (the shas: replicant deleted)"
   [[ -d "$REPO_DIR/.git" ]] || fail "no repo yet"
   load_core
   if (( DRY )); then
@@ -686,7 +686,7 @@ cmd_suggest() {
     [[ -n "$path" ]] || continue
     n=$((n + 1))
     flag=""; [[ "$kind" == secret ]] && flag=" --secret"
-    printf '  \033[36m%s\033[0m\n      %s · track it with: omarchy-replicant track %s%s\n' \
+    printf '  \033[36m%s\033[0m\n      %s · track it with: replicant track %s%s\n' \
       "${path/#$HOME/\~}" "$reason" "${path/#$HOME/\~}" "$flag"
   done < <(core_suggest)
   if (( n == 0 )); then
@@ -716,7 +716,7 @@ cmd_revert() {
   local id="${1:-}" to="default"
   shift || true
   while (( $# )); do case "$1" in --to) to="${2:-default}"; shift 2;; default|repo) to="$1"; shift;; *) shift;; esac; done
-  [[ -n "$id" ]] || fail "usage: omarchy-replicant revert <setting-id> [--to default|repo]"
+  [[ -n "$id" ]] || fail "usage: replicant revert <setting-id> [--to default|repo]"
   load_core
   core_revert "$id" "$to" || exit 1
   if [[ -d "$REPO_DIR/.git" ]]; then
@@ -730,7 +730,7 @@ cmd_revert() {
 # first. `reset <id>` is its twin, going to Omarchy's default instead.
 cmd_restore_file() {
   local id="${1:-}"
-  [[ -n "$id" ]] || fail "usage: omarchy-replicant restore-file <id>"
+  [[ -n "$id" ]] || fail "usage: replicant restore-file <id>"
   load_core
   core_restore_file "$id" || exit 1
 }
@@ -740,7 +740,7 @@ cmd_restore_file() {
 # them itself (see restore_themes below) — this is the explicit action.
 cmd_install_theme() {
   local name="${1:-}"
-  [[ -n "$name" ]] || fail "usage: omarchy-replicant install-theme <name>"
+  [[ -n "$name" ]] || fail "usage: replicant install-theme <name>"
   load_core
   core_install_theme "$name" || exit 1
 }
@@ -761,7 +761,7 @@ cmd_install_plugin() {
       *) if [[ -z "$id" ]]; then id="$arg"; fi ;;
     esac
   done
-  [[ -n "$id" ]] || fail "usage: omarchy-replicant install-plugin <id> [--check|--revision <sha> --yes]"
+  [[ -n "$id" ]] || fail "usage: replicant install-plugin <id> [--check|--revision <sha> --yes]"
   load_core
   # --check prints what the marketplace checked and where the origin is now,
   # and installs nothing. The panel asks this before it asks for consent.
@@ -850,7 +850,7 @@ cmd_doctor() {
   n_pp=$(printf '%s' "$pp" | grep -c . || true)
   if (( n_pp > 0 )); then
     chk_warn "$(plural "$n_pp" plugin) recorded but not installed here — restore does not fetch these on its own:"
-    printf '%s\n' "$pp" | awk -F'\t' '{print "      omarchy-replicant install-plugin " $1}' >&2
+    printf '%s\n' "$pp" | awk -F'\t' '{print "      replicant install-plugin " $1}' >&2
   fi
 
   # A clone HAS an origin, so the check above calls it fine — and it is, about
@@ -876,10 +876,10 @@ cmd_doctor() {
       # other bug found this week. Ask the repo, not the list.
       if is_tracked_path "$cl_dir/" 2>/dev/null; then
         [[ -d "$(bash "$CORE" repo-path "omarchy/plugins/${cl_dir##*/}/" 2>/dev/null)" ]] && continue
-        untracked_clones+="      $cl_id  →  tracked but not saved yet: omarchy-replicant save --auto"$'\n'
+        untracked_clones+="      $cl_id  →  tracked but not saved yet: replicant save --auto"$'\n'
         continue
       fi
-      untracked_clones+="      $cl_id  →  omarchy-replicant track ${cl_dir/#$HOME/\~}/"$'\n'
+      untracked_clones+="      $cl_id  →  replicant track ${cl_dir/#$HOME/\~}/"$'\n'
     done <<< "$cl"
   fi
   if [[ -n "$untracked_clones" ]]; then
@@ -903,7 +903,7 @@ cmd_doctor() {
     e_what=""
     (( e_dirty > 0 )) && e_what="$(plural "$e_dirty" "uncommitted change")"
     (( e_ahead > 0 )) && e_what="${e_what:+$e_what, }$(plural "$e_ahead" "commit") not pushed"
-    edited_lines+="      $e_id  ·  $e_what  →  push it, or: omarchy-replicant track ${e_dir/#$HOME/\~}/"$'\n'
+    edited_lines+="      $e_id  ·  $e_what  →  push it, or: replicant track ${e_dir/#$HOME/\~}/"$'\n'
   done <<< "$ed"
   if [[ -n "$edited_lines" ]]; then
     chk_warn "$(plural "$(printf '%s' "$edited_lines" | grep -c .)" plugin) with work that exists only in this checkout — reinstalling brings back the origin's code without it:"
@@ -932,18 +932,18 @@ cmd_doctor() {
   lt=$(local_only_themes 2>/dev/null || true)
   n_lt=$(printf '%s' "$lt" | grep -c . || true)
   n_inv=$(awk -F'\t' '!/^#/ && NF>=2 && $2 != "-" {n++} END{print n+0}' "$STATE_DIR/omarchy-themes.txt" 2>/dev/null || echo 0)
-  chk_ok "$(plural "$n_inv" "user theme") recorded with an origin — install one with 'omarchy-replicant install-theme'"
+  chk_ok "$(plural "$n_inv" "user theme") recorded with an origin — install one with 'replicant install-theme'"
   local pt n_pt
   pt=$(missing_themes 2>/dev/null || true)
   n_pt=$(printf '%s' "$pt" | grep -c . || true)
   if (( n_pt > 0 )); then
     chk_warn "$(plural "$n_pt" theme) recorded but not installed here — restore does not fetch these on its own:"
-    printf '%s\n' "$pt" | awk -F'\t' '{print "      omarchy-replicant install-theme " $1}' >&2
+    printf '%s\n' "$pt" | awk -F'\t' '{print "      replicant install-theme " $1}' >&2
   fi
   if (( n_lt > 0 )); then
     chk_warn "$(plural "$n_lt" theme) have no origin and are not tracked either:"
     printf '%s\n' "$lt" | sed 's/^/      /' >&2
-    printf '      track the directory to back one up: omarchy-replicant track ~/.config/omarchy/themes/<name>\n' >&2
+    printf '      track the directory to back one up: replicant track ~/.config/omarchy/themes/<name>\n' >&2
   fi
 
   echo "Hyprland"
@@ -967,7 +967,7 @@ cmd_doctor() {
     printf '      create the file, or remove its require line from ~/.config/hypr/\n' >&2
   fi
   if [[ -n "$hunsaved" ]]; then
-    chk_warn "$(plural "$(printf '%s' "$hunsaved" | grep -c .)" module) that hyprland.lua loads tracked, not saved yet — omarchy-replicant save --auto:"
+    chk_warn "$(plural "$(printf '%s' "$hunsaved" | grep -c .)" module) that hyprland.lua loads tracked, not saved yet — replicant save --auto:"
     printf '%s' "$hunsaved" >&2
   elif (( n_hm > 0 )); then
     chk_ok "$(plural "$n_hm" "extra module") that hyprland.lua loads saved with it"
@@ -981,7 +981,7 @@ cmd_doctor() {
   if command -v gh >/dev/null 2>&1 && timeout 10 gh auth status >/dev/null 2>&1; then
     chk_ok "logged in as $(timeout 10 gh api user --jq .login 2>/dev/null || echo '?')"
   else
-    chk_warn "not logged in — run: omarchy-replicant login"
+    chk_warn "not logged in — run: replicant login"
   fi
 
   echo "Keys"
@@ -995,7 +995,7 @@ cmd_doctor() {
       chk_ok "secret key ready — $(printf '%s' "$key_out" | sed -e 's/^key: //')"
     else
       chk_warn "secret key needs attention — $(printf '%s' "$key_out" | head -n1 | sed -e 's/^key: //;s/^replicant: //')"
-      printf '    run: %s\n' "$(key_remediation 2>/dev/null || echo 'omarchy-replicant key status')" >&2
+      printf '    run: %s\n' "$(key_remediation 2>/dev/null || echo 'replicant key status')" >&2
     fi
     local n_locked
     n_locked=$(bash "$CORE" status --json --no-fetch 2>/dev/null | jq -r '.locked // 0' 2>/dev/null || true)
@@ -1026,13 +1026,13 @@ cmd_doctor() {
     fi
     [[ "$(repo_hooks_path)" == ".githooks" ]] \
       && chk_ok "pre-commit secret scan enabled" \
-      || chk_warn "secret-scan hook not enabled — run: omarchy-replicant save --auto"
+      || chk_warn "secret-scan hook not enabled — run: replicant save --auto"
     local perm; perm=$(stat -c '%a' "$SECRETS_DIR" 2>/dev/null || echo "")
     [[ -z "$perm" ]] && chk_warn "no secrets/ directory yet" || {
       [[ "$perm" == "700" ]] && chk_ok "secrets/ is 700" || chk_bad "secrets/ is $perm, expected 700 — chmod 700 $SECRETS_DIR"
     }
   else
-    chk_warn "no local repo yet — run: omarchy-replicant create --push"
+    chk_warn "no local repo yet — run: replicant create --push"
   fi
 
   echo "Transactions"
@@ -1046,18 +1046,18 @@ cmd_doctor() {
     while IFS=$'\t' read -r tx_uuid tx_stage _base tx_scope _cand _push _msg; do
       [[ -n "$tx_uuid" ]] || continue
       if [[ "$tx_stage" == "committed" || "$tx_stage" == "fast-forwarded" ]]; then
-        chk_warn "transaction $tx_uuid committed ($tx_scope) but not in the active repo — resume it: omarchy-replicant tx resume $tx_uuid"
+        chk_warn "transaction $tx_uuid committed ($tx_scope) but not in the active repo — resume it: replicant tx resume $tx_uuid"
       else
-        chk_warn "transaction $tx_uuid abandoned before commit ($tx_stage) — discard it: omarchy-replicant tx discard $tx_uuid"
+        chk_warn "transaction $tx_uuid abandoned before commit ($tx_stage) — discard it: replicant tx discard $tx_uuid"
       fi
     done <<< "$tx_lines"
   fi
 
   echo "Command line"
   if [[ -L "$LINK_PATH" && "$(readlink -f "$LINK_PATH" 2>/dev/null)" == "$(readlink -f "$SELF_BIN")" ]]; then
-    chk_ok "omarchy-replicant is on your PATH ($LINK_PATH)"
+    chk_ok "replicant is on your PATH ($LINK_PATH)"
   else
-    printf '  \033[33m·\033[0m not on your PATH — the panel does not need it; run '"'"'omarchy-replicant link'"'"' to use it in a terminal\n'
+    printf '  \033[33m·\033[0m not on your PATH — the panel does not need it; run '"'"'replicant link'"'"' to use it in a terminal\n'
   fi
 
   echo "Tracked files"
@@ -1074,7 +1074,7 @@ cmd_doctor() {
   n_user=$(( ${#USER_MANIFEST[@]} + ${#USER_SECRETS[@]} ))
   chk_ok "$n_user of them are yours — the rest ship with the plugin"
   n_sugg=$(core_suggest 2>/dev/null | grep -c . || true)
-  (( n_sugg > 0 )) && chk_warn "$(plural "$n_sugg" "more file") here are not tracked — see 'omarchy-replicant suggest'"
+  (( n_sugg > 0 )) && chk_warn "$(plural "$n_sugg" "more file") here are not tracked — see 'replicant suggest'"
 
   echo "Settings"
   local unavailable=0 implicit=0 sid fb
@@ -1098,8 +1098,8 @@ cmd_doctor() {
 # wanted to be on PATH would have to write outside its own directory behind the
 # user's back — and leave a dangling symlink when the plugin is removed. So
 # it's a command instead: explicit, and `unlink` puts it back exactly.
-LINK_PATH="$HOME/.local/bin/omarchy-replicant"
-SELF_BIN="$PLUGIN_DIR/bin/omarchy-replicant"
+LINK_PATH="$HOME/.local/bin/replicant"
+SELF_BIN="$PLUGIN_DIR/bin/replicant"
 
 cmd_link() {
   mkdir -p "$(dirname "$LINK_PATH")"
@@ -1114,7 +1114,7 @@ cmd_link() {
   ok "linked $LINK_PATH -> $SELF_BIN"
   case ":$PATH:" in
     *":$HOME/.local/bin:"*) : ;;
-    *) warn "~/.local/bin is not on your PATH — add it to use 'omarchy-replicant' by name" ;;
+    *) warn "~/.local/bin is not on your PATH — add it to use 'replicant' by name" ;;
   esac
 }
 
@@ -1190,7 +1190,7 @@ cmd_undo() {
       *) [[ -z "$id" ]] && id="$arg" || fail "undo: too many ids: $arg" ;;
     esac
   done
-  [[ -n "$id" ]] || fail "undo <id> — see 'omarchy-replicant backups'"
+  [[ -n "$id" ]] || fail "undo <id> — see 'replicant backups'"
   # DRY reaches the core as an argument, not as an env prefix on `bash -c`.
   # The prefix form (`DRY=$DRY bash -c '... DRY='"$DRY"' ...'`) set the variable
   # twice by two different mechanisms and shellcheck was right to call it out:
@@ -1317,7 +1317,7 @@ cmd_purge() {
 
 usage() {
   cat <<USAGE
-omarchy-replicant [--progress-json] — back up, restore and replicate your Omarchy setup
+replicant [--progress-json] — back up, restore and replicate your Omarchy setup
 
   The panel in your bar does all of this without a terminal. These are here for
   scripts, and for the days you would rather type. With --progress-json the
@@ -1393,7 +1393,7 @@ Housekeeping
   undo <id> [--apply]         Put the newest .bak.<epoch> back for one file
   doctor                      Auth, remote privacy, hooks, permissions, version skew
   log [-n N] [--json]         Recent saves
-  link | unlink               Add or remove omarchy-replicant on your PATH
+  link | unlink               Add or remove replicant on your PATH
   purge [--apply] [--repo]    Remove what this plugin left on this machine
 
 Two ways back, and they are not the same thing
@@ -1435,9 +1435,9 @@ backups does not grow every time you use it.
 
 Dry-run by default, like everything here that writes.
 
-  omarchy-replicant backups          which ids have one
-  omarchy-replicant undo hypr/input.lua
-  omarchy-replicant undo hypr/input.lua --apply"
+  replicant backups          which ids have one
+  replicant undo hypr/input.lua
+  replicant undo hypr/input.lua --apply"
   [init]="init
   Prepare the local repo without touching GitHub. Safe to re-run: it creates the
   layout, the hooks and the .gitignore."
@@ -1544,12 +1544,12 @@ Dry-run by default, like everything here that writes.
   [shortcuts]="shortcuts [--json]
   Your own keybinding overrides, and what each key is bound to right now."
   [link]="link
-  Put omarchy-replicant on your PATH at ~/.local/bin. The panel never needs
+  Put replicant on your PATH at ~/.local/bin. The panel never needs
   this — it is for typing."
   [unlink]="unlink
   Remove that symlink again. Nothing else is touched."
   [purge]="purge [--apply] [--repo]
-  Remove everything omarchy-replicant put on this machine outside its own
+  Remove everything replicant put on this machine outside its own
   folder, including the .bak.<epoch> copies it left behind — even beside
   files nothing tracks anymore.
   --apply  actually delete (a dry run by default)

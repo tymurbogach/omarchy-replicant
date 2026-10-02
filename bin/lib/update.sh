@@ -91,7 +91,7 @@ core_update_check() {
   echo "Replicant ${latest:-a newer version} is available. This machine has $current ($(plural "$behind" commit) behind):"
   jq -r '.[] | "  " + .sha + "  " + .subject' <<<"$commits"
   if [[ "$installed" == true ]]; then
-    echo "Update with: omarchy-replicant update"
+    echo "Update with: replicant update"
   else
     echo "This copy runs from $PLUGIN_DIR, which is not the installed plugin. Update it with git pull."
   fi

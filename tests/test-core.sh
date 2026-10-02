@@ -71,7 +71,7 @@ check_contains "a plugin following the convention is found" "plugins/demo.json" 
 check_contains "…labelled with its display name"            "Demo Plugin"       "$entries"
 check "…and one entry only"       "1" "$(printf '%s\n' "$entries" | grep -c . )"
 check "a plugin with no config file is skipped" "0" "$(printf '%s\n' "$entries" | grep -c silent)"
-check "replicant never lists itself"            "0" "$(printf '%s\n' "$entries" | grep -c omarchy-replicant)"
+check "replicant never lists itself"            "0" "$(printf '%s\n' "$entries" | grep -c replicant)"
 
 section "a plugin the other machine can actually reinstall"
 # The inventory is what rebuilds this machine's shell elsewhere. Two ways it

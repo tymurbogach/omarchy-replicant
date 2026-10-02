@@ -76,7 +76,7 @@ core_deleted() {
   done < <(deleted_rows)
   if (( n == 0 )); then echo "Nothing has been deleted from your repo."; return 0; fi
   echo
-  echo "Bring one back with: omarchy-replicant recover <sha> --apply"
+  echo "Bring one back with: replicant recover <sha> --apply"
 }
 
 # core_recover <sha> <dry>: undo the deletions of one commit. The copies come

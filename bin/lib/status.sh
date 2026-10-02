@@ -335,7 +335,7 @@ core_status() {
     esac
   done
   if [[ ! -e "$REPO_DIR/.git" ]]; then
-    if (( json )); then echo '{"initialized":false}'; else echo "not initialized: run 'omarchy-replicant create --push', or 'clone <url>' for a repo you already have"; fi
+    if (( json )); then echo '{"initialized":false}'; else echo "not initialized: run 'replicant create --push', or 'clone <url>' for a repo you already have"; fi
     return 0
   fi
   # Best-effort refresh of origin/HEAD so unpushed/ahead/behind are accurate.

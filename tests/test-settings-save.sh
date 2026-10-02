@@ -1,7 +1,7 @@
 #!/bin/bash
 set -uo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-CLI="$HERE/../bin/omarchy-replicant"
+CLI="$HERE/../bin/replicant"
 CORE="$HERE/../bin/replicant-core.sh"
 source "$HERE/lib.sh"
 
@@ -33,7 +33,7 @@ set_out=$("$CLI" set idle.lock 900 2>&1); set_rc=$?
 check_contains "the setting says it changed but was not saved" \
   "changed on this machine but was not saved" "$set_out"
 check_contains "the setting prints the owning-entry retry" \
-  "omarchy-replicant save --id omarchy/shell.json -m" "$set_out"
+  "replicant save --id omarchy/shell.json -m" "$set_out"
 check "the failed save leaves the repository value unchanged" "600" \
   "$(jq -r '.idle.lock' "$CONFIG_DIR/omarchy/shell.json")"
 check "the failed save leaves unrelated copies unchanged" "original input" \
@@ -64,7 +64,7 @@ chmod +x "$remote/hooks/pre-receive"
 set_out=$("$CLI" set idle.lock 1200 2>&1); set_rc=$?
 (( set_rc != 0 )) && t_ok "a rejected push reports failure" || t_bad "a rejected push reports failure"
 check_contains "the setting says the local commit exists" "Saved locally" "$set_out"
-check_contains "the setting prints the push retry" "Retry: omarchy-replicant push" "$set_out"
+check_contains "the setting prints the push retry" "Retry: replicant push" "$set_out"
 check "the setting remains committed locally" "1200" \
   "$(jq -r '.idle.lock' "$CONFIG_DIR/omarchy/shell.json")"
 check "the unrelated live edit stays out during a failed push" "original input" \

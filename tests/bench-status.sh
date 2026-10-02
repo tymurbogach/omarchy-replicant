@@ -8,7 +8,7 @@ set -euo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "$HERE/.." && pwd)"
-CLI="$ROOT/bin/omarchy-replicant"
+CLI="$ROOT/bin/replicant"
 RUNS="${REPLICANT_STATUS_RUNS:-5}"
 
 FULL_BUDGET_MS=250
@@ -39,7 +39,7 @@ resolve_baseline() {
   if [[ -n "${REPLICANT_STATUS_BASELINE:-}" ]]; then
     printf '%s' "$REPLICANT_STATUS_BASELINE"
   elif [[ -n "${XDG_STATE_HOME:-}" ]]; then
-    printf '%s' "$XDG_STATE_HOME/omarchy-replicant/status-baseline.txt"
+    printf '%s' "$XDG_STATE_HOME/replicant/status-baseline.txt"
   else
     printf '%s' "${TMPDIR:-/tmp}/replicant-status-baseline.txt"
   fi

@@ -76,7 +76,7 @@ Automated evidence for the open validation task:
   - Render unknown states as warning or unknown, never as saved.
   - Fix the missing parent directory in the editor fixture of `test-cli.sh`.
 
-Completed 2026-09-27. Changed `bin/omarchy-replicant`, `components/FileRow.qml`,
+Completed 2026-09-27. Changed `bin/replicant`, `components/FileRow.qml`,
 `replicant.js`, `tests/test-cli.sh`, `tests/qml/tst_replicant.qml`, and `tests/mutate.sh`.
 Focused checks passed: `test-cli.sh` (305 checks), QML tests, mutations 95 through 99,
 `qmllint` for `FileRow.qml`, and `omarchy plugin validate .`. No known remaining risk.

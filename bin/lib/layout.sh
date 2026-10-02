@@ -15,7 +15,7 @@ files=$(git diff --cached --name-only --diff-filter=ACM)
 [[ -z $files ]] && exit 0
 SCAN="@PLUGIN_DIR@/bin/scan-secrets.sh"
 if [[ ! -x "$SCAN" ]]; then
-  echo "COMMIT BLOCKED: the secret scanner is missing. Run 'omarchy-replicant backup' to put it back." >&2
+  echo "COMMIT BLOCKED: the secret scanner is missing. Run 'replicant backup' to put it back." >&2
   exit 1
 fi
 fail=0
@@ -68,7 +68,7 @@ ensure_repo_layout() {
     # system instead.
     local who; who=$(id -un)
     git -C "$REPO_DIR" config user.name  "${GIT_AUTHOR_NAME:-$(git config --global user.name 2>/dev/null || echo "$who")}"
-    git -C "$REPO_DIR" config user.email "${GIT_AUTHOR_EMAIL:-$(git config --global user.email 2>/dev/null || echo "$who@omarchy-replicant")}"
+    git -C "$REPO_DIR" config user.email "${GIT_AUTHOR_EMAIL:-$(git config --global user.email 2>/dev/null || echo "$who@replicant")}"
     git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
     ensure_repository_layout
     # The tracked lists were built at source time, before this repo existed:

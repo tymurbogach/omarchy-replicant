@@ -9,7 +9,7 @@
 set -uo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-CLI="$HERE/../bin/omarchy-replicant"
+CLI="$HERE/../bin/replicant"
 CORE="$HERE/../bin/replicant-core.sh"
 # shellcheck source=tests/lib.sh
 source "$HERE/lib.sh"
@@ -79,12 +79,12 @@ else
 fi
 
 section "no git add or commit failure is ignored"
-ignored=$(grep -nE 'git[^|]* (add|commit)[^|]*\|\| true' "$HERE/../bin/lib/repo.sh" "$HERE/../bin/lib/transaction.sh" "$HERE/../bin/lib/save.sh" "$HERE/../bin/omarchy-replicant" 2>/dev/null || true)
+ignored=$(grep -nE 'git[^|]* (add|commit)[^|]*\|\| true' "$HERE/../bin/lib/repo.sh" "$HERE/../bin/lib/transaction.sh" "$HERE/../bin/lib/save.sh" "$HERE/../bin/replicant" 2>/dev/null || true)
 check "add and commit failures abort" "" "$ignored"
 
 section "bulk orchestration lives in the library, not in the CLI"
-check "the CLI creates no worktree" "0" "$(grep -c 'worktree add' "$HERE/../bin/omarchy-replicant" || true)"
-check "…and commits no candidate" "0" "$(grep -c 'rev-parse HEAD' "$HERE/../bin/omarchy-replicant" || true)"
+check "the CLI creates no worktree" "0" "$(grep -c 'worktree add' "$HERE/../bin/replicant" || true)"
+check "…and commits no candidate" "0" "$(grep -c 'rev-parse HEAD' "$HERE/../bin/replicant" || true)"
 check "…while the library owns the bulk transaction" "1" "$(grep -c 'core_bulk_transact()' "$HERE/../bin/lib/bulk.sh" || true)"
 
 section "resume inspects the repository, not only the journal"

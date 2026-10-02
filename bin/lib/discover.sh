@@ -21,7 +21,7 @@ discover_plugin_entries() {
   # includes the bar's once-a-minute poll, and a process per plugin added up.
   while IFS=$'\t' read -r pid pname; do
     [[ -n "$pid" ]] || continue
-    [[ "$pid" == "io.github.tymurbogach.omarchy-replicant" ]] && continue
+    [[ "$pid" == "io.github.tymurbogach.replicant" ]] && continue
     short="${pid##*.}"
     src="$HOME/.config/omarchy/$short.json"
     [[ -f "$src" ]] || continue
@@ -57,7 +57,7 @@ discover_kept_plugin_configs() {
       [[ -f "$f" ]] || continue
       short="${f##*/}"; short="${short%.json}"
       id="${recorded[$short]:-}"
-      [[ -n "$id" && "$id" != "io.github.tymurbogach.omarchy-replicant" ]] || continue
+      [[ -n "$id" && "$id" != "io.github.tymurbogach.replicant" ]] || continue
       printf '%s\t%s\t%s\n' "$HOME/.config/omarchy/$short.json" "plugins/$short.json" "$id"
     done
   done

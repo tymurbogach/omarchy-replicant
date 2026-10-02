@@ -36,7 +36,7 @@ Item {
     Row {
       spacing: Style.space(8)
       Text {
-        text: "Omarchy Replicant"
+        text: "Replicant"
         color: panel.fg
         font.family: panel.ff
         font.pixelSize: Math.round(Style.font.heading * 1.25)

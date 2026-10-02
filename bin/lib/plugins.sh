@@ -430,7 +430,7 @@ core_install_plugin() {
     echo "$want re-cloned from $origin (any edits you made are not in this)" >&2
   else
     [[ "$revision" =~ ^[0-9a-fA-F]{40}$ ]] || {
-      echo "$want — select a full revision first: omarchy-replicant install-plugin $want --check" >&2
+      echo "$want — select a full revision first: replicant install-plugin $want --check" >&2
       return 1
     }
     staged=$(mktemp -d "${TMPDIR:-/tmp}/replicant-plugin.XXXXXX") || return 1

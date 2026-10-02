@@ -169,7 +169,7 @@ QML
 status="${STATUS:-}"
 if [[ -z "$status" ]]; then
   status="$work/status.json"
-  "$ROOT/bin/omarchy-replicant" status --json --no-fetch > "$status"
+  "$ROOT/bin/replicant" status --json --no-fetch > "$status"
 fi
 out=$(realpath -m -- "$out")
 rm -f -- "$out"

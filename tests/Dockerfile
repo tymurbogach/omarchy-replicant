@@ -22,7 +22,8 @@ RUN pacman -Syu --noconfirm --needed git jq shellcheck diffutils which qt6-decla
 
 RUN useradd -m tester
 COPY --chown=tester:tester . /home/tester/replicant
+RUN chmod +x /home/tester/replicant/tests/run-all.sh /home/tester/replicant/tests/*.sh
 USER tester
 WORKDIR /home/tester/replicant
 
-CMD ["./tests/run-all.sh"]
+CMD ["bash", "tests/run-all.sh"]

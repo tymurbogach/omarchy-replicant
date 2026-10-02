@@ -15,12 +15,12 @@ jobs:
         with:
           fetch-depth: 0
       - name: Check version format and monotonicity
-        run: ./tests/check-version-bump.sh
+        run: bash tests/check-version-bump.sh
       - name: Check pull request carries a version bump
         if: github.event_name == 'pull_request'
         run: |
           git fetch origin "${{ github.base_ref }}" --depth=50
-          ./tests/check-version-bump.sh --base "origin/${{ github.base_ref }}"
+          bash tests/check-version-bump.sh --base "origin/${{ github.base_ref }}"
   suites:
     runs-on: ubuntu-latest
     timeout-minutes: 20

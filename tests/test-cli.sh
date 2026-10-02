@@ -417,7 +417,12 @@ chmod +x "$TMP/fakebin/omarchy"
 STATEDIR="$REPO/state/testhost"
 mkdir -p "$STATEDIR"
 printf '# name\torigin\nmine\thttps://example.com/omarchy-mine-theme\n' > "$STATEDIR/omarchy-themes.txt"
-printf '# id\tversion\torigin\tmethod\ndemo.widget\t1.0.0\thttps://example.com/demo-widget\tadd\n' > "$STATEDIR/omarchy-plugins.txt"
+plugin_source="$TMP/cli-plugin-source"
+git init -q -b main "$plugin_source"
+printf '{"id":"demo.widget","name":"Demo"}\n' > "$plugin_source/manifest.json"
+git -C "$plugin_source" add manifest.json
+git -C "$plugin_source" -c user.email=t@example.com -c user.name=t commit -qm initial
+printf '# id\tversion\torigin\tmethod\ndemo.widget\t1.0.0\t%s\tadd\n' "$plugin_source" > "$STATEDIR/omarchy-plugins.txt"
 : > "$FAKE_LOG"
 check_true "install-theme installs a pending theme" \
   env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" install-theme mine
@@ -432,6 +437,7 @@ check_false "install-plugin with no id fails" \
 : > "$FAKE_LOG"
 out=$(env PATH="$TMP/fakebin:$PATH" REPLICANT_MACHINE=testhost "$CLI" install-plugin demo.widget --check 2>&1)
 check_contains "install-plugin --check says what the marketplace knows" "Marketplace:" "$out"
+check_contains "…and resolves a complete revision" "Selected revision: " "$out"
 check "…and never calls omarchy" "" "$(cat "$FAKE_LOG")"
 
 section "restore never installs third-party code on its own"

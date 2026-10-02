@@ -747,20 +747,31 @@ cmd_install_theme() {
 
 # cmd_install_plugin <id> — the same action for a plugin.
 cmd_install_plugin() {
-  local id="" check_only=0 arg
-  for arg in "$@"; do
+  local id="" revision="" check_only=0 yes=0 arg
+  while (( $# )); do
+    arg="$1"; shift
     case "$arg" in
       --check) check_only=1 ;;
+      --yes) yes=1 ;;
+      --revision)
+        (( $# )) || fail "--revision needs a full SHA"
+        revision="$1"; shift ;;
+      --revision=*) revision="${arg#--revision=}" ;;
       -*) fail "unknown option: $arg" ;;
       *) if [[ -z "$id" ]]; then id="$arg"; fi ;;
     esac
   done
-  [[ -n "$id" ]] || fail "usage: omarchy-replicant install-plugin <id> [--check]"
+  [[ -n "$id" ]] || fail "usage: omarchy-replicant install-plugin <id> [--check|--revision <sha> --yes]"
   load_core
   # --check prints what the marketplace checked and where the origin is now,
   # and installs nothing. The panel asks this before it asks for consent.
-  if (( check_only )); then core_plugin_verification "$id"; return 0; fi
-  core_install_plugin "$id" || exit 1
+  if (( check_only )); then
+    [[ -z "$revision" && $yes -eq 0 ]] || fail "--check cannot be combined with --revision or --yes"
+    core_plugin_verification "$id"; return 0
+  fi
+  (( yes == 1 )) || fail "install-plugin needs --yes after you select a revision"
+  [[ "$revision" =~ ^[0-9a-fA-F]{40}$ ]] || fail "install-plugin needs --revision <full 40-character SHA>"
+  core_install_plugin "$id" "$revision" || exit 1
 }
 
 # cmd_shortcuts — what you changed about the keyboard, and what is actually
@@ -1366,8 +1377,9 @@ Putting things back            (dry run by default; .bak.<epoch> kept for everyt
 
 Third-party code               (no dry run, no backup; fetches the moment you run it)
   install-theme <name>        Install one theme from your inventory — never automatic
-  install-plugin <id> [--check]
-                              Install one plugin from your inventory — never automatic
+  install-plugin <id> --check  Resolve and show a remote revision, without fetching code
+  install-plugin <id> --revision <sha> --yes
+                              Install only the selected revision — never automatic
 
 Second machine
   clone <url>                 Point this machine at the repo you already have

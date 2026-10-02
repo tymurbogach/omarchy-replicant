@@ -357,12 +357,25 @@ marketplace_catalog() {
 
 normalize_repo_url() { printf '%s\n' "$1" | sed -E 's#\.git$##; s#/$##' | tr '[:upper:]' '[:lower:]'; }
 
-# core_plugin_verification <id> [origin]: the marketplace status of a plugin,
-# and where its origin is now, as plain facts on stdout. The origin is asked
-# only when the catalog names a commit to compare it with.
+# core_plugin_revision <origin>: resolve the current remote HEAD to one full,
+# immutable commit ID. This reads a remote ref but does not fetch an object.
+core_plugin_revision() {
+  local origin="$1" sha
+  sha=$(timeout 15 git ls-remote "$origin" HEAD 2>/dev/null | awk 'NR == 1 { print $1 }')
+  [[ "$sha" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
+  printf '%s\n' "${sha,,}"
+}
+
+# core_plugin_verification <id> [origin]: marketplace facts and the revision a
+# person may select. It never fetches code or changes a checkout.
 core_plugin_verification() {
   local id="$1" origin="${2:-}" catalog entry vstatus vcommit now
   [[ -n "$origin" ]] || origin=$(missing_plugins | awk -F'\t' -v i="$id" '$1 == i { print $2; exit }')
+  if [[ -n "$origin" && "$origin" != "-" ]]; then
+    now=$(core_plugin_revision "$origin" || true)
+    if [[ -z "$now" ]]; then echo "Origin: $origin could not be reached."
+    else echo "Selected revision: $now"; fi
+  fi
   if ! catalog=$(marketplace_catalog); then
     echo "Marketplace: the catalog could not be read (offline?)."
     return 0
@@ -377,24 +390,20 @@ core_plugin_verification() {
   vstatus=$(jq -r '.verificationStatus // "unknown"' <<<"$entry")
   vcommit=$(jq -r '.verificationCommit // .listingValidatedCommit // ""' <<<"$entry")
   echo "Marketplace: $id is listed as $vstatus${vcommit:+, checked at ${vcommit:0:12}}."
-  [[ -n "$vcommit" && -n "$origin" && "$origin" != "-" ]] || return 0
-  now=$(timeout 15 git ls-remote "$origin" HEAD 2>/dev/null | awk 'NR == 1 { print $1 }')
-  if [[ -z "$now" ]]; then
-    echo "Origin: $origin could not be reached."
-  elif [[ "$now" == "$vcommit" ]]; then
+  [[ -n "$origin" && "$origin" != "-" ]] || return 0
+  [[ -n "$vcommit" && -n "$now" ]] || return 0
+  if [[ "$now" == "$vcommit" ]]; then
     echo "Origin: $origin is still at the commit that the marketplace checked."
   else
     echo "Origin: $origin is at ${now:0:12} now. It has moved since the marketplace checked it."
   fi
 }
 
-# core_install_plugin <id> — the same action for a plugin. `missing_plugins`
-# already carries the method column that tells clone (an edited built-in)
-# from add (a real third-party plugin) — same two commands restore_plugins
-# already knew how to call, just no longer called without being asked.
-# Ambiguity is refused here too, on the origin and the method together.
+# core_install_plugin <id> <revision> — install a third-party plugin only from
+# the exact revision the caller selected. A mutable remote HEAD is never handed
+# to Omarchy. Clone entries are Omarchy built-ins and keep their own command.
 core_install_plugin() {
-  local want="${1:-}" pid porigin pmethod
+  local want="${1:-}" revision="${2:-}" pid porigin pmethod staged
   local -a pairs=()
   [[ -n "$want" ]] || { echo "usage: install-plugin <id>" >&2; return 1; }
   while IFS=$'\t' read -r pid porigin pmethod; do
@@ -416,14 +425,31 @@ core_install_plugin() {
   fi
   local origin="${unique_pairs[0]%%$'\t'*}" method="${unique_pairs[0]#*$'\t'}"
   command -v omarchy >/dev/null 2>&1 || { echo "omarchy not found on PATH" >&2; return 1; }
-  # A clone copies Omarchy's own built-in, which has no marketplace entry.
-  [[ "$method" == "clone" ]] || core_plugin_verification "$want" "$origin" >&2
   if [[ "$method" == "clone" ]]; then
     omarchy plugin clone "$origin" || { echo "$want — omarchy plugin clone failed" >&2; return 1; }
     echo "$want re-cloned from $origin (any edits you made are not in this)" >&2
   else
-    omarchy plugin add "$origin" --enable --yes || { echo "$want — omarchy plugin add failed" >&2; return 1; }
-    echo "$want installed from $origin" >&2
+    [[ "$revision" =~ ^[0-9a-fA-F]{40}$ ]] || {
+      echo "$want — select a full revision first: omarchy-replicant install-plugin $want --check" >&2
+      return 1
+    }
+    staged=$(mktemp -d "${TMPDIR:-/tmp}/replicant-plugin.XXXXXX") || return 1
+    git -C "$staged" init -q
+    git -C "$staged" remote add origin "$origin"
+    git -C "$staged" fetch -q --no-tags origin "$revision" || {
+      echo "$want — could not fetch selected revision $revision" >&2; rm -rf -- "$staged"; return 1;
+    }
+    git -C "$staged" cat-file -e "$revision^{commit}" || {
+      echo "$want — selected revision is not a commit" >&2; rm -rf -- "$staged"; return 1;
+    }
+    git -C "$staged" checkout -q --detach "$revision"
+    [[ "$(git -C "$staged" rev-parse HEAD)" == "${revision,,}" ]] || { rm -rf -- "$staged"; return 1; }
+    [[ "$(jq -r '.id // empty' "$staged/manifest.json" 2>/dev/null)" == "$want" ]] || {
+      echo "$want — selected revision does not contain that plugin id" >&2; rm -rf -- "$staged"; return 1;
+    }
+    omarchy plugin add "$staged" --enable --yes || { echo "$want — omarchy plugin add failed" >&2; rm -rf -- "$staged"; return 1; }
+    echo "$want installed from $origin at ${revision,,}" >&2
+    rm -rf -- "$staged"
   fi
 }
 

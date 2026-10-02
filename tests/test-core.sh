@@ -860,6 +860,9 @@ FAKE_LOG="$TMP/omarchy-calls.log"
 cat > "$TMP/fakebin/omarchy" <<EOF
 #!/bin/bash
 echo "\$*" >> "$FAKE_LOG"
+if [[ "\${1:-}" == plugin && "\${2:-}" == add ]]; then
+  git -C "\$3" rev-parse HEAD >> "$FAKE_LOG"
+fi
 exit 0
 EOF
 chmod +x "$TMP/fakebin/omarchy"
@@ -887,15 +890,28 @@ printf '# name\torigin\nfreshtheme\thttps://example.com/omarchy-freshtheme\n' > 
 
 section "installing one pending plugin on demand"
 mkdir -p "$STATE_DIR"
-printf '# id\tversion\torigin\tmethod\ndemo.widget\t1.0.0\thttps://example.com/demo-widget\tadd\n' \
+plugin_source="$TMP/plugin-source"
+git init -q -b main "$plugin_source"
+printf '{"id":"demo.widget","name":"Demo"}\n' > "$plugin_source/manifest.json"
+git -C "$plugin_source" add manifest.json
+git -C "$plugin_source" -c user.email=t@example.com -c user.name=t commit -qm initial
+plugin_revision=$(git -C "$plugin_source" rev-parse HEAD)
+# The branch can move after selection. The selected object must still be used.
+printf '{"id":"demo.widget","name":"Demo","version":"later"}\n' > "$plugin_source/manifest.json"
+git -C "$plugin_source" add manifest.json
+git -C "$plugin_source" -c user.email=t@example.com -c user.name=t commit -qm later
+printf '# id\tversion\torigin\tmethod\ndemo.widget\t1.0.0\t%s\tadd\n' "$plugin_source" \
   > "$STATE_DIR/omarchy-plugins.txt"
 : > "$FAKE_LOG"
-check_true "install-plugin succeeds for a pending plugin" \
+check_false "install-plugin refuses a mutable remote without a selected revision" \
   env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_plugin demo.widget"
-check_contains "…and calls omarchy plugin add with the recorded origin" \
-  "plugin add https://example.com/demo-widget --enable --yes" "$(cat "$FAKE_LOG")"
+check_true "install-plugin succeeds for a selected revision" \
+  env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_plugin demo.widget $plugin_revision"
+check_contains "…and calls omarchy plugin add from a staged checkout" \
+  "plugin add /tmp/replicant-plugin." "$(cat "$FAKE_LOG")"
+check "…and applies the selected revision" "$plugin_revision" "$(tail -n1 "$FAKE_LOG")"
 check_false "install-plugin refuses an id that is not pending" \
-  env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_plugin not-a-plugin"
+  env PATH="$TMP/fakebin:$PATH" bash -c "source '$CORE' >/dev/null 2>&1; core_install_plugin not-a-plugin $plugin_revision"
 
 # method 'clone' means an edited built-in, and it needs the other command:
 # `omarchy plugin add` on a built-in id is not the same action.

@@ -1161,7 +1161,12 @@ Panel {
     else if (a === "restore-cat")  { root.busyLabel = "Restoring " + arg + "…"; command = [root.cli, "restore", "--apply", "--yes", "--only", arg] }
     else if (a === "recover")      { root.busyLabel = "Bringing back " + arg.slice(0, 7) + "…"; command = [root.cli, "recover", arg, "--apply"]; label = "Bring back" }
     else if (a === "install-theme")  { root.busyLabel = "Installing " + arg + "…"; command = [root.cli, "install-theme", arg]; label = "Install" }
-    else if (a === "install-plugin") { root.busyLabel = "Installing " + arg + "…"; command = [root.cli, "install-plugin", arg]; label = "Install" }
+    else if (a === "install-plugin") {
+      var pluginParts = arg.split("\t")
+      root.busyLabel = "Installing " + pluginParts[0] + "…"
+      command = [root.cli, "install-plugin", pluginParts[0], "--revision=" + pluginParts[1], "--yes"]
+      label = "Install"
+    }
     else if (a === "key-init")       { root.busyLabel = "Creating encryption key…"; command = [root.cli, "key", "init"]; label = "Create key" }
     else if (a === "untrack")      { root.doUntrack(arg); return }
     else if (a === "forget")       { root.busyLabel = "Forgetting " + arg + "…"; controller.run("forget", [root.cli, "forget", arg], { label: "Forget" }); return }
@@ -1186,13 +1191,13 @@ Panel {
 
   // ── install, with the marketplace's facts in front of the consent ─────────
   // `install-plugin <id> --check` prints what the Omarchy marketplace says about
-  // a plugin: its verification status, the commit that it checked, and whether
-  // the origin has moved since. The confirmation shows that text, because
-  // consent given without it is consent to an unknown commit. A theme has no
-  // catalog entry, so it is asked about straight away.
+  // a plugin: its verification status and one full remote SHA. The confirmation
+  // carries that SHA into the install command, so a later branch move cannot
+  // change the code that the user approved. A theme has no catalog entry, so
+  // it is asked about straight away.
   property var pendingInstall: null
   function askInstall(kind, id, origin) {
-    var msg = "Install the " + kind + " \"" + id + "\" from " + origin + "?\n\nThis fetches whatever is at that address right now — not necessarily what you reviewed when you first installed it."
+    var msg = "Install the " + kind + " \"" + id + "\" from " + origin + "?"
     if (kind === "theme") {
       root.ask("install-theme", id, msg + "\n\nInstalling a theme also makes it the active theme: your desktop changes to it right away.", "Install")
       return
@@ -1265,7 +1270,15 @@ Panel {
         root.busyLabel = ""
         var install = root.pendingInstall
         root.pendingInstall = null
-        if (install) root.ask("install-plugin", install.id, install.message + "\n\n" + (text || "The marketplace check printed nothing."), "Install")
+        var match = text.match(/Selected revision: ([0-9a-f]{40})/)
+        if (install && match) {
+          root.ask("install-plugin", install.id + "\t" + match[1], install.message
+                   + "\n\nThis installs only the selected revision:\n" + match[1]
+                   + "\n\n" + (text || "The marketplace check printed nothing."), "Install")
+        } else if (install) {
+          root.lastOk = false; root.lastTitle = "Plugin revision";
+          root.lastOutput = text || "Could not resolve a full revision. Nothing was fetched."
+        }
       } else if (job === "update-check") {
         try { root.updateInfo = JSON.parse(stdoutText || "{}") } catch (e) { root.updateInfo = ({}) }
         if (meta.forced === true) {

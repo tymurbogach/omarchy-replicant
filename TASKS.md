@@ -255,3 +255,32 @@ Ejecutar por bloques. Un bloque es una sesion pequena y verificable.
 - [x] Verificar: qml 67/67, usability 122/122, bootstrap 50/50,
   transaction 73/73, shellcheck limpio, qmllint todo ok, validate ok.
   Bump a 0.16.4.
+
+## Sesion 2026-10-03 - CI verde, renombre a replicant, saneamiento v3
+
+Origen: commit `Test` con identidad local mal puesta + CI en rojo por
+permiso de ejecucion + suites con fixtures de formatos retirados.
+Todo verificado contra main limpio antes de tocar (sin regresiones).
+
+- [x] Identidad git local limpiada (era `Test <t@example.com>`, ahora la
+  global `Tymur Bogach`). Commits nuevos firman bien.
+- [x] CI exec bit: `tests/run-all.sh` y `tests/test-format.sh` a 755,
+  Dockerfile con `chmod +x` y `CMD ["bash", ...]`, workflow con `bash`.
+- [x] Renombre total a `replicant`: repo `tymurbogach/replicant`, id
+  `io.github.tymurbogach.replicant`, binario `bin/replicant`, home
+  `~/.local/share/replicant`, servicio IPC `replicant-service`,
+  `defaultSection` center + docs con `--after omarchy.clock`. Bump a 0.38.0.
+- [x] Saneamiento v3 (Bloque 3 pendiente): fixtures con `git init` pelado
+  ahora dejan que el primer backup inicialice (cli 319, core 475,
+  state 96, save 75, bulk 51, journey 76, settings 177, crypto 97,
+  restore-secrets 46, transaction 73, resto verde). Fixtures de parity y
+  screenshots G7 regenerados (diff <0.2%, solo el header).
+- [x] Bugs reales encontrados por los tests al correr de verdad:
+  vault/entries con paths absolutos rompian el restore en la segunda
+  maquina (resolucion home-relative + `live_from_id`), un area con
+  fallos abortaba el resto del restore, el fallback de perfil nunca
+  corria (guess estampado antes + registro vacio leido como grabado),
+  arboles con .git o binarios eran intrackeables, `key init` sobre
+  vault con blobs huerfanaba secretos (ahora se niega, 0.38.3).
+- [x] G7 screenshots y validacion saltan en el contenedor CI sin Omarchy
+  en vez de fallar. CI en verde en main.

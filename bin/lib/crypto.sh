@@ -711,6 +711,13 @@ key_init() {
   local idf recf
   idf=$(vault_identity_file)
   [[ -f "$idf" ]] && { printf 'key: keys/identity.txt already exists — use key status to inspect it, key rotate to replace it\n' >&2; return 1; }
+  # A fresh key cannot read what is already encrypted: creating one over a
+  # vault with blobs orphans every secret on this machine, and the panel
+  # offers init on fresh setups where an import was the right call.
+  if compgen -G "$(vault_blobs_dir)/*.age" >/dev/null 2>&1; then
+    printf 'key: this repo already holds encrypted secrets — import the shared identity with key import <source> instead of creating a new one\n' >&2
+    return 1
+  fi
   mkdir -p "$(dirname "$idf")"
   chmod 700 "$(dirname "$idf")"
   ( umask 077; age-keygen -pq -o "$idf" 2>/dev/null ) || {

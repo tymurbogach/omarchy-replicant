@@ -120,6 +120,16 @@ check "…with no stray blob" "0" \
 git -C "$REPO_DIR" add -A >/dev/null 2>&1
 git -C "$REPO_DIR" commit -qm "secrets in the vault" >/dev/null 2>&1
 
+section "key init refuses a vault that already holds secrets"
+# A fresh key cannot read what is already encrypted: init over a vault with
+# blobs orphaned every secret on the machine, and the setup screen offers
+# init where an import was the right call.
+mv "$KEYS" "$TMP/identity.keep"
+check_false "init over existing blobs is refused" key_init
+check_contains "…pointing at import instead" "key import" "$(key_init 2>&1 || true)"
+check "…leaving no new identity behind" "0" "$(ls "$KEYS" 2>/dev/null | wc -l)"
+mv "$TMP/identity.keep" "$KEYS"
+
 section "no plaintext where only ciphertext belongs"
 check "the repo holds no live content" "0" \
   "$(grep -r --exclude-dir=.git -l 'crypto-fixture' "$REPO_DIR" 2>/dev/null | grep -c . || true)"

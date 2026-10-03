@@ -25,10 +25,8 @@ printf '{"id":"io.example.demoifact","name":"Demoifact"}\n' \
   > "$HOME/.config/omarchy/plugins/demoifact/manifest.json"
 printf '{"enabled":true}\n' > "$HOME/.config/omarchy/demoifact.json"
 
-# A repo with history keeps what it has, so initializing git before the first
-# backup means no skeleton is ever written.
-mkdir -p "$OMARCHY_REPLICANT_HOME/repo"
-git -C "$OMARCHY_REPLICANT_HOME/repo" init -q -b main 2>/dev/null
+# The first backup below initializes the v3 repo itself. A bare git dir
+# without the schema marker is invalid, and every write refuses it.
 
 # shellcheck source=/dev/null
 source "$CORE" 2>/dev/null
@@ -52,29 +50,33 @@ check "a directory entry is a dir" "dir" \
   "$(field 2 "$(registry_row_for nvim/)")"
 check "a shipped secret is a secret" "secret" \
   "$(field 2 "$(registry_row_for env/60-secrets.conf)")"
-check "…kept as plaintext without a key" "$SECRETS_DIR/env/60-secrets.conf" \
+check "…no repo copy without a key" "" \
   "$(field 7 "$(registry_row_for env/60-secrets.conf)")"
+check "…locked until the key arrives" "true" \
+  "$(field 9 "$(registry_row_for env/60-secrets.conf)")"
 
-section "user entries win over auto-discovered ones"
+section "tracking an auto-discovered id keeps the single row"
 core_track "$HOME/.config/notes.conf" >/dev/null 2>&1
 registry_build >/dev/null 2>&1
 check "a tracked file reads user" "user" \
   "$(field 3 "$(registry_row_for notes.conf)")"
 check "a found plugin config reads auto" "auto" \
   "$(field 3 "$(registry_row_for plugins/demoifact.json)")"
-core_track "$HOME/.config/omarchy/demoifact.json" plugins/demoifact.json >/dev/null 2>&1
+# The auto row already covers the path, so tracking it again says so instead
+# of drawing the row twice. The user-over-auto precedence still holds for
+# scope records in entries.json, which the scope suites cover.
+out=$(core_track "$HOME/.config/omarchy/demoifact.json" plugins/demoifact.json 2>&1)
+check_contains "tracking it again says it is already tracked" "already tracked" "$out"
 load_user_manifest
 registry_build >/dev/null 2>&1
-check "one row for the contested id" "1" \
+check "still one row for the contested id" "1" \
   "$(printf '%s\n' "${REGISTRY[@]}" | grep -c '^plugins/demoifact.json'$'\t' || true)"
-check "…and it is the user's" "user" \
+check "…still reading auto" "auto" \
   "$(field 3 "$(registry_row_for plugins/demoifact.json)")"
-# The contested entry was only for the precedence check: drop it again so the
-# parity below compares the natural tracked lists.
-core_untrack plugins/demoifact.json >/dev/null 2>&1
-load_user_manifest
+check_false "untracking what was never in your list is refused" \
+  core_untrack plugins/demoifact.json
 registry_build >/dev/null 2>&1
-check "the contest leaves one auto row" "auto" \
+check "the refused untrack leaves the auto row" "auto" \
   "$(field 3 "$(registry_row_for plugins/demoifact.json)")"
 
 section "every row is known, sorted and unique"
@@ -156,8 +158,10 @@ check "brief hits stale on a timestamp-preserving edit" "0" \
   "$(core_status --json --brief --no-fetch 2>/dev/null | jq -r .unsaved)"
 check "full still detects the timestamp-preserving edit" "1" \
   "$(core_status --json --no-fetch 2>/dev/null | jq -r .unsaved)"
-check "the direct count stays authoritative too" "1 0 0 0" \
+check "the direct count stays authoritative too" "1 0 1 0" \
   "$(count_changes 2>/dev/null)"
+# fields are unsaved incoming locked missing: the edit, no incoming, and the
+# keyless secret counting as locked.
 printf 'default input\n' > "$HOME/.config/hypr/input.lua"
 touch "$HOME/.config/hypr/input.lua"
 check "a mtime change misses again" "0" \
@@ -204,7 +208,12 @@ registry_build >/dev/null 2>&1
 check "an empty registry falls back to shipped" "manifest" \
   "$(field 3 "$(registry_row_for hypr/input.lua)")"
 printf '{oops' > "$REPO_DIR/.replicant/entries.json"
-check_false "an invalid registry fails loudly" registry_build
+# A corrupt entries file can never sit in a ready repo: readiness itself
+# requires valid entries. So it reads as invalid, and a mutation that would
+# resolve ids against it refuses instead of pointing repo paths anywhere.
+check "a corrupt registry reads as invalid" "invalid" "$(repo_state)"
+check_false "…and a scope change against it is refused" \
+  core_scope hypr/input.lua shared
 printf '{}\n' > "$REPO_DIR/.replicant/entries.json"
 
 section "vault secrets resolve to blobs, or to locked"

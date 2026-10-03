@@ -95,4 +95,10 @@ entries_remove() {
 policy_store_state() { sha256sum "$REPO_DIR/.replicant/entries.json" 2>/dev/null || true; vault_index_decrypt 2>/dev/null | jq -c '[.secrets[].id] | sort' 2>/dev/null || printf 'locked\n'; }
 validate_machine_id() { [[ "${1:-}" =~ ^[A-Za-z0-9._-]+$ ]] || { printf 'machine id %s is not safe\n' "${1:-<empty>}" >&2; return 1; }; }
 machine_metadata_write() { local id="${1:-$MACHINE}" dir="$REPO_DIR/.replicant/machines"; validate_machine_id "$id" || return 1; mkdir -p "$dir"; jq -nc --arg id "$id" --arg profile "$(current_profile)" --arg client "$(running_version)" '{machineId: $id, profile: $profile, clientVersion: $client}' > "$dir/$id.json"; }
+# refresh_machine_metadata: touch up the client version of an existing
+# record, creating nothing. Creation belongs to ensure_profile_recorded
+# (chassis guess or hostname fallback): stamping the guess here first would
+# make that fallback dead code, and two same-chassis machines would end up
+# sharing one profile tree.
+refresh_machine_metadata() { local id="${1:-$MACHINE}"; [[ -f "$REPO_DIR/.replicant/machines/$id.json" ]] || return 0; machine_metadata_write "$id"; }
 machine_profile() { local id="${1:-$MACHINE}"; validate_machine_id "$id" || return 1; jq -r '.profile // empty' "$REPO_DIR/.replicant/machines/$id.json" 2>/dev/null || true; }

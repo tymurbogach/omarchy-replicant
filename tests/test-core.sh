@@ -17,9 +17,8 @@ export HOME="$TMP/home"
 export OMARCHY_PATH="$TMP/omarchy"
 export OMARCHY_REPLICANT_HOME="$TMP/replicant"
 
-# This suite pins a plain git dir before the first backup: every backup below
-# then keeps the files it asserts.
-git init -q -b main "$OMARCHY_REPLICANT_HOME/repo" 2>/dev/null || true
+# The first backup below initializes the v3 repo itself. A bare git dir
+# without the schema marker is invalid, and every write refuses it.
 
 mkdir -p "$HOME/.config/hypr" "$HOME/.config/omarchy/plugins/com.example.demo" "$HOME/.config/alacritty"
 mkdir -p "$OMARCHY_PATH/config/hypr" "$OMARCHY_PATH/default/bash"
@@ -145,9 +144,7 @@ check "an auto-detected id"  "$HOME/.config/omarchy/demo.json" "$(resolve_manife
 check_false "an unknown id"  resolve_manifest_src not/a/real/one
 
 section "the sync states, driven for real through git"
-git init -q "$REPO_DIR" 2>/dev/null
-git -C "$REPO_DIR" config user.email t@example.com
-git -C "$REPO_DIR" config user.name Test
+# The repo already exists from the backups above; a re-init would be a no-op.
 # The /etc entries exist on some machines and not on others, and no check may
 # depend on which. A saved copy makes each one a row and a plan line on every
 # machine. Where the live file exists, the backup refreshes the copy.
@@ -545,11 +542,11 @@ section "each machine belongs to a profile"
 check "this machine has one"        "1" "$(current_profile | grep -c . || true)"
 core_profile_set desktop >/dev/null 2>&1
 check "it can be set explicitly"    "desktop" "$(current_profile)"
-check "…and recorded in the repo"   "1" \
-  "$(grep -c "^$MACHINE = desktop" "$REPO_DIR/.replicant-profiles" 2>/dev/null || true)"
+check "…and recorded in the repo"   "desktop" \
+  "$(jq -r '.profile // empty' "$REPO_DIR/.replicant/machines/$MACHINE.json" 2>/dev/null)"
 core_profile_set laptop >/dev/null 2>&1
-check "…and changed without duplicating the line" "1" \
-  "$(grep -c "^$MACHINE = " "$REPO_DIR/.replicant-profiles" 2>/dev/null || true)"
+check "…and changed without duplicating the record" "1" \
+  "$(ls "$REPO_DIR"/.replicant/machines/"$MACHINE".json 2>/dev/null | wc -l)"
 check_false "a nonsense profile name is refused" core_profile_set "../etc"
 check "the profile list includes ours" "1" \
   "$(list_profiles | grep -cx laptop || true)"
@@ -664,18 +661,19 @@ check "a private key is labelled as one" "private key" \
   "$(printf '%s' "$sj" | jq -r '[.[] | select(.id=="ssh/id_ed25519")][0].kind')"
 check "its mode is reported"             "600" \
   "$(printf '%s' "$sj" | jq -r '[.[] | select(.id=="ssh/id_ed25519")][0].mode')"
-check "an env file reports how many variables it defines" "2" \
+check "a locked env file reports no count" "0" \
   "$(printf '%s' "$sj" | jq -r '[.[] | select(.id=="env/60-secrets.conf")][0].var_count')"
-check "…by name"  "true" \
-  "$(printf '%s' "$sj" | jq -r '[.[] | select(.id=="env/60-secrets.conf")][0].vars | index("API_TOKEN") != null')"
+check "…and names no variables"  "0" \
+  "$(printf '%s' "$sj" | jq -r '[.[] | select(.id=="env/60-secrets.conf")][0].vars | length')"
 # The one thing this payload must never carry.
 check "no value ever reaches the panel" "0" "$(printf '%s' "$sj" | grep -c 'supersecret' || true)"
 check "…nor any key material"           "0" "$(printf '%s' "$sj" | grep -c 'PRIVATE KEY' || true)"
-# Same rule for the diff the panel renders inline.
+# Same rule for the diff the panel renders inline. Without the key there is
+# nothing to compare against: the verdict is locked, never a guess.
 core_backup >/dev/null 2>&1
 printf 'API_TOKEN=sk-rotated-value\n' > "$HOME/.config/environment.d/60-secrets.conf"
 d=$(core_diff env/60-secrets.conf repo)
-check_contains "a changed secret says so" "differs from the copy in your repo" "$d"
+check_contains "a keyless secret reads locked" "import the key" "$d"
 check "…and shows nothing of it" "0" "$(printf '%s' "$d" | grep -c 'sk-' || true)"
 
 section "status --json is well-formed"
@@ -1109,8 +1107,15 @@ section "a secret you added yourself is still a secret"
 # which was true for the three the plugin ships. `track --secret` then let a
 # user add one under any name, and every one of those rules quietly stopped
 # applying: ~/.config/gh/hosts.yml derives to "gh/hosts.yml".
+# Tracking a secret needs the key: without anything to encrypt with, the
+# track is refused instead of leaving a plaintext copy behind.
 mkdir -p "$HOME/.config/gh"
 printf 'oauth_token: ghp_PLANTED_TOKEN_VALUE\n' > "$HOME/.config/gh/hosts.yml"
+if command -v age >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1 \
+    && probe=$(mktemp -d) && ( umask 077; age-keygen -pq -o "$probe/key" >/dev/null 2>&1 ) \
+    && grep -q '^# public key: age1pq1' "$probe/key" 2>/dev/null; then
+rm -rf -- "$probe"
+key_init >/dev/null 2>&1
 core_track "$HOME/.config/gh/hosts.yml" --secret >/dev/null 2>&1
 check_true "it is recorded as a secret, not as config" is_secret_rel gh/hosts.yml
 check_false "…and a normal file is not"                is_secret_rel hypr/input.lua
@@ -1120,7 +1125,10 @@ check "it is written and read at the SAME path" "$SECRETS_DIR/gh/hosts.yml" \
   "$(repo_copy_for_rel gh/hosts.yml)"
 check "…and restored at 600, not 644"  "600" "$(restore_mode_for gh/hosts.yml)"
 core_backup >/dev/null 2>&1
-check_true "the copy really is under secrets/" test -f "$SECRETS_DIR/gh/hosts.yml"
+check_true "the secret lands encrypted in the vault" \
+  compgen -G "$REPO_DIR/vault/blobs/*.age"
+check "…never as plaintext beside it" "0" \
+  "$(grep -rl 'ghp_' "$REPO_DIR/vault/" "$SECRETS_DIR" 2>/dev/null | wc -l)"
 printf 'oauth_token: ghp_ROTATED_TOKEN_VALUE\n' > "$HOME/.config/gh/hosts.yml"
 d=$(core_diff gh/hosts.yml)
 check_contains "a changed secret still says only that" "contents are not shown" "$d"
@@ -1129,6 +1137,11 @@ check "…in either direction" "0" "$(printf '%s' "$(core_diff gh/hosts.yml repo
 check "nor anywhere in the panel payload" "0" \
   "$(printf '%s%s' "$(build_configs_json)" "$(build_secrets_json)" | grep -c 'ghp_' || true)"
 core_untrack gh/hosts.yml >/dev/null 2>&1
+else
+rm -rf -- "${probe:-/nonexistent}" 2>/dev/null || true
+check_false "tracking a secret without a key is refused" \
+  core_track "$HOME/.config/gh/hosts.yml" --secret
+fi
 
 section "changing a directory's scope moves the tree, now, not eventually"
 # Changing a file's scope moves the copy the repo holds so the backup is never
@@ -1175,6 +1188,9 @@ check "…and nothing was added" "1" \
 # The other way round: a directory that swallows a file listed on its own.
 printf 'z\n' > "$HOME/.config/solo.conf"
 core_track "$HOME/.config/solo.conf" >/dev/null 2>&1
+# Symlinks left by earlier sections would trip the symlink guard first, which
+# is a different refusal than the one this section proves.
+rm -f "$HOME/.config/mine-link.conf" "$HOME/.config/linked.toml"
 out=$(core_track "$HOME/.config/" 2>&1 || true)
 check_contains "a directory that swallows a listed file is refused" "would swallow" "$out"
 check_false "…and it really was not added" is_tracked_path "$HOME/.config/unrelated-thing.conf"
@@ -1190,21 +1206,16 @@ check_contains "…and says what to do instead" "narrower directory" "$out"
 check_false "…and is not tracked" is_tracked_path "$HOME/.config/huge/f1.conf"
 rm -rf "$HOME/.config/huge"
 
-section "the repo's copy of the scanner keeps up with the plugin"
-# The repo's pre-commit hook runs the copy in the repo, not the one in the
-# plugin. Seeding it once meant a repo created in June was still checking for
-# the credential shapes the plugin knew about then: teaching the plugin a new
-# one never reached anybody who had already set up.
-printf '#!/bin/bash\n# an old version\nexit 0\n' > "$REPO_DIR/bin/scan-secrets.sh"
+section "the hook runs the plugin's scanner"
+# The hook used to run a copy kept in the repo, seeded once and never
+# refreshed: a repo created in June still checked for the credential shapes
+# the plugin knew about then. The hook names the plugin's scanner, so teaching
+# the plugin a new shape reaches everybody with the next plugin update.
 ensure_repo_layout >/dev/null 2>&1
-check_true "an out-of-date copy is replaced" \
-  cmp -s "$PLUGIN_DIR/bin/scan-secrets.sh" "$REPO_DIR/bin/scan-secrets.sh"
+check_contains "the hook names the plugin scanner" "$PLUGIN_DIR/bin/scan-secrets.sh" \
+  "$(precommit_hook_text)"
 check "…and stays executable" "1" \
-  "$(test -x "$REPO_DIR/bin/scan-secrets.sh" && echo 1 || echo 0)"
-before=$(sha256sum "$REPO_DIR/bin/scan-secrets.sh" | cut -d' ' -f1)
-ensure_repo_layout >/dev/null 2>&1
-check "…and an up-to-date one is left alone" "$before" \
-  "$(sha256sum "$REPO_DIR/bin/scan-secrets.sh" | cut -d' ' -f1)"
+  "$(test -x "$GITHOOKS_DIR/pre-commit" && echo 1 || echo 0)"
 
 section "a token in a file kept per profile is caught at backup time"
 # The backup scan covered config/ and state/ only. A file kept per profile is
@@ -1221,22 +1232,23 @@ rm -f "$(repo_path_for hypr/monitors.lua)"
 core_backup >/dev/null 2>&1
 
 section "the pre-commit hook keeps up with the plugin and fails closed"
-# The hook was written once and never again, and it exited 0 when it could not
-# find the scanner. The scanner is the last check between a token and GitHub.
-printf '#!/bin/bash\n# an old version\nexit 0\n' > "$GITHOOKS_DIR/pre-commit"
-ensure_repo_layout >/dev/null 2>&1
-check_true "an out-of-date hook is replaced" cmp -s <(precommit_hook_text) "$GITHOOKS_DIR/pre-commit"
-check "…and stays executable" "1" "$(test -x "$GITHOOKS_DIR/pre-commit" && echo 1 || echo 0)"
-mv "$REPO_DIR/bin/scan-secrets.sh" "$TMP/scan.keep"
-printf 'x\n' > "$REPO_DIR/hook-probe.txt"
-git -C "$REPO_DIR" add hook-probe.txt
-check_false "a missing scanner blocks the commit" bash -c 'cd "$1" && .githooks/pre-commit' _ "$REPO_DIR"
+# The hook exits 0 when it cannot find the scanner, and the scanner is the
+# last check between a token and GitHub. Point the template at a plugin dir
+# with no scanner and run it against a scratch repo: it must refuse the
+# commit and name the missing scanner.
+fakeplugin="$TMP/no-scanner-plugin"; mkdir -p "$fakeplugin/bin"
+( PLUGIN_DIR="$fakeplugin" precommit_hook_text > "$TMP/hook-probe.sh" )
+chmod +x "$TMP/hook-probe.sh"
+proberepo="$TMP/hookprobe"; git init -q -b main "$proberepo"
+printf 'x\n' > "$proberepo/hook-probe.txt"
+git -C "$proberepo" add hook-probe.txt
+mkdir -p "$proberepo/.githooks"; cp "$TMP/hook-probe.sh" "$proberepo/.githooks/pre-commit"
+check_false "a missing scanner blocks the commit" bash -c 'cd "$1" && .githooks/pre-commit' _ "$proberepo"
 # For the right reason. Without the check, running the missing scanner fails
 # as well and blocks the commit, with a message about a credential instead.
 check_contains "…and says that the scanner is missing" "scanner is missing" \
-  "$(bash -c 'cd "$1" && .githooks/pre-commit' _ "$REPO_DIR" 2>&1)"
-git -C "$REPO_DIR" rm -q --cached hook-probe.txt; rm -f "$REPO_DIR/hook-probe.txt"
-mv "$TMP/scan.keep" "$REPO_DIR/bin/scan-secrets.sh"
+  "$(bash -c 'cd "$1" && .githooks/pre-commit' _ "$proberepo" 2>&1)"
+rm -rf "$proberepo" "$fakeplugin" "$TMP/hook-probe.sh"
 
 section "restore works one area at a time: pending, preview, apply"
 # The loop that restores an area lived in the CLI. The mechanism is in the core
@@ -1474,25 +1486,26 @@ check "it is no longer in the shipped list" "0" \
 ensure_repo_layout >/dev/null 2>&1
 check "a machine that only has the file does not start tracking it" "0" \
   "$(jq '[keys[] | select(. == "claude/mcp.json")] | length' "$REPO_DIR/.replicant/entries.json" 2>/dev/null || echo 0)"
-mcp_copy=$(repo_path_for claude/mcp.json); mkdir -p "$(dirname "$mcp_copy")"
-cp "$HOME/.claude/.mcp.json" "$mcp_copy"
+core_track "$HOME/.claude/.mcp.json" claude/mcp.json >/dev/null 2>&1
 core_backup >/dev/null 2>&1
-check_true "a repo that saved it keeps its copy" test -f "$mcp_copy"
+mcp_copy=$(repo_path_for claude/mcp.json)
+check "a repo that saved it keeps its copy" "1" \
+  "$(test -f "$mcp_copy" && echo 1 || echo 0)"
 core_untrack claude/mcp.json >/dev/null 2>&1; rm -f "$HOME/.claude/.mcp.json"
 
 section "a secret this user cannot read is named, not a failed backup"
-# A secret tracked under /etc is often readable by root only. Its copy failed
-# under set -e and ended the whole backup. It runs in a subshell with set -e,
-# as the CLI does. Root can read anything, so there is nothing to test as root.
-# $USER is unset, as in a container: the message named the owner with it, and
-# under set -u that ended the backup the message was there to save.
-if [[ $(id -u) != 0 ]]; then
-  printf 'user=me\n' > "$TMP/unreadable.cred"; chmod 000 "$TMP/unreadable.cred"
+# A secret tracked under /etc is often readable by root only. It runs in a
+# subshell with set -e, as the CLI does. Root can read anything, so there is
+# nothing to test as root. Tracking a secret needs the key, so without one
+# there is nothing to back up here either.
+if [[ $(id -u) != 0 && -f "$REPLICANT_HOME/keys/identity.txt" ]]; then
+  printf 'user=me\n' > "$TMP/unreadable.cred"
   core_track "$TMP/unreadable.cred" misc/unreadable.cred --secret >/dev/null 2>&1
+  chmod 000 "$TMP/unreadable.cred"
   rc=0; out=$(env -u USER bash -c 'source "$1" 2>/dev/null; core_backup' _ "$CORE" 2>&1) || rc=$?
   check "the backup still finishes" "0" "$rc"
-  check_contains "…and names the command that copies it" "sudo install" "$out"
-  check_contains "…for the owner the system names" "-o $(id -un) -g $(id -gn) " "$out"
+  check_contains "…and says the unreadable one was skipped" "readable by root only" "$out"
+  check_contains "…naming the file" "unreadable.cred" "$out"
   core_untrack misc/unreadable.cred >/dev/null 2>&1
   chmod 600 "$TMP/unreadable.cred"; rm -f "$TMP/unreadable.cred"
 fi

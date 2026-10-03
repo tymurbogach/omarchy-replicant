@@ -84,8 +84,19 @@ normalize_profile_name() {
 
 ensure_profile_recorded() {
   [[ -e "$REPO_DIR/.git" ]] || return 0
-  [[ -n "${REPLICANT_PROFILE:-}" ]] && return 0
-  profile_for_machine "$MACHINE" >/dev/null 2>&1 && return 0
+  # A forced profile still gets recorded: worktrees and clones validate the
+  # machines dir, which only exists with files in it, so an unrecorded
+  # machine would leave every save transaction failing its schema gate.
+  if [[ -n "${REPLICANT_PROFILE:-}" ]]; then
+    if [[ -z "$(profile_for_machine "$MACHINE" 2>/dev/null)" ]]; then
+      core_profile_set "${REPLICANT_PROFILE}" >/dev/null 2>&1 || true
+    fi
+    return 0
+  fi
+  # Non-empty, not merely exit-zero: machine_profile reads a file that may
+  # not exist, and swallows the miss, so the exit code alone claims every
+  # new machine is already recorded and the fallback below never runs.
+  [[ -n "$(profile_for_machine "$MACHINE" 2>/dev/null)" ]] && return 0
   local want taken=0 line k v d
   want=$(guess_profile)
 
@@ -228,7 +239,7 @@ invalidate_scopes_cache() { SCOPE_MAP_READY=0; SCOPE_OF=(); }
 load_scope_map() {
   (( SCOPE_MAP_READY )) && return 0
   SCOPE_MAP_READY=1; SCOPE_OF=()
-  local k v
+  local k v vid vsc
   if [[ -f "$REPO_DIR/.replicant/entries.json" ]]; then
     while IFS=$'\t' read -r vid vsc; do
       [[ -n "${vid:-}" ]] || continue

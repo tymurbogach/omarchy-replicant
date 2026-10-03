@@ -449,11 +449,11 @@ from: binary|unknown|unknown-8bit)
 to: unknown|unknown-8bit)
 why: bulk rejects binary content by encoding
 ---
-file: bin/lib/bulk.sh
-suite: test-bulk.sh
-from: \( -type d -o -type f \) -name .git
-to: \( -type d -o -type f \) -name .notgit
-why: bulk rejects .git files as well as .git directories
+file: bin/lib/tree.sh
+suite: test-core.sh
+from: TREE_EXCLUDES=(".git" "node_modules"
+to: TREE_EXCLUDES=(".notgitdir" "node_modules"
+why: tracked trees exclude .git from the copy
 ---
 file: bin/lib/bulk.sh
 suite: test-bulk.sh

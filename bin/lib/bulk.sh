@@ -78,10 +78,10 @@ bulk_validate_track_path() {
   [[ -f "${real%/}" || -d "${real%/}" ]] || { echo "bulk: path is not a file or directory: $path" >&2; return 1; }
   [[ -r "${real%/}" ]] || { echo "bulk: path is not readable: $path" >&2; return 1; }
   if [[ -d "${real%/}" ]]; then
-    if find "${real%/}" -xdev \( -type d -o -type f \) -name .git -print -quit 2>/dev/null | grep -q .; then
-      echo "bulk: .git files and directories are not trackable: $path" >&2
-      return 1
-    fi
+    # A .git inside the tree does not block tracking: the copy pass skips it
+    # (TREE_EXCLUDES in tree.sh), so a git checkout like ~/.config/nvim stays
+    # one row while its history never enters the repo. Tracking .git itself
+    # stays refused above.
     if find "${real%/}" -xdev ! -readable -print -quit 2>/dev/null | grep -q .; then
       echo "bulk: directory contains unreadable files: $path" >&2; return 1
     fi
@@ -96,9 +96,12 @@ bulk_validate_track_path() {
         return 1
       }
       bytes=$((bytes + file_size))
-      bulk_require_text_encoding "$file" || return 1
+      # No encoding gate inside a tree: binaries a plugin dir carries (a
+      # compiled shader, a font, an image) round-trip as bytes, and the
+      # secret scanner skips binaries on its own. Tracking one binary file
+      # on its own stays refused below.
     done < <(bulk_tree_find0 "${real%/}")
-    (( count <= 400 )) || { echo "bulk: directory contains more than 400 files: $path" >&2; return 1; }
+    (( count <= 400 )) || { echo "bulk: directory holds $count files — that is a lot to put in a git repo: $path" >&2; echo "       Track a narrower directory, or the handful of files you actually edit." >&2; return 1; }
     (( count > 100 )) && echo "bulk: warning: directory contains more than 100 files: $path" >&2
     if (( bytes > BULK_LARGE_LIMIT_BYTES )) && [[ "${BULK_ALLOW_LARGE:-0}" != 1 ]]; then
       echo "bulk: directory exceeds 10 MiB total; use --allow-large: $path" >&2

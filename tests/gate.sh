@@ -214,7 +214,7 @@ gate_g5() {
   grep -q 'gitdirty' "$ROOT/bin/lib/incoming.sh" 2>/dev/null \
     && ok "full and brief unsaved counts include uncommitted copies" \
     || bad "brief count state omits uncommitted copies"
-  grep -q 'more than 400 files' "$ROOT/bin/lib/bulk.sh" 2>/dev/null \
+  grep -q '(( count <= 400 ))' "$ROOT/bin/lib/bulk.sh" 2>/dev/null \
     && ok "bulk preserves the 400-file hard limit" \
     || bad "bulk has no 400-file hard limit"
   grep -q 'more than 100 files' "$ROOT/bin/lib/bulk.sh" 2>/dev/null \
@@ -223,10 +223,10 @@ gate_g5() {
   grep -q 'bytes > BULK_LARGE_LIMIT_BYTES' "$ROOT/bin/lib/bulk.sh" 2>/dev/null \
     && ok "bulk measures total directory bytes" \
     || bad "bulk does not measure total directory bytes"
-  if grep -Fq 'type d -o -type f' "$ROOT/bin/lib/bulk.sh" 2>/dev/null && grep -Fq -- '-name .git' "$ROOT/bin/lib/bulk.sh" 2>/dev/null; then
-    ok "bulk rejects .git files and directories"
+  if grep -Fq 'basename -- "$real"' "$ROOT/bin/lib/bulk.sh" 2>/dev/null && grep -Fq 'TREE_EXCLUDES=(".git"' "$ROOT/bin/lib/tree.sh" 2>/dev/null; then
+    ok "tracking .git itself is refused and the copy skips .git inside trees"
   else
-    bad "bulk does not reject .git files and directories"
+    bad "bulk does not refuse .git itself or the copy takes .git inside trees"
   fi
   grep -q 'bulk_require_text_encoding' "$ROOT/bin/lib/bulk.sh" 2>/dev/null \
     && ok "bulk checks content encoding" \

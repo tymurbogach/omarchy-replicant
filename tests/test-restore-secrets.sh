@@ -67,6 +67,7 @@ section "restore outside HOME never stages plaintext below REPLICANT_HOME"
 printf 'OUTSIDE=%s_vault\n' "$sentinel" > "$OUTSIDE/app-secret.conf"
 chmod 600 "$OUTSIDE/app-secret.conf"
 core_track "$OUTSIDE/app-secret.conf" --secret >/dev/null 2>&1
+rid=$(derive_rel "$OUTSIDE/app-secret.conf")
 core_backup >/dev/null 2>&1
 git -C "$REPO_DIR" add -A >/dev/null 2>&1
 git -C "$REPO_DIR" commit -qm "outside secret" >/dev/null 2>&1 || true
@@ -99,7 +100,7 @@ EOF
 chmod +x "$privbin/pkexec" "$privbin/sudo"
 old_path="$PATH"
 export PATH="$privbin:$PATH"
-core_restore_file misc/app-secret.conf >"$TMP/out.out" 2>"$TMP/out.err"
+core_restore_file "$rid" >"$TMP/out.out" 2>"$TMP/out.err"
 rc=$?
 export PATH="$old_path"
 check "outside restore succeeds with privilege" "0" "$rc"
@@ -119,7 +120,7 @@ printf '#!/bin/sh\nexit 97\n' > "$failbin/pkexec"
 printf '#!/bin/sh\nexit 97\n' > "$failbin/sudo"
 chmod +x "$failbin/pkexec" "$failbin/sudo"
 export PATH="$failbin:$PATH"
-core_restore_file misc/app-secret.conf >"$TMP/priv-fail.out" 2>"$TMP/priv-fail.err"
+core_restore_file "$rid" >"$TMP/priv-fail.out" 2>"$TMP/priv-fail.err"
 rc=$?
 export PATH="$old_path"
 check_false "privilege failure fails the restore" test "$rc" -eq 0

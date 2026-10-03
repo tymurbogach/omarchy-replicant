@@ -28,10 +28,8 @@ cat > "$HOME/.config/omarchy/shell.json" <<'JSON'
 { "idle": { "screensaver": 300, "lock": 600 } }
 JSON
 
-# Pin version 1: a repo with history keeps what it has, so initializing git
-# before the first command means no v2 skeleton is ever written.
-mkdir -p "$REPO"
-git -C "$REPO" init -q -b main 2>/dev/null
+# The first backup below initializes the v3 repo itself. A bare git dir
+# without the schema marker is invalid, and every write refuses it.
 
 run() { "$CLI" "$@" 2>&1; }
 head_now() { git -C "$REPO" rev-parse HEAD 2>/dev/null; }

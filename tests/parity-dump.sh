@@ -32,12 +32,9 @@ printf 'xdph\n'           > "$HOME/.config/hypr/xdph.conf"
 printf 'init.lua body\n'  > "$HOME/.config/nvim/init.lua"
 printf 'K=parity-base\n'  > "$HOME/.config/environment.d/60-secrets.conf"
 
-# A plaintext world keeps its history: initializing git before the first backup
-# means no skeleton is ever written. A vault world is born fresh.
-if [[ "$WORLD" == plaintext ]]; then
-  mkdir -p "$OMARCHY_REPLICANT_HOME/repo"
-  git -C "$OMARCHY_REPLICANT_HOME/repo" init -q -b main 2>/dev/null
-fi
+# Both worlds are born fresh: the first backup below initializes the v3 repo
+# itself. A bare git dir without the schema marker is invalid, and every
+# write refuses it.
 
 # shellcheck source=/dev/null
 source "$CORE" 2>/dev/null
@@ -54,7 +51,10 @@ mkdir -p "$REPO_DIR"
 load_user_manifest
 
 # Before any copy: profile-scoped files land under this profile's tree, and
-# the profile must not depend on which chassis the test runs on.
+# the profile must not depend on which chassis the test runs on. The repo has
+# to exist first: setting the profile needs the ready schema, so the first
+# backup initializes it and the profile lands before anything is copied.
+core_backup >/dev/null 2>&1
 core_profile_set desktop >/dev/null 2>&1
 
 core_backup >/dev/null 2>&1

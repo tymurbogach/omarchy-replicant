@@ -76,6 +76,14 @@ registry_build() {
     fi
     while IFS=$'\t' read -r id p k s o; do
       [[ -n "${id:-}" ]] || continue
+      # Cross-machine: entries.json holds machine A's absolute path, which
+      # points nowhere useful on machine B. For ids with a known home root
+      # the live path is re-derived for this machine; /etc and misc/ records
+      # have no home root to derive from, so they keep pointing where they
+      # were written. Same-machine records are untouched either way.
+      if [[ "$p" != "$HOME/"* && "$p" != /etc/* ]]; then
+        p=$(live_from_id "$id" 2>/dev/null || printf '%s\n' "$p")
+      fi
       r_live["$id"]="$p"
       r_kind["$id"]="$k"
       r_vscope["$id"]="$s"
@@ -93,14 +101,24 @@ registry_build() {
     vidx=$(vault_index_decrypt 2>/dev/null || true)
   fi
   if repo_is_ready && [[ -n "$vidx" ]]; then
-    local vid vpath vscope vsource
+    local vid vpath vscope vsource homerel
     while IFS=$'\t' read -r vid vpath vscope vsource; do
       [[ -n "${vid:-}" ]] || continue
       if [[ -n "${r_live[$vid]:-}" ]]; then
         if [[ "${r_live[$vid]}" != "$vpath" ]]; then
-          printf 'registry: secret %s points at %s in the vault but at %s elsewhere\n' \
-            "$vid" "$vpath" "${r_live[$vid]}" >&2
-          return 1
+          # Another machine keeps the same file under its own HOME: the vault
+          # holds machine A's absolute path, which never matches machine B's.
+          # Equal home-relative layout is the same file, not a conflict, and
+          # the local path stays the live one. Anything else still fails
+          # loudly instead of pointing the repo paths at the wrong place.
+          homerel="${r_live[$vid]#$HOME/}"
+          if [[ "$homerel" == */* && "$vpath" == */"$homerel" ]]; then
+            :
+          else
+            printf 'registry: secret %s points at %s in the vault but at %s elsewhere\n' \
+              "$vid" "$vpath" "${r_live[$vid]}" >&2
+            return 1
+          fi
         fi
       else
         r_live["$vid"]="$vpath"

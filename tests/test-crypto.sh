@@ -53,10 +53,10 @@ check "…matching the identity" "$(age-keygen -y "$KEYS" 2>/dev/null)" "$(cat "
 check_false "a second init refuses to overwrite" key_init
 check_contains "…saying to rotate instead" "rotate" "$(key_init 2>&1 || true)"
 
-section "key init refuses a version 1 repo"
+section "key init refuses a repo without its schema marker"
 mv "$REPO_DIR/.replicant/schema.json" "$TMP/schema.keep"
-check_false "no encrypted secrets on a plaintext layout" key_init
-check_contains "…naming the reason" "version 1" "$(key_init 2>&1 || true)"
+check_false "no encrypted secrets without a ready repo" key_init
+check_contains "…naming the reason" "not ready for encrypted secrets" "$(key_init 2>&1 || true)"
 mv "$TMP/schema.keep" "$REPO_DIR/.replicant/schema.json"
 
 section "key export backs up outside the repo"

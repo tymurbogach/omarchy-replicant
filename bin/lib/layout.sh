@@ -81,7 +81,7 @@ ensure_repo_layout() {
   else
     git -C "$REPO_DIR" config core.hooksPath .githooks 2>/dev/null || true
     require_ready_schema || return 1
-    machine_metadata_write
+    refresh_machine_metadata
   fi
   mkdir -p "$REPO_DIR/profiles/$(current_profile)/config" 2>/dev/null || true
   record_repo_version 2>/dev/null || true
@@ -114,5 +114,5 @@ ensure_repository_layout() {
     printf '{"format":"replicant"}\n' > "$rdir/schema.json"
   fi
   [[ -f "$rdir/entries.json" ]] || printf '{}\n' > "$rdir/entries.json"
-  machine_metadata_write
+  refresh_machine_metadata
 }

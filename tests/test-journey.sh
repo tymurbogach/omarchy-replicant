@@ -87,11 +87,8 @@ git -C "$D/.config/omarchy/themes/mine" remote add origin https://example.com/om
 
 section "the desktop saves"
 DREPO="$TMP/desktop/replicant/repo"
-# This journey pins the version 1 layout until the section 9 migration. repos
-# born here would be version 2, so the desktop repo gets its git dir before
-# the first backup: secrets keep flowing through secrets/ below. Same shape
-# as a fresh layout (main branch), minus the v2 marker files.
-git init -q -b main "$DREPO" 2>/dev/null || true
+# The repo is born fresh: init writes the single v3 layout, and the key comes
+# before the first backup so secrets encrypt from the start.
 init_out=$(on desktop init)
 # Every check below stands on this one. When it fails, the reason is in the
 # output of init, and a check that hides it leaves nothing to debug in CI.
@@ -102,6 +99,7 @@ else
   printf '%s\n' "$init_out" | sed 's/^/      /'
 fi
 on desktop track "$D/.local/bin/my-script" >/dev/null 2>&1
+on desktop key init >/dev/null 2>&1
 git -C "$DREPO" config user.email t@example.com
 git -C "$DREPO" config user.name Test
 git -C "$DREPO" remote add origin "$TMP/origin.git" 2>/dev/null
@@ -114,7 +112,8 @@ check_true "a shared file is in the repo"        test -f "$DREPO/config/hypr/inp
 check_true "a tracked directory is, whole"       test -f "$DREPO/config/nvim/lua/plugins.lua"
 check_true "a file the user added is"            test -f "$DREPO/config/bin/my-script"
 check_true "the decision to track it travels"    test -f "$DREPO/.replicant/entries.json"
-check_true "a secret is, under secrets/"         test -f "$DREPO/secrets/env/60-secrets.conf"
+check "a secret is encrypted in the vault" "1" \
+  "$(ls "$DREPO"/vault/blobs/*.age 2>/dev/null | wc -l)"
 # monitors.lua describes the screens plugged into THIS box. It is not switched
 # off — it is kept per profile, so both machines get a backup of their own.
 check_true "the monitor layout is kept per profile" \
@@ -250,6 +249,10 @@ section "the laptop clones and looks before it leaps"
 on laptop clone "$TMP/origin.git" >/dev/null 2>&1
 LREPO="$TMP/laptop/replicant/repo"
 check_true "the clone arrived" test -d "$LREPO/.git"
+# Secrets travel encrypted: the laptop adopts the desktop's key the same way
+# a second machine does, by importing the identity exported outside the repo.
+on desktop key export "$TMP/identity.txt" >/dev/null 2>&1
+on laptop key import "$TMP/identity.txt" >/dev/null 2>&1
 before=$(hash_tree "$L")
 out=$(on laptop restore --dry-run)
 check "a dry run writes nothing at all" "$before" "$(hash_tree "$L")"
@@ -321,6 +324,11 @@ HOME="$THIRD/home" OMARCHY_REPLICANT_HOME="$THIRD/rep" REPLICANT_MACHINE=lap2 \
   "$CLI" clone "$TMP/origin.git" >/dev/null 2>&1
 T3="$THIRD/rep/repo"
 git -C "$T3" config user.email t@example.com; git -C "$T3" config user.name Test
+# Like any second machine with secrets on the repo, it adopts the key first:
+# a keyless save on a repo carrying secrets fails closed instead of
+# committing a world without them.
+HOME="$THIRD/home" OMARCHY_REPLICANT_HOME="$THIRD/rep" REPLICANT_MACHINE=lap2 \
+  "$CLI" key import "$TMP/identity.txt" >/dev/null 2>&1
 HOME="$THIRD/home" OMARCHY_REPLICANT_HOME="$THIRD/rep" REPLICANT_MACHINE=lap2 \
   "$CLI" save --all --auto >/dev/null 2>&1
 check_true "a machine whose guess is taken gets its own tree" \

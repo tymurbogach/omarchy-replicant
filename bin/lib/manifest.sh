@@ -175,6 +175,28 @@ derive_rel() {
   printf '%s%s\n' "$rel" "$slash"
 }
 
+# live_from_id <id>: the live path for this machine from an id alone, the
+# inverse of derive_rel for every id with a known home root. entries.json
+# records carry the absolute path of the machine that wrote them; a second
+# machine re-derives its own live path instead of reading another machine's.
+# /etc and misc/ ids have no home root to derive from and fail here, so the
+# caller keeps the recorded path for those.
+live_from_id() {
+  local id="$1"
+  [[ -n "$id" ]] || return 1
+  case "$id" in
+    bin/*)         printf '%s\n' "$HOME/.local/bin/${id#bin/}" ;;
+    share/*)       printf '%s\n' "$HOME/.local/share/${id#share/}" ;;
+    state-files/*) printf '%s\n' "$HOME/.local/state/${id#state-files/}" ;;
+    home/*)        printf '%s\n' "$HOME/.${id#home/}" ;;
+    plugins/*)     printf '%s\n' "$HOME/.config/omarchy/${id#plugins/}" ;;
+    env/*)         printf '%s\n' "$HOME/.config/environment.d/${id#env/}" ;;
+    ssh/*)         printf '%s\n' "$HOME/.ssh/${id#ssh/}" ;;
+    etc/*|misc/*)  return 1 ;;
+    *)             printf '%s\n' "$HOME/.config/$id" ;;
+  esac
+}
+
 rebuild_tracked() {
   TRACKED=("${MANIFEST[@]}" ${USER_MANIFEST[@]+"${USER_MANIFEST[@]}"} ${AUTO_MANIFEST[@]+"${AUTO_MANIFEST[@]}"})
   TRACKED_SECRETS=("${SECRETS_MANIFEST[@]}" ${USER_SECRETS[@]+"${USER_SECRETS[@]}"})

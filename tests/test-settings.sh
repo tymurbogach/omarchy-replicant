@@ -66,6 +66,10 @@ source "$CORE" 2>/dev/null
 # commands, so relax that in this shell only.
 set +e +u
 
+# Writes commit to the repo, so the fixture needs a ready one. The first
+# backup initializes the v3 layout; a bare git dir would be invalid.
+core_backup >/dev/null 2>&1
+
 section "reading — one per storage format"
 check "JSON number"                  "300"   "$(get_setting_value idle.screensaver)"
 check "JSON number that is zero"     "0"     "$(get_setting_value idle.lazySuspendAc)"

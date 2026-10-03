@@ -12,8 +12,8 @@ printf 'default\n' > "$OMARCHY_PATH/config/hypr/input.lua"
 printf 'one\n' > "$HOME/.config/hypr/input.lua"
 printf 'two\n' > "$HOME/.config/hypr/hyprlock.conf"
 printf 'credential: placeholder\n' > "$HOME/.config/hosts.yml"
-mkdir -p "$REPO"
-git -C "$REPO" init -q -b main
+# The first backup below initializes the v3 repo itself. A bare git dir
+# without the schema marker is invalid, and every write refuses it.
 # shellcheck source=bin/replicant-core.sh
 source "$CORE" 2>/dev/null
 set +e +u
@@ -92,8 +92,10 @@ many_output=$("$CLI" bulk track --kind config --yes -- "$HOME/.config/many-files
 check_contains "a 101-file tree emits its warning" "more than 100 files" "$many_output"
 mkdir -p "$HOME/.config/gitfile-tree/.git-parent"
 printf 'gitdir: ../.git\n' > "$HOME/.config/gitfile-tree/.git"
-check_false "a .git file inside a tree is rejected" \
+check_true "a tree holding a .git file is tracked" \
   "$CLI" bulk track --kind config --yes -- "$HOME/.config/gitfile-tree"
+check "…but the .git file stays out of the repo" "0" \
+  "$(find "$REPO/config/gitfile-tree" -name .git 2>/dev/null | wc -l)"
 printf 'git metadata\n' > "$HOME/.config/gitfile-tree/.git"
 check_false "a single .git file is rejected" \
   "$CLI" bulk track --kind config --yes -- "$HOME/.config/gitfile-tree/.git"
@@ -104,9 +106,15 @@ check_false "a symlink path is rejected" \
   "$CLI" bulk track --kind config --yes -- "$HOME/.config/alpha-link.conf"
 
 mkdir -p "$HOME/.config/nested-repo/.git"
-before=$(git -C "$REPO" rev-parse HEAD)
-check_false "nested repository is rejected" "$CLI" bulk track --kind config --yes -- "$HOME/.config/nested-repo"
-check "nested repository leaves HEAD unchanged" "$before" "$(git -C "$REPO" rev-parse HEAD)"
+printf 'objects\n' > "$HOME/.config/nested-repo/.git/HEAD"
+printf 'work\n' > "$HOME/.config/nested-repo/work.txt"
+check_true "a nested repository is tracked" \
+  "$CLI" bulk track --kind config --yes -- "$HOME/.config/nested-repo"
+check "…but its .git stays out of the repo" "0" \
+  "$(find "$REPO/config/nested-repo" -name HEAD 2>/dev/null | wc -l)"
+"$CLI" bulk save -- nested-repo/ >/dev/null 2>&1
+check "…while its files are copied" "1" \
+  "$(test -f "$REPO/config/nested-repo/work.txt" && echo 1 || echo 0)"
 
 mkdir -p "$HOME/.config/too-many"
 for i in $(seq 1 401); do printf '%s\n' "$i" > "$HOME/.config/too-many/$i.conf"; done

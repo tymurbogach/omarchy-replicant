@@ -4,7 +4,7 @@
 # functions and data and runs nothing. Other modules read its data.
 
 core_restore_command() {
-  local dry="$1" all="$2" yes="$3" only="$4" cat centry label changed total_changed=0
+  local dry="$1" all="$2" yes="$3" only="$4" cat centry label changed total_changed=0 total_failed=0
   local -a pending=()
   [[ -d "$REPO_DIR/.git" ]] || { echo "no repo" >&2; return 1; }
   if [[ -n "$only" ]] && ! find_category "$only" >/dev/null; then
@@ -26,12 +26,18 @@ core_restore_command() {
       read -rp "  apply $cat? [y/N] " resp </dev/tty 2>&1 || resp=""
       [[ "$resp" == [yY] ]] || { echo "· $cat skipped" >&2; continue; }
     fi
-    changed=$(restore_apply "$cat" "${pending[@]}")
-    total_changed=$((total_changed + changed))
+    # One failing area must not strand the rest: record it and keep going,
+    # and report the failure after every area had its turn.
+    if changed=$(restore_apply "$cat" "${pending[@]}"); then
+      total_changed=$((total_changed + changed))
+    else
+      total_failed=$((total_failed + 1))
+    fi
   done
   if (( dry )); then echo "Dry-run; repeat with --apply" >&2
   else briefcache_invalidate; echo "restore complete; $total_changed file(s) written" >&2
   fi
+  (( total_failed == 0 ))
 }
 
 # Parse the public restore options in the core so the CLI only forwards them.
@@ -278,12 +284,23 @@ restore_active_theme() {
 # decrypting: they stay pending here without decrypting, and locked ones are
 # named, never compared.
 restore_pending() {
-  local area="$1" src dst mode id
+  local area="$1" src dst mode id vidx="" blobs="" blob
+  # A secret with no blob has nothing to restore: offering it as pending
+  # would fail it at apply time. The index decrypts once for the area.
+  if [[ "$area" == secrets ]] && vault_unlocked 2>/dev/null; then
+    vidx=$(vault_index_decrypt 2>/dev/null || true)
+    blobs=$(vault_blobs_dir)
+  fi
   while IFS='|' read -r src dst mode; do
     if [[ "$src" == vault:* ]]; then
       id="${src#vault:}"
       if ! vault_unlocked; then
         warn "$id is locked — run: replicant key import <source>"
+        continue
+      fi
+      blob=$(vault_index_blob "$vidx" "$id" 2>/dev/null || true)
+      if [[ -z "$blob" || ! -f "$blobs/$blob.age" ]]; then
+        skip "$id is not saved in your repo yet"
         continue
       fi
       printf '%s|%s|%s\n' "$src" "$dst" "$mode"

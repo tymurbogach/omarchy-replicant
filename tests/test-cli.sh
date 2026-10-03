@@ -137,9 +137,8 @@ check "get reads a value"      "300" "$(run get idle.screensaver)"
 check_false "get on an unknown id fails" "$CLI" get not.a.setting
 
 section "dry runs must not write — proven by hashing the files"
-git init -q "$REPO"
-git -C "$REPO" config user.email t@example.com
-git -C "$REPO" config user.name Test
+# A missing repo initializes itself on the first backup (v3 layout). A bare
+# git dir without the schema marker is invalid, and every write refuses it.
 copy_backup >/dev/null 2>&1
 git -C "$REPO" add -A >/dev/null 2>&1
 git -C "$REPO" commit -q -m initial >/dev/null 2>&1
@@ -279,8 +278,8 @@ check "profile prints the current one" "1" \
   "$(run profile | grep -c 'is in the' || true)"
 run profile deskbox >/dev/null 2>&1
 check "…and can be set"            "deskbox" "$(run profile | sed -n 's/.*is in the "\([^"]*\)".*/\1/p')"
-check "…and is recorded in the repo" "1" \
-  "$(grep -c ' = deskbox$' "$REPO/.replicant-profiles" 2>/dev/null || true)"
+check "…and is recorded in the repo" "deskbox" \
+  "$(jq -r '.profile // empty' "$REPO"/.replicant/machines/*.json 2>/dev/null | head -1)"
 check_false "a nonsense profile name is refused" "$CLI" profile "../etc"
 
 # A scope change is one decision and must commit exactly that. Staging the whole
@@ -517,6 +516,7 @@ check "…and the profile copy carries the change" "1" \
 #    Assembled from pieces so this file holds no scannable token.
 P_GH="gh""o_"
 mkdir -p "$HOME/.config/gh"
+run key init >/dev/null 2>&1
 printf 'github.com:\n  oauth_token: %sNOTREAL0000000000000000000000000000\n' "$P_GH" \
   > "$HOME/.config/gh/hosts.yml"
 run track "$HOME/.config/gh/hosts.yml" --secret >/dev/null 2>&1
@@ -526,8 +526,10 @@ printf 'github.com:\n  oauth_token: %sNOTREAL1111111111111111111111111111\n' "$P
 run save-file gh/hosts.yml >/dev/null 2>&1
 check "a tracked secret is never written into config/" "0" \
   "$(ls "$REPO/config/gh/hosts.yml" 2>/dev/null | wc -l)"
-check "…and its copy in secrets/ is 600" "600" \
-  "$(stat -c%a "$REPO/secrets/gh/hosts.yml" 2>/dev/null || echo none)"
+check "…and lands encrypted in the vault" "1" \
+  "$(ls "$REPO"/vault/blobs/*.age 2>/dev/null | wc -l)"
+check "…with no plaintext of the token beside it" "0" \
+  "$(grep -rl 'NOTREAL' "$REPO/vault/" 2>/dev/null | wc -l)"
 
 section "the safety net you can actually reach"
 # Every write this plugin makes keeps what it overwrote as <file>.bak.<epoch>.
@@ -633,9 +635,7 @@ check "…and removes the recovery data" "0" "$(ls -d "$OMARCHY_REPLICANT_HOME/k
 
 section "concurrent writes are serialized, not corrupted"
 # the repo was just purged; rebuild it for this last check
-git init -q "$REPO"
-git -C "$REPO" config user.email t@example.com
-git -C "$REPO" config user.name Test
+copy_backup >/dev/null 2>&1
 # Two writes racing used to collide on .git/index.lock and one would die
 # half-done, leaving the repo mid-commit. Save takes the repo lock.
 # shellcheck disable=SC2034  # a repetition counter; the body deliberately ignores it
